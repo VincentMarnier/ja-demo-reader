@@ -1,0 +1,61 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>OpenJK MP — Emscripten boot (M1)</title>
+  <style>
+    body { background: #111; color: #ddd; font: 14px/1.4 monospace; margin: 16px; }
+    canvas { display: block; width: 640px; height: 480px; background: #000;
+             border: 1px solid #333; image-rendering: pixelated; }
+    #log { white-space: pre-wrap; max-width: 960px; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas" width="640" height="480"></canvas>
+  <pre id="log"></pre>
+  <script>
+    function m1log(line) {
+      var el = document.getElementById('log');
+      el.textContent += line + "\n";
+      console.log(line);
+    }
+    window.alert = function (msg) { m1log("ALERT>>>" + msg + "<<<"); };
+
+    // M1: the boot build has no UI, cgame or renderer, so this page only proves
+    // engine initialisation. M2 replaces the stub with WebGL rendering.
+    var Module = {
+      arguments: [
+        '+set', 'cl_allowDownload', '0',
+        '+set', 'logfile', '2',
+        '+set', 'r_fullscreen', '0',
+        '+set', 's_initsound', '0',
+        '+set', 'com_bootlogo', '0'
+      ],
+      canvas: document.getElementById('canvas'),
+      print: function (t) { m1log(t); },
+      printErr: function (t) { m1log("ERR " + t); },
+      onAbort: function (what) { m1log("ABORT " + what); },
+      preRun: [function () {
+        // Persist engine config/saves in /userdata only; /jka stays read-only.
+        // Node has no IndexedDB, so the smoke test skips this.
+        if (typeof IDBFS === 'undefined' || typeof indexedDB === 'undefined') {
+          return;
+        }
+        try {
+          try { FS.mkdir('/userdata'); } catch (e) { /* exists */ }
+          FS.mount(IDBFS, {}, '/userdata');
+          addRunDependency('idbfs');
+          FS.syncfs(true, function (err) {
+            if (err) { console.warn('IDBFS load failed', err); }
+            else { console.log('IDBFS mounted at /userdata'); }
+            removeRunDependency('idbfs');
+          });
+        } catch (e) {
+          console.warn('IDBFS mount failed', e);
+        }
+      }]
+    };
+  </script>
+  <script src="openjk.x86.js"></script>
+</body>
+</html>

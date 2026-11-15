@@ -1,0 +1,171 @@
+diff --git a/codemp/CMakeLists.txt b/codemp/CMakeLists.txt
+index 22cde569..18e4228e 100644
+--- a/codemp/CMakeLists.txt
++++ b/codemp/CMakeLists.txt
+@@ -553,6 +553,11 @@ if(BuildMPEngine)
+ 	endif(WIN32)
+ 
+ 	set(MPEngineFiles ${MPEngineFiles} ${MPEngineSysFiles})
++
++	if(EMSCRIPTEN)
++		# M1 boot-only static renderer stub (replaced by the WebGL renderer in M2).
++		set(MPEngineFiles ${MPEngineFiles} "${MPDir}/client/ref_stub.cpp")
++	endif()
+ 	source_group("sys" FILES ${MPEngineSysFiles})
+ 
+ 	if(MakeApplicationBundles)
+diff --git a/codemp/client/cl_main.cpp b/codemp/client/cl_main.cpp
+index d6b36887..581cd0f3 100644
+--- a/codemp/client/cl_main.cpp
++++ b/codemp/client/cl_main.cpp
+@@ -2381,8 +2381,14 @@ void CL_StartHunkUsers( void ) {
+ 	}
+ 
+ 	if ( !cls.uiStarted ) {
++#ifdef __EMSCRIPTEN__
++		// M1: no ui.wasm yet. Keep uiStarted false so the frame path does not
++		// call into an unloaded UI VM.
++		Com_Printf( "CL_StartHunkUsers: UI disabled in Emscripten boot build\n" );
++#else
+ 		cls.uiStarted = qtrue;
+ 		CL_InitUI();
++#endif
+ 	}
+ }
+ 
+@@ -2414,6 +2420,11 @@ static IHeapAllocator *GetG2VertSpaceServer( void ) {
+ 
+ #define DEFAULT_RENDER_LIBRARY "rd-vanilla"
+ 
++#ifdef __EMSCRIPTEN__
++// M1 boot stub; M2 replaces this with the WebGL/rd-vanilla path.
++extern "C" refexport_t *GetRefAPIStub( int version, refimport_t *rimp );
++#endif
++
+ void CL_InitRef( void ) {
+ 	static refimport_t ri;
+ 	refexport_t	*ret;
+@@ -2426,6 +2437,13 @@ void CL_InitRef( void ) {
+ 
+ 	Com_sprintf( dllName, sizeof( dllName ), "%s_" ARCH_STRING DLL_EXT, cl_renderer->string );
+ 
++	memset( &ri, 0, sizeof( ri ) );
++
++#ifdef __EMSCRIPTEN__
++	rendererLib = (void *)1; // sentinel: no shared object in the wasm build
++	GetRefAPI = GetRefAPIStub;
++	Com_Printf( "Using static boot renderer stub (%s)\n", dllName );
++#else
+ 	if( !(rendererLib = Sys_LoadDll( dllName, qfalse )) && strcmp( cl_renderer->string, cl_renderer->resetString ) )
+ 	{
+ 		Com_Printf( "failed: trying to load fallback renderer\n" );
+@@ -2439,11 +2457,10 @@ void CL_InitRef( void ) {
+ 		Com_Error( ERR_FATAL, "Failed to load renderer\n" );
+ 	}
+ 
+-	memset( &ri, 0, sizeof( ri ) );
+-
+ 	GetRefAPI = (GetRefAPI_t)Sys_LoadFunction( rendererLib, "GetRefAPI" );
+ 	if ( !GetRefAPI )
+ 		Com_Error( ERR_FATAL, "Can't load symbol GetRefAPI: '%s'", Sys_LibraryError() );
++#endif
+ 
+ 	//set up the import table
+ 	ri.Printf = CL_RefPrintf;
+diff --git a/codemp/qcommon/net_ip.cpp b/codemp/qcommon/net_ip.cpp
+index 889969a9..1e5dce12 100644
+--- a/codemp/qcommon/net_ip.cpp
++++ b/codemp/qcommon/net_ip.cpp
+@@ -962,6 +962,12 @@ NET_Init
+ ====================
+ */
+ void NET_Init( void ) {
++#ifdef __EMSCRIPTEN__
++	// M1/M3: demo playback is local and must not open sockets. Networking is
++	// reintroduced later behind an explicit browser transport, if ever.
++	Com_Printf( "NET_Init: networking disabled in Emscripten build\n" );
++	return;
++#endif
+ #ifdef _WIN32
+ 	int r = WSAStartup( MAKEWORD( 1, 1 ), &winsockdata );
+ 	if( r ) {
+diff --git a/shared/qcommon/q_platform.h b/shared/qcommon/q_platform.h
+index b843d0ad..6cb4cc95 100644
+--- a/shared/qcommon/q_platform.h
++++ b/shared/qcommon/q_platform.h
+@@ -86,6 +86,25 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
+ 
+ 	#define DLL_EXT ".dll"
+ 
++// Emscripten / WebAssembly
++#elif defined(__EMSCRIPTEN__)
++
++	#define OS_STRING "emscripten"
++	#define QINLINE inline
++	#define PATH_SEP '/'
++
++	#if !defined(ARCH_STRING)
++		#define ARCH_STRING "wasm32"
++	#endif
++
++	#if defined(__wasm64__)
++		#define idx64
++	#endif
++
++	#define Q3_LITTLE_ENDIAN
++
++	#define DLL_EXT ".wasm"
++
+ // MAC OS X
+ #elif defined(MACOS_X) || defined(__APPLE_CC__)
+ 
+diff --git a/shared/sys/con_tty.cpp b/shared/sys/con_tty.cpp
+index 812a7248..59a977d5 100644
+--- a/shared/sys/con_tty.cpp
++++ b/shared/sys/con_tty.cpp
+@@ -343,6 +343,11 @@ CON_Input
+ */
+ char *CON_Input( void )
+ {
++#ifdef __EMSCRIPTEN__
++	// No terminal on stdin in the browser. Emscripten's TTY would otherwise
++	// call window.prompt() from Sys_GetEvent() and block the frame loop.
++	return NULL;
++#endif
+ 	// we use this when sending back commands
+ 	static char text[MAX_EDIT_LINE];
+ 	int avail;
+diff --git a/shared/sys/sys_main.cpp b/shared/sys/sys_main.cpp
+index 16be5458..243295b2 100644
+--- a/shared/sys/sys_main.cpp
++++ b/shared/sys/sys_main.cpp
+@@ -734,6 +734,10 @@ char *Sys_StripAppBundle( char *dir )
+ }
+ #endif
+ 
++#ifdef __EMSCRIPTEN__
++#	define DEFAULT_BASEDIR "/jka"
++#endif
++
+ #ifndef DEFAULT_BASEDIR
+ #	ifdef MACOS_X
+ #		define DEFAULT_BASEDIR Sys_StripAppBundle(Sys_BinaryPath())
+diff --git a/shared/sys/sys_unix.cpp b/shared/sys/sys_unix.cpp
+index 3f0d544e..d3bf0ef6 100644
+--- a/shared/sys/sys_unix.cpp
++++ b/shared/sys/sys_unix.cpp
+@@ -476,7 +476,13 @@ bool Sys_PathCmp( const char *path1, const char *path2 )
+ Sys_DefaultHomePath
+ ==================
+ */
+-#if defined(BUILD_PORTABLE)
++#if defined(__EMSCRIPTEN__)
++char *Sys_DefaultHomePath(void)
++{
++	Q_strncpyz( homePath, "/userdata", sizeof( homePath ) );
++	return homePath;
++}
++#elif defined(BUILD_PORTABLE)
+ char *Sys_DefaultHomePath(void)
+ {
+ 	return NULL;
