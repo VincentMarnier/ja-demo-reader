@@ -21,15 +21,21 @@
     }
     window.alert = function (msg) { m1log("ALERT>>>" + msg + "<<<"); };
 
-    // M1: the boot build has no UI, cgame or renderer, so this page only proves
-    // engine initialisation. M2 replaces the stub with WebGL rendering.
+    // M1: stub renderer proves boot. M2: append ?renderer=rd-vanilla to initialise
+    // the statically linked WebGL renderer (needs staged assets to get past
+    // shader/font registration).
+    var params = new URLSearchParams(window.location.search);
+    var renderer = params.get('renderer') === 'rd-vanilla' ? 'rd-vanilla' : 'stub';
     var Module = {
       arguments: [
+        '+set', 'cl_renderer', renderer,
         '+set', 'cl_allowDownload', '0',
         '+set', 'logfile', '2',
         '+set', 'r_fullscreen', '0',
         '+set', 's_initsound', '0',
-        '+set', 'com_bootlogo', '0'
+        '+set', 'com_bootlogo', '0',
+        '+set', 'r_clear', renderer === 'rd-vanilla' ? '1' : '0',
+        '+set', 'r_m2_clear', renderer === 'rd-vanilla' ? '1' : '0'
       ],
       canvas: document.getElementById('canvas'),
       print: function (t) { m1log(t); },

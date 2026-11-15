@@ -24,8 +24,8 @@ EMSDK="${EMSDK:-/tmp/opencode/emsdk}"
 WORK="${WORK:-/tmp/opencode/m1/OpenJK-work}"
 BUILD="${BUILD:-/tmp/opencode/m1/build-wasm}"
 OUT="${OUT:-/tmp/opencode/m1/web}"
+BUILD_RENDERER="${BUILD_RENDERER:-0}"
 
-PATCH="$ROOT/engine/patches/0001-emscripten-m1-boot.patch"
 REF="$ROOT/references/OpenJK"
 
 if [ ! -d "$REF/.git" ] && [ ! -f "$REF/.git" ]; then
@@ -52,20 +52,37 @@ rm -rf "$WORK"
 mkdir -p "$(dirname "$WORK")"
 git -C "$REF" worktree add --detach "$WORK" "$PIN"
 
-echo "==> applying M1 platform patch"
-git -C "$WORK" apply "$PATCH"
+echo "==> applying port patches"
+for patch in "$ROOT"/engine/patches/*.patch; do
+  echo "    $(basename "$patch")"
+  git -C "$WORK" apply "$patch"
+done
 
 echo "==> adding platform sources"
 cp "$ROOT/engine/platform/ref_stub.cpp" "$WORK/codemp/client/ref_stub.cpp"
+cp "$ROOT/engine/platform/gl_stubs.cpp" "$WORK/codemp/client/gl_stubs.cpp"
 
 # shellcheck disable=SC1090
 source "$EMSDK/emsdk_env.sh" >/dev/null 2>&1
 
-echo "==> configuring (engine only, boot stub)"
+if [ -n "${PRELOAD_DIR:-}" ]; then
+  PRELOAD_ARGS="--preload-file=$PRELOAD_DIR@/jka/base"
+else
+  PRELOAD_ARGS="--preload-file=$ROOT/engine/platform/fixtures/base/mpdefault.cfg@/jka/base/mpdefault.cfg"
+fi
+
+RENDERER=OFF
+GL_FLAGS=""
+if [ "$BUILD_RENDERER" = "1" ]; then
+  RENDERER=ON
+  GL_FLAGS="-sMIN_WEBGL_VERSION=1 -sMAX_WEBGL_VERSION=2 -sLEGACY_GL_EMULATION=1 -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=268435456 -sMAXIMUM_MEMORY=2147483648 -sASSERTIONS=1"
+fi
+
+echo "==> configuring (renderer=$RENDERER)"
 emcmake cmake -S "$WORK" -B "$BUILD" \
   -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_EXE_LINKER_FLAGS="--preload-file=$ROOT/engine/platform/fixtures/base/mpdefault.cfg@/jka/base/mpdefault.cfg -lidbfs.js" \
-  -DBuildMPEngine=ON -DBuildMPRdVanilla=OFF -DBuildMPCGame=OFF -DBuildMPUI=OFF \
+  -DCMAKE_EXE_LINKER_FLAGS="$PRELOAD_ARGS -lidbfs.js $GL_FLAGS" \
+  -DBuildMPEngine=ON -DBuildMPRdVanilla=$RENDERER -DBuildMPCGame=OFF -DBuildMPUI=OFF \
   -DBuildMPGame=OFF -DBuildMPDed=OFF -DBuildMPRend2=OFF \
   -DBuildSPEngine=OFF -DBuildSPGame=OFF -DBuildSPRdVanilla=OFF \
   -DBuildJK2SPEngine=OFF -DBuildJK2SPGame=OFF -DBuildJK2SPRdVanilla=OFF
@@ -81,4 +98,4 @@ cp "$ROOT/engine/platform/web/index.html" "$OUT"/
 printf '\nBuilt:\n'
 ls -l "$OUT/openjk.x86.js" "$OUT/openjk.x86.wasm" "$OUT/openjk.x86.data"
 printf '\nServe it, e.g.:\n  (cd %q && python3 -m http.server 8123)\n' "$OUT"
-printf 'The M1 page logs engine boot to the DOM and the browser console.\n'
+printf 'Open the page for M1 boot; append ?renderer=rd-vanilla for the M2 renderer test.\n'

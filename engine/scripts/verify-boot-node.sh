@@ -25,6 +25,7 @@ set +e
 (
   cd "$OUT"
   timeout -s KILL "$WAIT" node openjk.x86.js \
+    +set cl_renderer stub \
     +set cl_allowDownload 0 \
     +set logfile 2 \
     +set r_fullscreen 0 \

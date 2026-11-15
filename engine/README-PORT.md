@@ -1,7 +1,8 @@
 # engine/ — OpenJK MP Emscripten port
 
-**Status:** M1 in progress — the engine boots in Chrome/Node with a static renderer stub.
-No WebGL renderer, cgame, UI, assets, audio, input or demo playback yet.
+**Status:** M1 boot is verified. M2 is in progress: `rd-vanilla` is statically
+linked, initializes through WebGL and presents frames. No cgame, map, UI, assets,
+audio or demo playback yet.
 
 This directory is the project-owned port layer around upstream OpenJK. Upstream
 source is not vendored here yet: `references/OpenJK` is the pinned, read-only
@@ -21,9 +22,11 @@ checkout and the build script creates a throwaway worktree under `/tmp` from it.
 ```text
 engine/
 ├── patches/
-│   └── 0001-emscripten-m1-boot.patch   # edits to upstream files
+│   ├── 0001-emscripten-m1-boot.patch   # boot platform layer
+│   └── 0002-emscripten-m2-renderer.patch # static rd-vanilla + WebGL fixes
 ├── platform/
-│   ├── ref_stub.cpp                    # M1-only static renderer stub
+│   ├── ref_stub.cpp                    # M1 boot renderer stub
+│   ├── gl_stubs.cpp                    # display-list/array-element shims
 │   ├── fixtures/base/mpdefault.cfg     # boot fixture, no game data
 │   └── web/index.html                  # boot harness (not a product UI)
 └── scripts/
@@ -31,9 +34,9 @@ engine/
     └── verify-boot-node.sh             # headless boot smoke test
 ```
 
-## Patch scope (M1)
+## Patch scope
 
-`0001-emscripten-m1-boot.patch` changes five upstream files:
+`0001-emscripten-m1-boot.patch` changes the boot platform layer:
 
 | File | Change |
 |---|---|
@@ -45,6 +48,24 @@ engine/
 | `codemp/qcommon/net_ip.cpp` | disable socket setup (demo playback is local) |
 | `shared/sys/con_tty.cpp` | disable stdin console input (it would call `window.prompt`) |
 
+`0002-emscripten-m2-renderer.patch` adds the static renderer link and WebGL fixes:
+
+| File | Change |
+|---|---|
+| `codemp/rd-vanilla/CMakeLists.txt` | build STATIC under Emscripten; drop duplicated common sources |
+| `codemp/CMakeLists.txt` | link `rd-vanilla` into the engine |
+| `codemp/client/cl_main.cpp` | call static `GetRefAPI`; keep `cl_renderer=stub` fallback |
+| `codemp/rd-vanilla/tr_local.h` | 16-bit `glIndex_t`; rename renderer `window` |
+| `codemp/rd-vanilla/tr_image.cpp` | force RGBA internal format |
+| `codemp/rd-vanilla/tr_init.cpp` | force `r_primitives=2`, disable S3TC |
+| `codemp/rd-vanilla/tr_cmds.cpp` | test-only frame clear probe (`r_m2_clear`) |
+| `codemp/rd-vanilla/qgl.h` | Emscripten GL include |
+| `shared/sys/sys_main.cpp` | RAF main loop |
+| `shared/sys/sys_unix.cpp` | non-blocking `Sys_Sleep` |
+| `codemp/qcommon/common.cpp` | no blocking select/NET_Sleep in Com_Frame |
+| `codemp/client/cl_scrn.cpp` | render cgame without UI; present frames |
+| `codemp/rd-common/tr_font.cpp` | rename renderer-owned `se_language` |
+
 New code lives in `engine/platform/` and is copied into the worktree by the build
 script. No edit touches `references/OpenJK`.
 
@@ -52,11 +73,19 @@ script. No edit touches `references/OpenJK`.
 
 ```bash
 # Emscripten 6.0.1, e.g. /tmp/opencode/emsdk
-engine/scripts/build-mp-wasm.sh
-
-# then
+engine/scripts/build-mp-wasm.sh                 # M1 boot (no renderer)
 engine/scripts/verify-boot-node.sh
+
+# M2 renderer (static rd-vanilla + WebGL)
+BUILD_RENDERER=1 engine/scripts/build-mp-wasm.sh
+
+# M2 with a local asset fixture (extracted from user PK3s; not committed)
+BUILD_RENDERER=1 PRELOAD_DIR=/tmp/opencode/m2/testassets/base \
+  engine/scripts/build-mp-wasm.sh
 ```
+
+Open the page normally for the M1 stub, or `?renderer=rd-vanilla` for the
+statically linked renderer.
 
 Defaults: worktree `/tmp/opencode/m1/OpenJK-work`, build
 `/tmp/opencode/m1/build-wasm`, output `/tmp/opencode/m1/web`.
@@ -66,12 +95,13 @@ Defaults: worktree `/tmp/opencode/m1/OpenJK-work`, build
 
 ## What works
 
-- Engine-only wasm build (no renderer/cgame/UI modules).
-- `Com_Init`, `FS_Startup`, `NET_Init` stub, `CL_InitRef` stub,
+- Engine-only wasm build and a renderer-enabled build.
+- `Com_Init`, `FS_Startup`, `NET_Init` stub, `CL_InitRef`,
   `--- Common Initialization Complete ---`.
-- `/jka` and `/userdata` are the compiled defaults; `/jka/base` and `/userdata/base` are visible in the VFS.
-- The browser harness mounts IDBFS at `/userdata` and waits for the initial sync.
-- Boots in Chrome headless and under Node without a wasm trap.
+- `/jka` and `/userdata` are compiled defaults; IDBFS is mounted at `/userdata`.
+- Stub renderer boots without assets; `rd-vanilla` initializes WebGL, parses
+  shaders, loads fonts and presents frames when a fixture is staged.
+- Chrome (SwiftShader) and Node runs, no wasm trap.
 
 ## Known limitations
 
@@ -79,7 +109,9 @@ Defaults: worktree `/tmp/opencode/m1/OpenJK-work`, build
   That does not affect this engine-only build, but side modules (`cgame.wasm`,
   `ui.wasm`, `rd-vanilla.wasm`) will need a CMake upgrade (> 4.3.3) or a
   source-list/side-module build path.
-- The renderer is a no-op stub: the canvas stays blank by design.
+- The default `cl_renderer=stub` keeps the boot test asset-free; `rd-vanilla`
+  needs at least a shader/font fixture to initialize.
+- No cgame or map: the canvas has no scene yet (the `r_m2_clear` probe is test-only).
 - UI is not loaded; `uiStarted` stays false.
 - No cgame, no map, no demo, no assets, no audio, no input.
 - Emscripten's POSIX layer compiles `sys_unix.cpp` today. A dedicated

@@ -1,0 +1,398 @@
+--- a/codemp/client/cl_main.cpp
++++ b/codemp/client/cl_main.cpp
+@@ -2421,7 +2421,8 @@
+ #define DEFAULT_RENDER_LIBRARY "rd-vanilla"
+ 
+ #ifdef __EMSCRIPTEN__
+-// M1 boot stub; M2 replaces this with the WebGL/rd-vanilla path.
++// Statically linked renderer (M2) and the M1 boot fallback.
++extern "C" refexport_t *GetRefAPI( int version, refimport_t *rimp );
+ extern "C" refexport_t *GetRefAPIStub( int version, refimport_t *rimp );
+ #endif
+ 
+@@ -2441,8 +2442,21 @@
+ 
+ #ifdef __EMSCRIPTEN__
+ 	rendererLib = (void *)1; // sentinel: no shared object in the wasm build
+-	GetRefAPI = GetRefAPIStub;
+-	Com_Printf( "Using static boot renderer stub (%s)\n", dllName );
++	if ( !Q_stricmp( cl_renderer->string, "stub" ) )
++	{
++		GetRefAPI = GetRefAPIStub;
++		Com_Printf( "Using static boot renderer stub (%s)\n", dllName );
++	}
++	else
++	{
++#ifdef OPENJK_WASM_RENDERER
++		GetRefAPI = ::GetRefAPI;
++		Com_Printf( "Using statically linked rd-vanilla\n" );
++#else
++		GetRefAPI = GetRefAPIStub;
++		Com_Printf( "Renderer not built; using static boot stub\n" );
++#endif
++	}
+ #else
+ 	if( !(rendererLib = Sys_LoadDll( dllName, qfalse )) && strcmp( cl_renderer->string, cl_renderer->resetString ) )
+ 	{
+--- a/codemp/client/cl_scrn.cpp
++++ b/codemp/client/cl_scrn.cpp
+@@ -420,8 +420,17 @@
+ 	qboolean uiFullscreen = (qboolean)(cls.uiStarted && UIVM_IsFullscreen());
+ 
+ 	if ( !cls.uiStarted ) {
++#ifdef __EMSCRIPTEN__
++		// M2: the browser build has no ui.wasm yet. When a cgame is running,
++		// draw the game; otherwise leave the frame to BeginFrame/EndFrame.
++		if ( cls.cgameStarted && cls.state == CA_ACTIVE ) {
++			CL_CGameRendering( stereoFrame );
++		}
++		return;
++#else
+ 		Com_DPrintf("draw screen without UI loaded\n");
+ 		return;
++#endif
+ 	}
+ 
+ 	// if the menu is going to cover the entire screen, we
+@@ -506,7 +515,11 @@
+ 
+ 	// If there is no VM, there are also no rendering commands issued. Stop the renderer in
+ 	// that case.
++#ifdef __EMSCRIPTEN__
++	if( cls.uiStarted || cls.rendererStarted || com_dedicated->integer )
++#else
+ 	if( cls.uiStarted || com_dedicated->integer )
++#endif
+ 	{
+ 		// if running in stereo, we need to draw the frame twice
+ 		if ( cls.glconfig.stereoEnabled ) {
+--- a/codemp/CMakeLists.txt
++++ b/codemp/CMakeLists.txt
+@@ -555,8 +555,10 @@
+ 	set(MPEngineFiles ${MPEngineFiles} ${MPEngineSysFiles})
+ 
+ 	if(EMSCRIPTEN)
+-		# M1 boot-only static renderer stub (replaced by the WebGL renderer in M2).
+-		set(MPEngineFiles ${MPEngineFiles} "${MPDir}/client/ref_stub.cpp")
++		# M1 boot stub plus M2 WebGL compatibility shims.
++		set(MPEngineFiles ${MPEngineFiles}
++			"${MPDir}/client/ref_stub.cpp"
++			"${MPDir}/client/gl_stubs.cpp")
+ 	endif()
+ 	source_group("sys" FILES ${MPEngineSysFiles})
+ 
+@@ -623,6 +625,12 @@
+ 	set_target_properties(${MPEngine} PROPERTIES INCLUDE_DIRECTORIES "${MPEngineIncludeDirectories}")
+ 	set_target_properties(${MPEngine} PROPERTIES PROJECT_LABEL "MP Client")
+ 	target_link_libraries(${MPEngine} ${MPEngineLibraries})
++
++	if(EMSCRIPTEN AND BuildMPRdVanilla)
++		# M2: statically link rd-vanilla; CL_InitRef calls GetRefAPI directly.
++		target_link_libraries(${MPEngine} ${MPVanillaRenderer})
++		target_compile_definitions(${MPEngine} PRIVATE OPENJK_WASM_RENDERER)
++	endif()
+ endif(BuildMPEngine)
+ 
+ #        Dedicated Server (Engine) (jampded.exe)
+--- a/codemp/qcommon/common.cpp
++++ b/codemp/qcommon/common.cpp
+@@ -1548,6 +1548,10 @@
+ 		else
+ 			minMsec = 1;
+ 
++#ifdef __EMSCRIPTEN__
++		// The browser frame is driven by requestAnimationFrame. Blocking here
++		// (select/poll) starves RAF, input and devtools; let the host pace us.
++#else
+ 		timeVal = Com_TimeVal(minMsec);
+ 		do {
+ 			// Busy sleep the last millisecond for better timeout precision
+@@ -1556,6 +1560,7 @@
+ 			else
+ 				NET_Sleep(timeVal - 1);
+ 		} while( (timeVal = Com_TimeVal(minMsec)) != 0 );
++#endif
+ 		IN_Frame();
+ 
+ 		lastTime = com_frameTime;
+--- a/codemp/rd-common/tr_font.cpp
++++ b/codemp/rd-common/tr_font.cpp
+@@ -22,6 +22,8 @@
+ 
+ #include "qcommon/sstring.h"	// stl string class won't compile in here (MS shite), so use Gil's.
+ #include "tr_local.h"
++
++extern cvar_t *tr_se_language;
+ #include "tr_font.h"
+ 
+ #include "qcommon/stringed_ingame.h"
+@@ -55,9 +57,9 @@
+ 
+ 	// only re-strcmp() when language string has changed from what we knew it as...
+ 	//
+-	if (iSE_Language_ModificationCount != se_language->modificationCount )
++	if (iSE_Language_ModificationCount != tr_se_language->modificationCount )
+ 	{
+-		iSE_Language_ModificationCount  = se_language->modificationCount;
++		iSE_Language_ModificationCount  = tr_se_language->modificationCount;
+ 
+ 				if ( Language_IsRussian()	)	eLanguage = eRussian;
+ 		else	if ( Language_IsPolish()	)	eLanguage = ePolish;
+@@ -1043,9 +1045,9 @@
+ 		{
+ 			int iCappedHeight = mHeight < 16 ? 16: mHeight;	// arbitrary limit on small char sizes because Asian chars don't squash well
+ 
+-			if (m_iLanguageModificationCount != se_language->modificationCount || !AsianGlyphsAvailable() || bForceReEval)
++			if (m_iLanguageModificationCount != tr_se_language->modificationCount || !AsianGlyphsAvailable() || bForceReEval)
+ 			{
+-				m_iLanguageModificationCount  = se_language->modificationCount;
++				m_iLanguageModificationCount  = tr_se_language->modificationCount;
+ 
+ 				int iGlyphTPs = 0;
+ 				const char *psLang = NULL;
+--- a/codemp/rd-vanilla/CMakeLists.txt
++++ b/codemp/rd-vanilla/CMakeLists.txt
+@@ -132,13 +132,23 @@
+ set(MPVanillaRendererLibraries ${MPVanillaRendererLibraries} ${OPENGL_LIBRARIES})
+ 
+ set(MPVanillaRendererIncludeDirectories ${MPVanillaRendererIncludeDirectories} ${OpenJKLibDir})
+-add_library(${MPVanillaRenderer} SHARED ${MPVanillaRendererFiles})
+ 
+-if(NOT MSVC)
++if(EMSCRIPTEN)
++	# The engine target already compiles q_shared.cpp, matcomp.cpp and the
++	# shared/qcommon sources. Linking them again into the same wasm image
++	# would duplicate every symbol, so only renderer-specific files go in.
++	list(REMOVE_ITEM MPVanillaRendererFiles ${MPVanillaRendererCommonFiles})
++	add_library(${MPVanillaRenderer} STATIC ${MPVanillaRendererFiles})
++else()
++	add_library(${MPVanillaRenderer} SHARED ${MPVanillaRendererFiles})
++endif()
++
++if(NOT MSVC AND NOT EMSCRIPTEN)
+ 	# remove "lib" prefix for .so/.dylib files
+ 	set_target_properties(${MPVanillaRenderer} PROPERTIES PREFIX "")
+ endif()
+ 
++if(NOT EMSCRIPTEN)
+ if(WIN32)
+ 	install(TARGETS ${MPVanillaRenderer}
+ 		RUNTIME
+@@ -157,6 +167,7 @@
+ 			COMPONENT ${JKAMPClientComponent})
+ 	endif()
+ endif()
++endif()
+ 
+ set_target_properties(${MPVanillaRenderer} PROPERTIES COMPILE_DEFINITIONS "${SharedDefines}")
+ 
+--- a/codemp/rd-vanilla/qgl.h
++++ b/codemp/rd-vanilla/qgl.h
+@@ -32,6 +32,8 @@
+ // Prevent OS X from including its own out-of-date glext.h
+ #	define GL_GLEXT_LEGACY
+ #	include <OpenGL/gl.h>
++#elif defined(__EMSCRIPTEN__)
++#	include <GL/gl.h>
+ #elif defined( __linux__ )
+ #	include <GL/gl.h>
+ #	include <GL/glx.h>
+--- a/codemp/rd-vanilla/tr_backend.cpp
++++ b/codemp/rd-vanilla/tr_backend.cpp
+@@ -1919,7 +1919,7 @@
+ 
+     GLimp_LogComment( "***************** RB_SwapBuffers *****************\n\n\n" );
+ 
+-    ri.WIN_Present(&window);
++    ri.WIN_Present(&tr_window);
+ 
+ 	backEnd.projection2D = qfalse;
+ 
+--- a/codemp/rd-vanilla/tr_cmds.cpp
++++ b/codemp/rd-vanilla/tr_cmds.cpp
+@@ -471,6 +471,16 @@
+ 	}
+ 	cmd->commandId = RC_SWAP_BUFFERS;
+ 
++#ifdef __EMSCRIPTEN__
++	// M2 bring-up probe: prove the WebGL back buffer reaches the canvas before
++	// cgame/map rendering exists. Off by default; enabled only by test harness.
++	if ( ri.Cvar_VariableIntegerValue( "r_m2_clear" ) ) {
++		qglDisable( GL_SCISSOR_TEST );
++		qglClearColor( 0.15f, 0.65f, 0.25f, 1.0f );
++		qglClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
++	}
++#endif
++
+ 	R_IssueRenderCommands( qtrue );
+ 
+ 	// use the other buffers next frame, because another CPU
+--- a/codemp/rd-vanilla/tr_image.cpp
++++ b/codemp/rd-vanilla/tr_image.cpp
+@@ -708,6 +708,12 @@
+ 			}
+ 		}
+ 
++#ifdef __EMSCRIPTEN__
++		// WebGL1 rejects the legacy/sized internal formats selected above when
++		// the pixel format is GL_RGBA. Upload as RGBA and let the driver pick.
++		*pformat = GL_RGBA;
++#endif
++
+ 		*pUploadWidth = width;
+ 		*pUploadHeight = height;
+ 
+--- a/codemp/rd-vanilla/tr_init.cpp
++++ b/codemp/rd-vanilla/tr_init.cpp
+@@ -34,7 +34,7 @@
+ glconfig_t	glConfig;
+ glconfigExt_t glConfigExt;
+ glstate_t	glState;
+-window_t	window;
++window_t	tr_window;
+ 
+ static void GfxInfo_f( void );
+ 
+@@ -211,7 +211,7 @@
+ Ghoul2 Insert End
+ */
+ 
+-cvar_t *se_language;
++cvar_t *tr_se_language;
+ 
+ cvar_t *r_aviMotionJpegQuality;
+ cvar_t *r_screenshotJpegQuality;
+@@ -314,7 +314,7 @@
+ 		qglVertex2f(x2, y2);
+ 	qglEnd();
+ 
+-	ri.WIN_Present(&window);
++	ri.WIN_Present(&tr_window);
+ }
+ 
+ /*
+@@ -799,7 +799,7 @@
+ 		memset(&glConfig, 0, sizeof(glConfig));
+ 		memset(&glConfigExt, 0, sizeof(glConfigExt));
+ 
+-		window = ri.WIN_Init(&windowDesc, &glConfig);
++		tr_window = ri.WIN_Init(&windowDesc, &glConfig);
+ 
+ 		Com_Printf( "GL_RENDERER: %s\n", (char *)qglGetString (GL_RENDERER) );
+ 
+@@ -821,6 +821,11 @@
+ 		// initialize extensions
+ 		GLimp_InitExtensions( );
+ 
++#ifdef __EMSCRIPTEN__
++		// webgl1 has no guaranteed S3TC; keep the uncompressed path.
++		glConfig.textureCompression = TC_NONE;
++#endif
++
+ 		// set default state
+ 		GL_SetDefaultState();
+ 		R_Splash();	//get something on screen asap
+@@ -1456,6 +1461,11 @@
+ 
+ 		// default is to use triangles if compiled vertex arrays are present
+ 		ri.Printf( PRINT_ALL, "rendering primitives: " );
++#ifdef __EMSCRIPTEN__
++		// WebGL has no compiled-vertex-array extension; glArrayElement is not a
++		// usable path. Always use indexed glDrawElements.
++		primitives = 2;
++#else
+ 		primitives = r_primitives->integer;
+ 		if ( primitives == 0 ) {
+ 			if ( qglLockArraysEXT ) {
+@@ -1464,6 +1474,7 @@
+ 				primitives = 1;
+ 			}
+ 		}
++#endif
+ 		if ( primitives == -1 ) {
+ 			ri.Printf( PRINT_ALL, "none\n" );
+ 		} else if ( primitives == 2 ) {
+@@ -1559,7 +1570,7 @@
+ void R_Register( void )
+ {
+ 	//FIXME: lol badness
+-	se_language = ri.Cvar_Get("se_language", "english", CVAR_ARCHIVE | CVAR_NORESTART, "");
++	tr_se_language = ri.Cvar_Get("se_language", "english", CVAR_ARCHIVE | CVAR_NORESTART, "");
+ 	//
+ 	// latched and archived variables
+ 	//
+--- a/codemp/rd-vanilla/tr_local.h
++++ b/codemp/rd-vanilla/tr_local.h
+@@ -29,8 +29,15 @@
+ #include "ghoul2/ghoul2_shared.h" //rwwRMG - added
+ #include "qgl.h"
+ 
++#if defined(__EMSCRIPTEN__)
++// WebGL1 client-array draws accept only GL_UNSIGNED_SHORT. The renderer's
++// vertex budget (SHADER_MAX_VERTEXES == 1000) fits comfortably in 16 bits.
++#define GL_INDEX_TYPE		GL_UNSIGNED_SHORT
++typedef unsigned short glIndex_t;
++#else
+ #define GL_INDEX_TYPE		GL_UNSIGNED_INT
+ typedef unsigned int glIndex_t;
++#endif
+ 
+ #define LL(x) x=LittleLong(x)
+ 
+@@ -1113,7 +1120,7 @@
+ extern glconfig_t	glConfig;		// outside of TR since it shouldn't be cleared during ref re-init
+ extern glconfigExt_t glConfigExt;
+ extern glstate_t	glState;		// outside of TR since it shouldn't be cleared during ref re-init
+-extern window_t		window;
++extern window_t		tr_window;
+ 
+ 
+ //
+--- a/shared/sys/sys_main.cpp
++++ b/shared/sys/sys_main.cpp
+@@ -26,6 +26,10 @@
+ #include <sys/stat.h>
+ #define __STDC_FORMAT_MACROS
+ #include <inttypes.h>
++#ifdef __EMSCRIPTEN__
++#include <emscripten.h>
++#endif
++
+ #include "qcommon/qcommon.h"
+ #include "sys_local.h"
+ #include "sys_loadlib.h"
+@@ -794,6 +798,13 @@
+ 	Com_Printf( "SDL Version Linked: %d.%d.%d\n", linked.major, linked.minor, linked.patch );
+ #endif
+ 
++#ifdef __EMSCRIPTEN__
++	// The browser owns the frame clock. Returning to JS and letting Emscripten
++	// call Com_Frame from requestAnimationFrame is mandatory: a wasm while(1)
++	// blocks RAF, input, audio and devtools.
++	emscripten_set_main_loop( Com_Frame, 0, 1 );
++	return 0;
++#else
+ 	// main game loop
+ 	while (1)
+ 	{
+@@ -825,4 +836,5 @@
+ 
+ 	// never gets here
+ 	return 0;
++#endif
+ }
+--- a/shared/sys/sys_unix.cpp
++++ b/shared/sys/sys_unix.cpp
+@@ -390,6 +390,12 @@
+ */
+ void Sys_Sleep( int msec )
+ {
++#ifdef __EMSCRIPTEN__
++	// Blocking the browser main thread would stall RAF, input and CDP. The
++	// engine's frame loop does its own pacing; just yield.
++	(void)msec;
++	return;
++#endif
+ 	if( msec == 0 )
+ 		return;
+ 
