@@ -1,0 +1,3 @@
+[submodule "references/OpenJK"]
+	path = references/OpenJK
+	url = git@github.com:JACoders/OpenJK.git
