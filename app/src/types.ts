@@ -113,6 +113,9 @@ export interface DemoSummary {
   duration: number;
   fullSnapshots?: number;
   totalSnapshots?: number;
+  gamestates?: number;
+  levelStartChanges?: number;
+  mapRestarts?: number;
   games: DemoGameSummary[];
 }
 

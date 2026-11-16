@@ -2,12 +2,14 @@ import type { DemoGameSummary, DemoSummary, ScoreboardData, ScoreboardPlayer } f
 
 export function chooseGame(summary: DemoSummary, serverTime: number): DemoGameSummary | null {
   if (!summary.games.length) return null;
-  for (let i = summary.games.length - 1; i >= 0; i--) {
-    const game = summary.games[i];
+  let previous: DemoGameSummary | null = null;
+  for (const game of summary.games) {
+    if (game.startTime <= serverTime) previous = game;
     if (serverTime >= game.startTime && serverTime <= game.endTime) return game;
   }
-  if (serverTime < summary.games[0].startTime) return summary.games[0];
-  return summary.games[summary.games.length - 1];
+  // In the short gap between a game end and the next start, keep the previous
+  // game's stats/timer rather than jumping to the last game.
+  return previous ?? summary.games[0];
 }
 
 export interface PlayerStats {

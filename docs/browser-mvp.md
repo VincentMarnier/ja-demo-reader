@@ -276,13 +276,16 @@ seeking, event-backed kills/deaths and custom vitals; see [m6.md](./m6.md).
 M8 adds:
 
 - A full demo scan that returns a per-game resume: map, time played, match
-  clock, and final score/deaths for every player. Players who left and never
+  clock, and final score/deaths for every player. Map restarts and level-start
+  changes create new games with reset stats. Players who left and never
   returned stay in the list, greyed out.
 - Exact kills/deaths at any seek target, replayed from the parsed event list.
 - OPFS caching of the retail PK3s plus an IndexedDB summary cache, with a
   **Use cached assets** button and **Clear cached game data** in Settings.
-- A playback-speed slider (`0.25×`–`2.5×`, `0.25` steps) and a gamma slider
-  (`r_gamma`).
+- A playback-speed control behind a **Speed** button (`0.25×`–`2.5×`, `0.25`
+  steps) and an immediate gamma slider.
+- Game resumes split on map restarts and level-start changes; stats and the
+  match clock reset for each game.
 - Background engine staging as soon as assets are selected, and a 10-second
   keyframe cache for fast forward seeks plus a restart path for backward seeks.
 - Vertical follow-camera pitch for remote players.

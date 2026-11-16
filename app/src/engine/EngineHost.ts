@@ -38,6 +38,7 @@ export class EngineHost {
   private callbacks: EngineCallbacks;
   private currentDemo: string | null = null;
   private asyncInFlight = false;
+  private queue: Promise<unknown> = Promise.resolve();
 
   constructor(callbacks: EngineCallbacks) {
     this.callbacks = callbacks;
@@ -200,46 +201,50 @@ export class EngineHost {
     }
   }
 
+  private runExclusive<T>(task: () => Promise<T>): Promise<T> {
+    const result = this.queue.then(async () => {
+      this.asyncInFlight = true;
+      try {
+        return await task();
+      } finally {
+        this.asyncInFlight = false;
+      }
+    });
+    this.queue = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
   async playDemo(name: string): Promise<void> {
     if (!this.module?.ccall) throw new Error('Engine is not ready.');
     this.currentDemo = name;
-    this.asyncInFlight = true;
-    try {
-      await this.module.ccall?.('JKA_Resume', null, [], [], { async: true });
+    await this.runExclusive(async () => {
+      await this.module?.ccall?.('JKA_Resume', null, [], [], { async: true });
       // JKA_PlayDemo can yield while the renderer compiles shaders and loads
       // the map; ccall must therefore be asked for its async result.
-      await this.module.ccall?.('JKA_PlayDemo', null, ['string'], [name], { async: true });
-    } finally {
-      this.asyncInFlight = false;
-    }
+      await this.module?.ccall?.('JKA_PlayDemo', null, ['string'], [name], { async: true });
+    });
   }
 
   async setPaused(paused: boolean): Promise<void> {
-    if (!this.module?.ccall || this.asyncInFlight) return;
-    this.asyncInFlight = true;
-    try {
-      await this.module.ccall?.('JKA_SetPaused', null, ['number'], [paused ? 1 : 0], { async: true });
+    if (!this.module?.ccall) return;
+    await this.runExclusive(async () => {
+      await this.module?.ccall?.('JKA_SetPaused', null, ['number'], [paused ? 1 : 0], { async: true });
       if (!paused) {
-        await this.module.ccall?.('JKA_Resume', null, [], [], { async: true });
+        await this.module?.ccall?.('JKA_Resume', null, [], [], { async: true });
       }
-    } finally {
-      this.asyncInFlight = false;
-    }
+    });
   }
 
   async stopDemo(): Promise<void> {
-    if (!this.module?.ccall || this.asyncInFlight) return;
-    this.asyncInFlight = true;
-    try {
-      await this.module.ccall?.('JKA_StopDemo', null, [], [], { async: true });
+    if (!this.module?.ccall) return;
+    await this.runExclusive(async () => {
+      await this.module?.ccall?.('JKA_StopDemo', null, [], [], { async: true });
       // Stop can be pressed while paused; leave the engine loop running so the
       // disconnected scene can render behind the wizard.
-      await this.module.ccall?.('JKA_SetPaused', null, ['number'], [0], { async: true });
-      await this.module.ccall?.('JKA_Resume', null, [], [], { async: true });
+      await this.module?.ccall?.('JKA_SetPaused', null, ['number'], [0], { async: true });
+      await this.module?.ccall?.('JKA_Resume', null, [], [], { async: true });
       this.currentDemo = null;
-    } finally {
-      this.asyncInFlight = false;
-    }
+    });
   }
 
   get demoName(): string | null {
@@ -271,19 +276,16 @@ export class EngineHost {
     }).FS;
     if (!FS) throw new Error('Engine filesystem unavailable.');
     const buffer = await file.arrayBuffer();
-    // Re-adding the same map should replace it rather than fail with EEXIST.
-    try {
-      FS.unlink?.(`/jka/base/${file.name}`);
-    } catch {
-      // not staged yet
-    }
-    FS.createDataFile('/jka/base', file.name, new Uint8Array(buffer), true, false, true);
-    this.asyncInFlight = true;
-    try {
+    await this.runExclusive(async () => {
+      // Re-adding the same map should replace it rather than fail with EEXIST.
+      try {
+        FS.unlink?.(`/jka/base/${file.name}`);
+      } catch {
+        // not staged yet
+      }
+      FS.createDataFile('/jka/base', file.name, new Uint8Array(buffer), true, false, true);
       await this.module?.ccall?.('JKA_RestartFS', null, [], [], { async: true });
-    } finally {
-      this.asyncInFlight = false;
-    }
+    });
   }
 
   async addDemoFile(file: LocalFile): Promise<void> {
@@ -303,42 +305,43 @@ export class EngineHost {
     } catch (err) {
       throw new Error(`could not read ${name}: ${err instanceof Error ? err.message : String(err)}`);
     }
-    // Create every missing parent explicitly: some minimal Emscripten builds
-    // do not expose mkdirTree, and the directory may not exist after a boot
-    // that was started without the demo file.
-    const directories = ['/jka', '/jka/base', '/jka/base/demos'];
-    for (const directory of directories) {
-      try {
-        FS.mkdir?.(directory);
-      } catch {
-        // already exists
+    await this.runExclusive(async () => {
+      // Create every missing parent explicitly: some minimal Emscripten builds
+      // do not expose mkdirTree, and the directory may not exist after a boot
+      // that was started without the demo file.
+      const directories = ['/jka', '/jka/base', '/jka/base/demos'];
+      for (const directory of directories) {
+        try {
+          FS.mkdir?.(directory);
+        } catch {
+          // already exists
+        }
       }
-    }
-    try {
-      FS.unlink?.(`/jka/base/demos/${name}`);
-    } catch {
-      // not staged yet
-    }
-    try {
-      FS.createDataFile('/jka/base/demos', name, new Uint8Array(buffer), true, false, true);
-    } catch (err) {
-      throw new Error(`could not write ${name}: ${err instanceof Error ? err.message : String(err)}`);
-    }
+      try {
+        FS.unlink?.(`/jka/base/demos/${name}`);
+      } catch {
+        // not staged yet
+      }
+      try {
+        FS.createDataFile('/jka/base/demos', name, new Uint8Array(buffer), true, false, true);
+      } catch (err) {
+        throw new Error(`could not write ${name}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    });
   }
 
   async demoInfo(name: string): Promise<DemoInfo | null> {
-    if (!this.module?.ccall || this.asyncInFlight) return null;
-    this.asyncInFlight = true;
+    if (!this.module?.ccall) return null;
     try {
-      const raw = await this.module.ccall('JKA_DemoInfo', 'string', ['string'], [name], { async: true });
-      if (!raw) return null;
-      const info = JSON.parse(String(raw)) as DemoInfo;
-      if (!Number.isFinite(info.first) || !Number.isFinite(info.duration) || info.duration <= 0) return null;
-      return info;
+      return await this.runExclusive(async () => {
+        const raw = await this.module?.ccall?.('JKA_DemoInfo', 'string', ['string'], [name], { async: true });
+        if (!raw) return null;
+        const info = JSON.parse(String(raw)) as DemoInfo;
+        if (!Number.isFinite(info.first) || !Number.isFinite(info.duration) || info.duration <= 0) return null;
+        return info;
+      });
     } catch {
       return null;
-    } finally {
-      this.asyncInFlight = false;
     }
   }
 
@@ -357,14 +360,11 @@ export class EngineHost {
 
   async seekDemo(name: string, targetMs: number): Promise<void> {
     if (!this.module?.ccall) throw new Error('Engine is not ready.');
-    this.asyncInFlight = true;
-    try {
-      await this.module.ccall('JKA_SeekDemo', null, ['string', 'number'], [name, Math.max(0, Math.round(targetMs))], {
+    await this.runExclusive(async () => {
+      await this.module?.ccall?.('JKA_SeekDemo', null, ['string', 'number'], [name, Math.max(0, Math.round(targetMs))], {
         async: true
       });
-    } finally {
-      this.asyncInFlight = false;
-    }
+    });
   }
 
   setCvar(name: string, value: string): void {

@@ -158,6 +158,7 @@ typedef struct {
 	int			startTime;
 	int			endTime;
 	int			levelStartTime;
+	int			observedLevelStartTime;
 	jkaPlayerRecord_t players[JKA_MAX_RECORDS];
 	int			playerCount;
 	jkaEvent_t	events[JKA_MAX_EVENTS];
@@ -174,6 +175,10 @@ static int			jka_firstTime;
 static int			jka_lastTime;
 static int			jka_fullSnapshots;
 static int			jka_totalSnapshots;
+static int			jka_levelStartChanges;
+static int			jka_mapRestartCount;
+static int			jka_lastCommandSeq;
+static qboolean		jka_pendingGameReset;
 static int			jka_lastSnapMessageNum;
 static int			jka_lastEventTime;
 static int			jka_lastEventTarget;
@@ -248,6 +253,10 @@ static void JKA_ResetSummary( void )
 	jka_lastTime = 0;
 	jka_fullSnapshots = 0;
 	jka_totalSnapshots = 0;
+	jka_levelStartChanges = 0;
+	jka_mapRestartCount = 0;
+	jka_lastCommandSeq = 0;
+	jka_pendingGameReset = qfalse;
 	jka_lastSnapMessageNum = -1;
 	jka_lastEventTime = -1;
 	jka_lastEventTarget = -1;
@@ -443,6 +452,7 @@ static void JKA_StartGame( int now, int gamestateId )
 	game->startTime = now;
 	game->endTime = now;
 	game->levelStartTime = atoi( JKA_ConfigString( CS_LEVEL_START_TIME ) );
+	game->observedLevelStartTime = game->levelStartTime;
 	mapname = Info_ValueForKey( JKA_ConfigString( CS_SERVERINFO ), "mapname" );
 	Q_strncpyz( game->map, mapname && mapname[0] ? mapname : "unknown", sizeof( game->map ) );
 	Com_Memcpy( game->baselines, cl.entityBaselines, sizeof( game->baselines ) );
@@ -513,20 +523,57 @@ static void JKA_ProcessSnapshot( int now, int resumeOffset )
 {
 	jkaGame_t *game = JKA_CurrentGame();
 	const char *mapname;
+	int levelStart;
 	int i;
+	qboolean started = qfalse;
 
 	mapname = Info_ValueForKey( JKA_ConfigString( CS_SERVERINFO ), "mapname" );
+	levelStart = atoi( JKA_ConfigString( CS_LEVEL_START_TIME ) );
 	if ( !game || jka_demoGamestates > game->gamestateId ||
 		( mapname && mapname[0] && Q_stricmp( game->map, mapname ) ) ) {
 		JKA_StartGame( now, jka_demoGamestates );
 		game = JKA_CurrentGame();
+		started = qtrue;
+	} else if ( levelStart > 0 && game->observedLevelStartTime > 0 &&
+		levelStart != game->observedLevelStartTime ) {
+		// A map restart or a new game can reuse the same gamestate in some
+		// mods; the level start time is the reliable match boundary.
+		qboolean hasStats = game->eventCount > 0 ? qtrue : qfalse;
+		for ( i = 0; i < game->playerCount && !hasStats; i++ ) {
+			hasStats = ( game->players[i].kills > 0 || game->players[i].deaths > 0 ) ? qtrue : qfalse;
+		}
+		game->observedLevelStartTime = levelStart;
+		if ( hasStats ) {
+			jka_levelStartChanges++;
+			JKA_StartGame( now, jka_demoGamestates );
+			game = JKA_CurrentGame();
+			started = qtrue;
+		}
+		// If the open game has no activity yet, this is the server's delayed
+		// level-start update after a map_restart.  Keep the command-time base
+		// so the match clock starts at zero instead of the old map clock.
 	}
 	if ( !game ) {
 		return;
 	}
+	if ( jka_pendingGameReset ) {
+		jka_pendingGameReset = qfalse;
+		if ( !started ) {
+			jka_levelStartChanges++;
+			JKA_StartGame( now, jka_demoGamestates );
+			game = JKA_CurrentGame();
+			if ( !game ) {
+				return;
+			}
+			// The command-driven restart does not always update CS_LEVEL_START_TIME.
+			game->levelStartTime = now;
+		}
+	}
+	if ( game->levelStartTime == 0 && levelStart > 0 ) {
+		game->levelStartTime = levelStart;
+	}
 
 	game->endTime = now;
-	game->levelStartTime = atoi( JKA_ConfigString( CS_LEVEL_START_TIME ) );
 	JKA_UpdatePlayers( now );
 
 	if ( jka_keyframeCount < JKA_MAX_KEYFRAMES &&
@@ -631,6 +678,8 @@ static int JKA_ScanDemo( const char *name, int targetTime, qboolean stopAtTarget
 		return 0;
 	}
 
+	jka_lastCommandSeq = clc.serverCommandSequence;
+
 	try {
 		while ( FS_Read( &sequence, 4, file ) == 4 ) {
 			if ( FS_Read( &messageLength, 4, file ) != 4 ) {
@@ -651,6 +700,35 @@ static int JKA_ScanDemo( const char *name, int targetTime, qboolean stopAtTarget
 			MSG_Init( &msg, body, sizeof( body ) );
 			msg.cursize = messageLength;
 			CL_ParseServerMessage( &msg );
+
+			if ( jka_lastCommandSeq < clc.serverCommandSequence - MAX_RELIABLE_COMMANDS ) {
+				jka_lastCommandSeq = clc.serverCommandSequence - MAX_RELIABLE_COMMANDS;
+			}
+			for ( int commandSeq = jka_lastCommandSeq + 1; commandSeq <= clc.serverCommandSequence; commandSeq++ ) {
+				const char *command = clc.serverCommands[commandSeq & ( MAX_RELIABLE_COMMANDS - 1 )];
+				char commandName[64];
+				int commandNameLen = 0;
+
+				if ( !command || !command[0] ) {
+					continue;
+				}
+				while ( command[commandNameLen] && command[commandNameLen] != ' ' &&
+					command[commandNameLen] != '\n' && command[commandNameLen] != '\r' &&
+					commandNameLen < 63 ) {
+					commandName[commandNameLen] = command[commandNameLen];
+					commandNameLen++;
+				}
+				commandName[commandNameLen] = 0;
+				if ( !Q_stricmp( commandName, "cs" ) ) {
+					continue;
+				}
+				if ( !Q_stricmp( commandName, "map_restart" ) ||
+					!Q_stricmp( commandName, "newgame" ) || !Q_stricmp( commandName, "newGame" ) ) {
+					jka_mapRestartCount++;
+					jka_pendingGameReset = qtrue;
+				}
+			}
+			jka_lastCommandSeq = clc.serverCommandSequence;
 
 			if ( cl.snap.serverTime > 0 ) {
 				if ( !first ) {
@@ -718,19 +796,31 @@ static void JKA_BuildSummary( void )
 	size_t left = sizeof( jka_summary );
 	int gameIndex;
 
-	JKA_Append( &out, &left, "{\"first\":%d,\"duration\":%d,\"fullSnapshots\":%d,\"totalSnapshots\":%d,\"games\":[",
+	JKA_Append( &out, &left, "{\"first\":%d,\"duration\":%d,\"fullSnapshots\":%d,\"totalSnapshots\":%d,"
+		"\"gamestates\":%d,\"levelStartChanges\":%d,\"mapRestarts\":%d,\"games\":[",
 		jka_firstTime, jka_lastTime > jka_firstTime ? jka_lastTime - jka_firstTime : 0,
-		jka_fullSnapshots, jka_totalSnapshots );
+		jka_fullSnapshots, jka_totalSnapshots, jka_demoGamestates, jka_levelStartChanges, jka_mapRestartCount );
 
+	qboolean firstGame = qtrue;
 	for ( gameIndex = 0; gameIndex < jka_gameCount; gameIndex++ ) {
 		jkaGame_t *game = &jka_games[gameIndex];
 		char map[256];
 		int i;
+		qboolean hasStats = game->eventCount > 0 ? qtrue : qfalse;
+
+		for ( i = 0; i < game->playerCount && !hasStats; i++ ) {
+			hasStats = ( game->players[i].kills > 0 || game->players[i].deaths > 0 ) ? qtrue : qfalse;
+		}
+		// Drop the short zero-stat restart gaps between real games, but keep
+		// the first and last sections so warmup/cooldown are still visible.
+		if ( gameIndex > 0 && gameIndex < jka_gameCount - 1 && !hasStats ) {
+			continue;
+		}
 
 		JKA_JsonEscape( game->map, map, sizeof( map ) );
 		JKA_Append( &out, &left,
 			"%s{\"map\":\"%s\",\"startTime\":%d,\"endTime\":%d,\"duration\":%d,\"levelTime\":%d,\"eventOverflow\":%s,\"players\":[",
-			gameIndex ? "," : "", map, game->startTime, game->endTime,
+			firstGame ? "" : ",", map, game->startTime, game->endTime,
 			game->endTime > game->startTime ? game->endTime - game->startTime : 0,
 			game->levelStartTime > 0 && game->endTime > game->levelStartTime ? game->endTime - game->levelStartTime : 0,
 			game->eventOverflow ? "true" : "false" );
@@ -754,6 +844,7 @@ static void JKA_BuildSummary( void )
 				i ? "," : "", event->time, event->target, event->attacker, event->mod );
 		}
 		JKA_Append( &out, &left, "]}" );
+		firstGame = qfalse;
 	}
 
 	JKA_Append( &out, &left, "]}" );

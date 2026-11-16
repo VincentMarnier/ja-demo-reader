@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { Phase, ScoreboardData, ViewStats } from '../types';
 import { ScoreStrip } from './ScoreStrip';
 import { SeekBar } from './SeekBar';
@@ -34,6 +35,7 @@ interface PlayerProps {
 
 export function Player(props: PlayerProps) {
   const ended = props.phase === 'ended';
+  const [speedOpen, setSpeedOpen] = useState(false);
   // A demo chosen from a file input may not be in the folder list.
   const demos = props.demos.some(d => d.name === props.demoName)
     ? props.demos
@@ -56,20 +58,24 @@ export function Player(props: PlayerProps) {
           disabled={ended}
           onSeek={props.onSeek}
         />
-        <div className="speed-bar">
-          <span className="speed-label">Speed</span>
-          <input
-            type="range"
-            min={0.25}
-            max={2.5}
-            step={0.25}
-            value={props.speed}
-            disabled={ended}
-            aria-label="Playback speed"
-            onChange={event => props.onSpeedChange(Number(event.target.value))}
-          />
-          <strong>{props.speed.toFixed(2)}×</strong>
-        </div>
+        {speedOpen ? (
+          <div className="speed-popover">
+            <div className="speed-popover-head">
+              <span>Playback speed</span>
+              <strong>{props.speed.toFixed(2)}×</strong>
+            </div>
+            <input
+              type="range"
+              min={0.25}
+              max={2.5}
+              step={0.25}
+              value={props.speed}
+              disabled={ended}
+              aria-label="Playback speed"
+              onChange={event => props.onSpeedChange(Number(event.target.value))}
+            />
+          </div>
+        ) : null}
 
         <div className="player-controls">
           <button className="primary" onClick={props.onPause} disabled={ended}>
@@ -85,6 +91,14 @@ export function Player(props: PlayerProps) {
             aria-pressed={props.freeCam}
           >
             Free cam
+          </button>
+          <button
+            type="button"
+            className={speedOpen ? 'secondary active' : 'ghost'}
+            onClick={() => setSpeedOpen(open => !open)}
+            aria-expanded={speedOpen}
+          >
+            Speed {props.speed.toFixed(2)}×
           </button>
           {props.freeCam ? (
             <button

@@ -13,7 +13,7 @@ import { loadDirectoryHandle, saveDirectoryHandle } from './fs/handles';
 import { loadDemoSummary, saveDemoSummary, clearDemoSummaries } from './fs/demoCache';
 import { assetCacheKey, clearAssetCache, loadCachedAssets, saveAssetFiles } from './fs/assetCache';
 import type { CachedAssets } from './fs/assetCache';
-import { mergeScoreboard } from './summary';
+import { chooseGame, mergeScoreboard } from './summary';
 import { formatTime } from './format';
 import { EngineHost } from './engine/EngineHost';
 import { Launcher } from './components/Launcher';
@@ -79,6 +79,7 @@ export default function App() {
   const bootPromiseRef = useRef<Promise<EngineHost> | null>(null);
   const bootForegroundRef = useRef(false);
   const bootedAssetKeyRef = useRef<string | null>(null);
+  const bootGammaRef = useRef(1);
 
   useEffect(() => {
     loadDirectoryHandle().then(handle => setSavedHandle(handle));
@@ -130,11 +131,6 @@ export default function App() {
     engine.setCvar('cg_fov', String(settings.cgFov));
   }, [settings.cgFov, phase]);
 
-  useEffect(() => {
-    const engine = engineRef.current;
-    if (!engine) return;
-    engine.setCvar('r_gamma', String(settings.rGamma));
-  }, [settings.rGamma, phase]);
 
   useEffect(() => {
     const engine = engineRef.current;
@@ -372,6 +368,7 @@ export default function App() {
     const promise = created
       .boot({ canvas, files, signal: controller.signal })
       .then(() => {
+        bootGammaRef.current = settings.rGamma;
         created.setCvar('cg_fov', String(settings.cgFov));
         created.setCvar('r_gamma', String(settings.rGamma));
         created.setCvar('timescale', String(settings.playbackSpeed));
@@ -588,7 +585,9 @@ export default function App() {
 
     // Scanning an eight-minute demo takes a few seconds. Cache the parsed
     // summary per file so the map step and the resume are instant next time.
-    const cacheKey = `${demoFile.name}:${demoFile.file.size}:${demoFile.file.lastModified}`;
+    // Bump this when the summary format or game-boundary logic changes so
+    // old cached summaries are not reused.
+    const cacheKey = `v3:${demoFile.name}:${demoFile.file.size}:${demoFile.file.lastModified}`;
     let summary = await loadDemoSummary(cacheKey);
     let info: DemoInfo | null = null;
     if (summary) {
@@ -753,7 +752,16 @@ export default function App() {
 
   const reload = useCallback(() => window.location.reload(), []);
 
-  const matchTime = formatTime(scoreboard?.levelTime ?? 0);
+  const currentGame = demoSummary && status ? chooseGame(demoSummary, status.serverTime) : null;
+  const matchMs = currentGame && status
+    ? Math.max(0, currentGame.levelTime - Math.max(0, currentGame.endTime - status.serverTime))
+    : (scoreboard?.levelTime ?? 0);
+  const matchTime = formatTime(matchMs);
+  // Textures are uploaded with r_gamma at boot. Apply the difference since
+  // then as a canvas gamma filter so the slider is immediate without a map
+  // reload, and without double-correcting after a reload.
+  const gammaExponent = (bootGammaRef.current || 1) / Math.max(0.5, Math.min(3, settings.rGamma));
+  const gammaFilter = Math.abs(gammaExponent - 1) > 0.01 ? 'url(#jka-gamma)' : undefined;
   const demoPosition = demoInfo && status ? Math.max(0, status.serverTime - demoInfo.first) : 0;
   const showWizard = phase === 'launcher' || phase === 'validating';
   const showPlayer = phase === 'playing' || phase === 'paused' || phase === 'ended';
@@ -782,7 +790,16 @@ export default function App() {
       <main className="main">
         <div className="play-area">
         <div className="stage" ref={stageRef}>
-          <canvas ref={canvasRef} width={800} height={600} className="screen" />
+          <svg className="gamma-filter" aria-hidden="true" focusable="false">
+            <filter id="jka-gamma" colorInterpolationFilters="sRGB">
+              <feComponentTransfer>
+                <feFuncR type="gamma" amplitude={1} exponent={gammaExponent} offset={0} />
+                <feFuncG type="gamma" amplitude={1} exponent={gammaExponent} offset={0} />
+                <feFuncB type="gamma" amplitude={1} exponent={gammaExponent} offset={0} />
+              </feComponentTransfer>
+            </filter>
+          </svg>
+          <canvas ref={canvasRef} width={800} height={600} className="screen" style={{ filter: gammaFilter }} />
 
           {showWizard ? (
             <Launcher
