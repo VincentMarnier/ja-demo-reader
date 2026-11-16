@@ -13,6 +13,288 @@ index 293a3b7b..35dbf209 100644
  	endif()
  
  	if(EMSCRIPTEN AND BuildMPCGame)
+diff --git a/codemp/cgame/cg_consolecmds.c b/codemp/cgame/cg_consolecmds.c
+index 564da918..41174b6b 100644
+--- a/codemp/cgame/cg_consolecmds.c
++++ b/codemp/cgame/cg_consolecmds.c
+@@ -91,6 +91,10 @@ CG_ScoresDown_f
+ */
+ static void CG_ScoresDown_f( void ) {
+ 
++	if ( cg_externalHud.integer ) {
++		return;
++	}
++
+ 	CG_BuildSpectatorString();
+ 	if ( cg.scoresRequestTime + 2000 < cg.time ) {
+ 		// the scores are more than two seconds out of data,
+@@ -118,6 +122,9 @@ CG_ScoresUp_f
+ =================
+ */
+ static void CG_ScoresUp_f( void ) {
++	if ( cg_externalHud.integer ) {
++		return;
++	}
+ 	if ( cg.showScores ) {
+ 		cg.showScores = qfalse;
+ 		cg.scoreFadeTime = cg.time;
+diff --git a/codemp/cgame/cg_draw.c b/codemp/cgame/cg_draw.c
+index 5be40080..44aac184 100644
+--- a/codemp/cgame/cg_draw.c
++++ b/codemp/cgame/cg_draw.c
+@@ -1442,7 +1442,7 @@ void CG_DrawHUD(centity_t	*cent)
+ 
+ 		if (menuHUD)
+ 		{
+-			if (cgs.gametype != GT_POWERDUEL)
++			if ( !cg_externalHud.integer && cgs.gametype != GT_POWERDUEL )
+ 			{
+ 				focusItem = Menu_FindItemByName(menuHUD, "score_line");
+ 				if (focusItem)
+@@ -6651,6 +6651,9 @@ static void CG_DrawTeamVote(void) {
+ }
+ 
+ static qboolean CG_DrawScoreboard() {
++	if ( cg_externalHud.integer ) {
++		return qfalse;
++	}
+ 	return CG_DrawOldScoreboard();
+ }
+ 
+diff --git a/codemp/cgame/cg_view.c b/codemp/cgame/cg_view.c
+index 02297602..7147b17f 100644
+--- a/codemp/cgame/cg_view.c
++++ b/codemp/cgame/cg_view.c
+@@ -26,9 +26,75 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
+ #include "cg_local.h"
+ #include "game/bg_saga.h"
+ 
++#include <stdio.h>
++
+ #define MASK_CAMERACLIP (MASK_SOLID|CONTENTS_PLAYERCLIP)
+ #define CAMERA_SIZE	4
+ 
++// External demo-player camera controls. These are driven by the browser
++// bridge, not by the game input system.
++static qboolean cg_freeCamActive = qfalse;
++static vec3_t cg_freeCamOrigin;
++static vec3_t cg_freeCamAngles;
++static int cg_followClient = -1;
++
++static void CG_ApplyExternalCamera( void )
++{
++	if ( cg_freeCamActive ) {
++		VectorCopy( cg_freeCamOrigin, cg.refdef.vieworg );
++		VectorCopy( cg_freeCamAngles, cg.refdef.viewangles );
++		cg.refdef.viewangles[ROLL] = 0.0f;
++		cg.renderingThirdPerson = qtrue;
++		return;
++	}
++
++	if ( cg_followClient >= 0 && cg_followClient < MAX_CLIENTS ) {
++		clientInfo_t *ci = &cgs.clientinfo[cg_followClient];
++		centity_t *cent = &cg_entities[cg_followClient];
++
++		if ( !ci->infoValid || ci->team == TEAM_SPECTATOR || !cent->currentValid ||
++			cent->currentState.eType != ET_PLAYER ) {
++			cg_followClient = -1;
++			return;
++		}
++
++		{
++			vec3_t yawAngles = { 0.0f, cent->lerpAngles[YAW], 0.0f };
++			vec3_t fwd, right, up;
++			vec3_t cam, focus, dir;
++
++			AngleVectors( yawAngles, fwd, right, up );
++			VectorMA( cent->lerpOrigin, -120.0f, fwd, cam );
++			cam[2] += 20.0f;
++
++			VectorCopy( cent->lerpOrigin, focus );
++			focus[2] += 48.0f;
++			VectorSubtract( focus, cam, dir );
++			vectoangles( dir, cg.refdef.viewangles );
++			cg.refdef.viewangles[ROLL] = 0.0f;
++			VectorCopy( cam, cg.refdef.vieworg );
++			cg.renderingThirdPerson = qtrue;
++		}
++	}
++}
++
++static void CG_JsonEscape( const char *src, char *dst, size_t size )
++{
++	size_t d = 0;
++	while ( *src && d + 2 < size ) {
++		unsigned char c = (unsigned char)*src++;
++		if ( c == '"' || c == '\\' ) {
++			dst[d++] = '\\';
++			dst[d++] = (char)c;
++		} else if ( c < 32 ) {
++			d += (size_t)snprintf( dst + d, size - d, "\\u%04x", c );
++		} else {
++			dst[d++] = (char)c;
++		}
++	}
++	dst[d] = 0;
++}
++
+ 
+ /*
+ =============================================================================
+@@ -1641,6 +1707,9 @@ static int CG_CalcViewValues( void ) {
+ 		}
+ 	}
+ 
++	// external demo-player camera (follow/free cam) overrides the demo view
++	CG_ApplyExternalCamera();
++
+ 	// position eye relative to origin
+ 	AnglesToAxis( cg.refdef.viewangles, cg.refdef.viewaxis );
+ 
+@@ -2649,7 +2718,9 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
+ 		CG_AddPacketEntities(qfalse);			// adter calcViewValues, so predicted player state is correct
+ 		CG_AddMarks();
+ 	}
+-	CG_AddViewWeapon( &cg.predictedPlayerState );
++	if ( !cg_freeCamActive && cg_followClient < 0 ) {
++		CG_AddViewWeapon( &cg.predictedPlayerState );
++	}
+ 
+ 	if ( !cg.hyperspace)
+ 	{
+@@ -2735,3 +2806,111 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
+ 	}
+ }
+ 
++
++
++/*
++=============================================================================
++External demo-player bridge (browser UI)
++=============================================================================
++*/
++
++const char *CG_GetScoreboardJson( void )
++{
++	static char buffer[8192];
++	int len = 0;
++	int i, j;
++	qboolean first = qtrue;
++
++	if ( !cg.snap ) {
++		return "{\"gametype\":0,\"scores1\":-9999,\"scores2\":-9999,\"players\":[]}";
++	}
++
++	len = snprintf( buffer, sizeof( buffer ),
++		"{\"gametype\":%d,\"scores1\":%d,\"scores2\":%d,\"players\":[",
++		cgs.gametype, cgs.scores1, cgs.scores2 );
++
++	for ( i = 0; i < MAX_CLIENTS && len < (int)sizeof( buffer ) - 512; i++ ) {
++		clientInfo_t *ci = &cgs.clientinfo[i];
++		char name[2 * MAX_QPATH];
++		int ping = 0;
++
++		if ( !ci->infoValid || ci->team == TEAM_SPECTATOR || !ci->name[0] ) {
++			continue;
++		}
++
++		for ( j = 0; j < cg.numScores; j++ ) {
++			if ( cg.scores[j].client == i ) {
++				ping = cg.scores[j].ping;
++				break;
++			}
++		}
++
++		CG_JsonEscape( ci->name, name, sizeof( name ) );
++		len += snprintf( buffer + len, sizeof( buffer ) - len,
++			"%s{\"num\":%d,\"name\":\"%s\",\"score\":%d,\"ping\":%d,\"team\":%d}",
++			first ? "" : ",", i, name, ci->score, ping, (int)ci->team );
++		first = qfalse;
++	}
++
++	snprintf( buffer + len, sizeof( buffer ) - len, "]}" );
++	return buffer;
++}
++
++void CG_SetFollowClient( int clientNum )
++{
++	if ( clientNum < 0 || clientNum >= MAX_CLIENTS ) {
++		cg_followClient = -1;
++		return;
++	}
++
++	if ( !cgs.clientinfo[clientNum].infoValid ||
++		cgs.clientinfo[clientNum].team == TEAM_SPECTATOR ) {
++		cg_followClient = -1;
++		return;
++	}
++
++	cg_freeCamActive = qfalse;
++	cg_followClient = clientNum;
++}
++
++const char *CG_EnableFreeCam( void )
++{
++	static char buffer[256];
++
++	if ( !cg.snap ) {
++		return "null";
++	}
++
++	if ( !cg_freeCamActive ) {
++		VectorCopy( cg.refdef.vieworg, cg_freeCamOrigin );
++		VectorCopy( cg.refdef.viewangles, cg_freeCamAngles );
++		cg_freeCamActive = qtrue;
++		cg_followClient = -1;
++	}
++
++	snprintf( buffer, sizeof( buffer ),
++		"{\"x\":%.3f,\"y\":%.3f,\"z\":%.3f,\"pitch\":%.3f,\"yaw\":%.3f,\"roll\":0}",
++		cg_freeCamOrigin[0], cg_freeCamOrigin[1], cg_freeCamOrigin[2],
++		AngleNormalize180( cg_freeCamAngles[PITCH] ),
++		AngleNormalize180( cg_freeCamAngles[YAW] ) );
++	return buffer;
++}
++
++void CG_SetFreeCamPose( float x, float y, float z, float pitch, float yaw, float roll )
++{
++	if ( !cg_freeCamActive ) {
++		return;
++	}
++
++	cg_freeCamOrigin[0] = x;
++	cg_freeCamOrigin[1] = y;
++	cg_freeCamOrigin[2] = z;
++	cg_freeCamAngles[PITCH] = pitch;
++	cg_freeCamAngles[YAW] = yaw;
++	cg_freeCamAngles[ROLL] = roll;
++}
++
++void CG_DisableFreeCam( void )
++{
++	cg_freeCamActive = qfalse;
++}
+diff --git a/codemp/cgame/cg_xcvar.h b/codemp/cgame/cg_xcvar.h
+index ceb9bd8d..1390ff23 100644
+--- a/codemp/cgame/cg_xcvar.h
++++ b/codemp/cgame/cg_xcvar.h
+@@ -66,6 +66,7 @@ XCVAR_DEF( cg_drawIcons,						"1",					NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_drawRadar,						"1",					NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_drawRewards,						"1",					NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_drawScores,						"1",					NULL,					CVAR_ARCHIVE )
++XCVAR_DEF( cg_externalHud,						"0",					NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_drawSnapshot,						"0",					NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_drawStatus,						"1",					NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_drawTeamOverlay,					"0",					CG_TeamOverlayChange,	CVAR_ARCHIVE )
+@@ -85,7 +86,7 @@ XCVAR_DEF( cg_errorDecay,						"100",					NULL,					CVAR_NONE )
+ XCVAR_DEF( cg_fallingBob,						"1",					NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_footsteps,						"3",					NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_forceModel,						"0",					CG_ForceModelChange,	CVAR_ARCHIVE )
+-XCVAR_DEF( cg_fov,								"80",					NULL,					CVAR_ARCHIVE )
++XCVAR_DEF( cg_fov,								"97",					NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_fovAspectAdjust,					"0",					NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_fovViewmodel,						"0",					NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_fovViewmodelAdjust,				"1",					NULL,					CVAR_ARCHIVE )
 diff --git a/codemp/client/cl_main.cpp b/codemp/client/cl_main.cpp
 index 8a7c9d67..26b22f60 100644
 --- a/codemp/client/cl_main.cpp

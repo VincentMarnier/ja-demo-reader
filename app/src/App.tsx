@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
-import type { AssetSelection, DemoStatus, LocalFile, Phase, StageProgress, ValidationResult } from './types';
+import type { AssetSelection, DemoStatus, FreeCamPose, LocalFile, Phase, ScoreboardData, StageProgress, ValidationResult } from './types';
 import { CA_ACTIVE } from './types';
 import { validateDemoFile, validateSelection } from './fs/validate';
 import {
@@ -15,6 +15,10 @@ import { Launcher } from './components/Launcher';
 import { Player } from './components/Player';
 import { ProgressOverlay } from './components/ProgressOverlay';
 import { ErrorPanel } from './components/ErrorPanel';
+import { ScoreboardPanel } from './components/ScoreboardPanel';
+import { SettingsPanel } from './components/SettingsPanel';
+import type { AppSettings } from './settings';
+import { loadSettings, saveSettings } from './settings';
 
 type WizardStep = 'assets' | 'demo' | 'map';
 
@@ -49,6 +53,11 @@ export default function App() {
   const [demoStart, setDemoStart] = useState<number | null>(null);
   const [paused, setPaused] = useState(false);
   const [savedHandle, setSavedHandle] = useState<FileSystemDirectoryHandle | null>(null);
+  const [settings, setSettings] = useState<AppSettings>(loadSettings);
+  const [showSettings, setShowSettings] = useState(false);
+  const [scoreboard, setScoreboard] = useState<ScoreboardData | null>(null);
+  const [freeCam, setFreeCam] = useState(false);
+  const [followClient, setFollowClient] = useState<number | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -59,6 +68,7 @@ export default function App() {
   const mapInputRef = useRef<HTMLInputElement>(null);
   const logCursorRef = useRef(0);
   const playbackRequestedRef = useRef(false);
+  const freeCamPoseRef = useRef<FreeCamPose | null>(null);
 
   useEffect(() => {
     loadDirectoryHandle().then(handle => setSavedHandle(handle));
@@ -76,6 +86,167 @@ export default function App() {
     }, 500);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    saveSettings(settings);
+  }, [settings]);
+
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    engine.setCvar('cg_fov', String(settings.cgFov));
+  }, [settings.cgFov, phase]);
+
+  useEffect(() => {
+    if (phase !== 'playing' && phase !== 'paused' && phase !== 'ended') return;
+    const tick = () => {
+      const data = engineRef.current?.getScoreboard();
+      if (data) setScoreboard(data);
+    };
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, [phase]);
+
+  useEffect(() => {
+    if (!freeCam || phase !== 'playing' || showSettings) return;
+    const engine = engineRef.current;
+    if (!engine) return;
+
+    const keys = settings.freeCamKeys;
+    const codes = new Set(Object.values(keys));
+    const pressed = new Set<string>();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+      if (codes.has(event.code)) {
+        pressed.add(event.code);
+        event.preventDefault();
+      }
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      pressed.delete(event.code);
+    };
+    const clearKeys = () => pressed.clear();
+
+    window.addEventListener('keydown', onKeyDown, { capture: true });
+    window.addEventListener('keyup', onKeyUp, { capture: true });
+    window.addEventListener('blur', clearKeys);
+
+    let raf = 0;
+    let last = performance.now();
+    const tick = (now: number) => {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      const pose = freeCamPoseRef.current;
+      if (!pose) {
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+
+      let yaw = pose.yaw;
+      let pitch = pose.pitch;
+      const lookSpeed = 100;
+      const moveSpeed = 350;
+      const riseSpeed = 220;
+
+      if (pressed.has(keys.lookLeft)) yaw += lookSpeed * dt;
+      if (pressed.has(keys.lookRight)) yaw -= lookSpeed * dt;
+      if (pressed.has(keys.lookUp)) pitch -= lookSpeed * dt;
+      if (pressed.has(keys.lookDown)) pitch += lookSpeed * dt;
+      pitch = Math.max(-89, Math.min(89, pitch));
+
+      const yawRad = (yaw * Math.PI) / 180;
+      const pitchRad = (pitch * Math.PI) / 180;
+      const cp = Math.cos(pitchRad);
+      const sp = Math.sin(pitchRad);
+      const cy = Math.cos(yawRad);
+      const sy = Math.sin(yawRad);
+      const forward = { x: cp * cy, y: cp * sy, z: -sp };
+      const right = { x: sy, y: -cy, z: 0 };
+
+      let { x, y, z } = pose;
+      if (pressed.has(keys.forward)) {
+        x += forward.x * moveSpeed * dt;
+        y += forward.y * moveSpeed * dt;
+        z += forward.z * moveSpeed * dt;
+      }
+      if (pressed.has(keys.back)) {
+        x -= forward.x * moveSpeed * dt;
+        y -= forward.y * moveSpeed * dt;
+        z -= forward.z * moveSpeed * dt;
+      }
+      if (pressed.has(keys.right)) {
+        x += right.x * moveSpeed * dt;
+        y += right.y * moveSpeed * dt;
+      }
+      if (pressed.has(keys.left)) {
+        x -= right.x * moveSpeed * dt;
+        y -= right.y * moveSpeed * dt;
+      }
+      if (pressed.has(keys.up)) z += riseSpeed * dt;
+      if (pressed.has(keys.down)) z -= riseSpeed * dt;
+
+      const next = { x, y, z, pitch, yaw, roll: 0 };
+      freeCamPoseRef.current = next;
+      engine.setFreeCamPose(next);
+      raf = requestAnimationFrame(tick);
+    };
+
+    raf = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('keydown', onKeyDown, { capture: true });
+      window.removeEventListener('keyup', onKeyUp, { capture: true });
+      window.removeEventListener('blur', clearKeys);
+    };
+  }, [freeCam, phase, showSettings, settings.freeCamKeys]);
+
+  const updateSettings = useCallback((patch: Partial<AppSettings>) => {
+    setSettings(prev => ({
+      ...prev,
+      ...patch,
+      freeCamKeys: patch.freeCamKeys ?? prev.freeCamKeys
+    }));
+  }, []);
+
+  const toggleFreeCam = useCallback(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    if (freeCam) {
+      engine.disableFreeCam();
+      setFreeCam(false);
+      return;
+    }
+    const pose = engine.enableFreeCam();
+    if (!pose) return;
+    freeCamPoseRef.current = pose;
+    setFollowClient(null);
+    setFreeCam(true);
+  }, [freeCam]);
+
+  const followPlayer = useCallback((clientNum: number) => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    if (freeCam) {
+      engine.disableFreeCam();
+      setFreeCam(false);
+    }
+    engine.followClient(clientNum);
+    setFollowClient(clientNum);
+  }, [freeCam]);
+
+  const demoCamera = useCallback(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    if (freeCam) {
+      engine.disableFreeCam();
+      setFreeCam(false);
+    }
+    engine.followClient(-1);
+    setFollowClient(null);
+  }, [freeCam]);
 
   const applyAssets = useCallback(async (next: AssetSelection, persistHandle?: FileSystemDirectoryHandle) => {
     setChecking(true);
@@ -164,6 +335,11 @@ export default function App() {
       // Switching demos while the player is open must go back through the
       // map check: the new demo may need a different map PK3.
       if (engineRef.current && (phase === 'playing' || phase === 'paused' || phase === 'ended')) {
+        engineRef.current.disableFreeCam();
+        engineRef.current.followClient(-1);
+        setFreeCam(false);
+        setFollowClient(null);
+        setScoreboard(null);
         setPhase('stopping');
         await engineRef.current.stopDemo();
         playbackRequestedRef.current = false;
@@ -267,6 +443,11 @@ export default function App() {
   const startPlay = useCallback(async () => {
     const engine = engineRef.current;
     if (!engine || !demoFile || mapMissing) return;
+    engine.disableFreeCam();
+    engine.followClient(-1);
+    setFreeCam(false);
+    setFollowClient(null);
+    setScoreboard(null);
     playbackRequestedRef.current = true;
     setDemoStart(null);
     setPaused(false);
@@ -324,6 +505,11 @@ export default function App() {
   const restart = useCallback(async () => {
     const engine = engineRef.current;
     if (!engine || !demoFile) return;
+    engine.disableFreeCam();
+    engine.followClient(-1);
+    setFreeCam(false);
+    setFollowClient(null);
+    setScoreboard(null);
     setPaused(false);
     setDemoStart(null);
     setPhase('loading');
@@ -337,9 +523,15 @@ export default function App() {
   }, [demoFile]);
 
   const stop = useCallback(async () => {
+    const engine = engineRef.current;
+    engine?.disableFreeCam();
+    engine?.followClient(-1);
+    setFreeCam(false);
+    setFollowClient(null);
+    setScoreboard(null);
     setPhase('stopping');
     try {
-      await engineRef.current?.stopDemo();
+      await engine?.stopDemo();
     } catch (error) {
       // The UI should still return to the map step even if the engine call
       // misbehaves; the next Play reuses or reloads the engine.
@@ -374,6 +566,7 @@ export default function App() {
           </div>
         </div>
         <div className="top-actions">
+          <button className="ghost" onClick={() => setShowSettings(true)}>Settings</button>
           <button className="ghost" onClick={() => setShowLogs(v => !v)}>
             {showLogs ? 'Hide log' : 'Show log'}
           </button>
@@ -384,6 +577,7 @@ export default function App() {
       </header>
 
       <main className="main">
+        <div className="play-area">
         <div className="stage" ref={stageRef}>
           <canvas ref={canvasRef} width={800} height={600} className="screen" />
 
@@ -436,18 +630,43 @@ export default function App() {
               elapsed={elapsed}
               paused={paused}
               phase={phase}
+              scores={scoreboard}
+              showScores={settings.showScores}
+              showTimer={settings.showTimer}
+              freeCam={freeCam}
+              followClient={followClient}
               demoName={demoFile?.name ?? ''}
               demos={assetSelection?.demos ?? []}
               onPause={togglePause}
               onRestart={restart}
               onStop={stop}
               onFullscreen={fullscreen}
+              onToggleFreeCam={toggleFreeCam}
+              onDemoCamera={demoCamera}
               onSelectDemo={handleDemoSelect}
               onShowLogs={() => setShowLogs(true)}
             />
           ) : null}
         </div>
+
+        {showPlayer && settings.showScoreboard ? (
+          <ScoreboardPanel
+            data={scoreboard}
+            followClient={followClient}
+            onFollow={followPlayer}
+            onDemoCamera={demoCamera}
+          />
+        ) : null}
+        </div>
       </main>
+
+      {showSettings ? (
+        <SettingsPanel
+          settings={settings}
+          onChange={updateSettings}
+          onClose={() => setShowSettings(false)}
+        />
+      ) : null}
 
       {showLogs ? (
         <aside className="log-panel">

@@ -234,16 +234,26 @@ launcher capture.
   truncated demo shows an explicit map-read error instead of a guess.
 - **Map PK3:** the added PK3 must contain `maps/<map>.bsp` for the map to be
   accepted; the wizard stays on the map step otherwise.
-- **No seek/camera/inspector:** M5/M6.
+- **No seek/inspector:** replay seek and the inspector are later work; follow/free camera and external HUD are in [m5.md](./m5.md).
 - The `r_m2_pause` bridge is still a test/capture hook; normal UI pause uses it.
 
 ---
 
-## 6. Next: M5
+## 6. M5: playback controls and HUD
+
+Implemented:
+
+- Follow-player third-person camera and free-fly camera with rebindable keys.
+- Persistent settings for `cg_fov` (default 97), scoreboard/scores/timer toggles
+  and free-camera bindings.
+- External scoreboard panel, top-center score strip and timer.
+- In-game scoreboard, scores, timer, radar and score line disabled.
+
+See [m5.md](./m5.md) for the controls, bridge calls and evidence.
+
+Remaining M5+ work:
 
 1. Engine speed control and reliable pause/step (`cl_freezeDemo` or custom flag).
 2. Replay-based seek with an index and progress UI.
-3. Camera modes: recorded/first-person, third-person, freecam.
-4. FOV, hide HUD/view model.
-5. Hardware-GPU performance and memory baseline.
-6. Audio unlock and engine sound path if kept in scope.
+3. Hardware-GPU performance and memory baseline.
+4. Audio unlock and engine sound path if kept in scope.

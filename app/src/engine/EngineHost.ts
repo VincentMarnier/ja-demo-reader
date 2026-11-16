@@ -1,4 +1,4 @@
-import type { DemoStatus, LocalFile, StageProgress } from '../types';
+import type { DemoStatus, FreeCamPose, LocalFile, ScoreboardData, StageProgress } from '../types';
 import { prepareAndStage } from '../fs/stage';
 
 interface ModuleLike {
@@ -80,6 +80,11 @@ export class EngineHost {
           '+set', 'r_ssao', '0',
           '+set', 'cg_shadows', '0',
           '+set', 'r_ext_compressed_textures', '0',
+          '+set', 'cg_fov', '97',
+          '+set', 'cg_externalHud', '1',
+          '+set', 'cg_drawScores', '0',
+          '+set', 'cg_drawTimer', '0',
+          '+set', 'cg_drawRadar', '0',
           '+set', 'com_maxfps', '60',
           '+set', 'logfile', '0'
       ];
@@ -274,6 +279,59 @@ export class EngineHost {
     } finally {
       this.asyncInFlight = false;
     }
+  }
+
+  setCvar(name: string, value: string): void {
+    if (!this.module?.ccall || this.asyncInFlight) return;
+    this.module.ccall('JKA_SetCvar', null, ['string', 'string'], [name, value]);
+  }
+
+  getScoreboard(): ScoreboardData | null {
+    if (!this.module?.ccall || this.asyncInFlight) return null;
+    try {
+      const raw = this.module.ccall('JKA_ScoreboardJson', 'string', [], []) as string;
+      if (!raw) return null;
+      const data = JSON.parse(raw) as ScoreboardData;
+      if (!data || !Array.isArray(data.players)) return null;
+      return data;
+    } catch {
+      return null;
+    }
+  }
+
+  followClient(clientNum: number): void {
+    if (!this.module?.ccall || this.asyncInFlight) return;
+    this.module.ccall('JKA_FollowClient', null, ['number'], [clientNum]);
+  }
+
+  enableFreeCam(): FreeCamPose | null {
+    if (!this.module?.ccall || this.asyncInFlight) return null;
+    try {
+      const raw = this.module.ccall('JKA_EnableFreeCam', 'string', [], []) as string;
+      if (!raw || raw === 'null') return null;
+      const pose = JSON.parse(raw) as FreeCamPose;
+      if (![pose.x, pose.y, pose.z, pose.pitch, pose.yaw].every(Number.isFinite)) return null;
+      return pose;
+    } catch {
+      return null;
+    }
+  }
+
+  setFreeCamPose(pose: FreeCamPose): void {
+    if (!this.module?.ccall || this.asyncInFlight) return;
+    this.module.ccall('JKA_SetFreeCamPose', null, ['number', 'number', 'number', 'number', 'number', 'number'], [
+      pose.x,
+      pose.y,
+      pose.z,
+      pose.pitch,
+      pose.yaw,
+      pose.roll
+    ]);
+  }
+
+  disableFreeCam(): void {
+    if (!this.module?.ccall || this.asyncInFlight) return;
+    this.module.ccall('JKA_DisableFreeCam', null, [], []);
   }
 
   downloadLogs(): void {

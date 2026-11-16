@@ -1,4 +1,5 @@
-import type { DemoStatus, Phase } from '../types';
+import type { DemoStatus, Phase, ScoreboardData } from '../types';
+import { ScoreStrip } from './ScoreStrip';
 import { stateLabel } from '../types';
 
 interface PlayerProps {
@@ -7,12 +8,19 @@ interface PlayerProps {
   elapsed: string;
   paused: boolean;
   phase: Phase;
+  scores: ScoreboardData | null;
+  showScores: boolean;
+  showTimer: boolean;
+  freeCam: boolean;
+  followClient: number | null;
   demoName: string;
   demos: Array<{ name: string }>;
   onPause: () => void;
   onRestart: () => void;
   onStop: () => void;
   onFullscreen: () => void;
+  onToggleFreeCam: () => void;
+  onDemoCamera: () => void;
   onSelectDemo: (name: string) => void;
   onShowLogs: () => void;
 }
@@ -27,6 +35,13 @@ export function Player(props: PlayerProps) {
 
   return (
     <div className="player-ui">
+      <ScoreStrip
+        data={props.scores}
+        elapsed={props.elapsed}
+        showScores={props.showScores}
+        showTimer={props.showTimer}
+      />
+
       <div className="hud-top">
         <div className="hud-block">
           <span className="hud-label">Map</span>
@@ -49,6 +64,19 @@ export function Player(props: PlayerProps) {
         <button className="secondary" onClick={props.onRestart}>Restart</button>
         <button className="ghost" onClick={props.onStop}>Stop</button>
         <button className="ghost" onClick={props.onFullscreen}>Fullscreen</button>
+        <button
+          type="button"
+          className={props.freeCam ? 'secondary active' : 'ghost'}
+          onClick={props.onToggleFreeCam}
+          aria-pressed={props.freeCam}
+        >
+          Free cam
+        </button>
+        {props.freeCam || props.followClient !== null ? (
+          <button type="button" className="ghost" onClick={props.onDemoCamera}>
+            Demo camera
+          </button>
+        ) : null}
         <button className="ghost" onClick={props.onShowLogs}>Log</button>
 
         {demos.length > 1 ? (

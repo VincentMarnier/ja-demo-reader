@@ -24,6 +24,13 @@ qboolean jka_engineReady = qfalse;
 
 extern "C" {
 
+// cgame-side bridge (statically linked into the engine).
+const char *CG_GetScoreboardJson( void );
+void CG_SetFollowClient( int clientNum );
+const char *CG_EnableFreeCam( void );
+void CG_SetFreeCamPose( float x, float y, float z, float pitch, float yaw, float roll );
+void CG_DisableFreeCam( void );
+
 EMSCRIPTEN_KEEPALIVE const char *JKA_StatusJson( void )
 {
 	static char buffer[1024];
@@ -186,6 +193,43 @@ EMSCRIPTEN_KEEPALIVE int JKA_HasMap( const char *map )
 EMSCRIPTEN_KEEPALIVE void JKA_RestartFS( void )
 {
 	FS_Restart( 0, qtrue );
+}
+
+EMSCRIPTEN_KEEPALIVE const char *JKA_ScoreboardJson( void )
+{
+	return CG_GetScoreboardJson();
+}
+
+EMSCRIPTEN_KEEPALIVE void JKA_FollowClient( int clientNum )
+{
+	CG_SetFollowClient( clientNum );
+}
+
+EMSCRIPTEN_KEEPALIVE const char *JKA_EnableFreeCam( void )
+{
+	return CG_EnableFreeCam();
+}
+
+EMSCRIPTEN_KEEPALIVE void JKA_SetFreeCamPose( float x, float y, float z, float pitch, float yaw, float roll )
+{
+	CG_SetFreeCamPose( x, y, z, pitch, yaw, roll );
+}
+
+EMSCRIPTEN_KEEPALIVE void JKA_DisableFreeCam( void )
+{
+	CG_DisableFreeCam();
+}
+
+EMSCRIPTEN_KEEPALIVE void JKA_SetCvar( const char *name, const char *value )
+{
+	if ( name && value ) {
+		Cvar_Set( name, value );
+	}
+}
+
+EMSCRIPTEN_KEEPALIVE const char *JKA_GetCvar( const char *name )
+{
+	return name ? Cvar_VariableString( name ) : "";
 }
 
 }

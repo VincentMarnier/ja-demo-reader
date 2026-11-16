@@ -29,6 +29,30 @@ export interface StageProgress {
   current: string;
 }
 
+export interface ScoreboardPlayer {
+  num: number;
+  name: string;
+  score: number;
+  ping: number;
+  team: number;
+}
+
+export interface ScoreboardData {
+  gametype: number;
+  scores1: number;
+  scores2: number;
+  players: ScoreboardPlayer[];
+}
+
+export interface FreeCamPose {
+  x: number;
+  y: number;
+  z: number;
+  pitch: number;
+  yaw: number;
+  roll: number;
+}
+
 export type Phase =
   | 'launcher'
   | 'validating'
