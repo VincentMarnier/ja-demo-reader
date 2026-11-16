@@ -33,8 +33,20 @@ export interface ScoreboardPlayer {
   num: number;
   name: string;
   score: number;
+  deaths: number;
   ping: number;
   team: number;
+}
+
+export interface ViewStats {
+  num: number;
+  name: string;
+  health: number;
+  armor: number;
+  weapon: number;
+  saber: number;
+  saberStyle: number;
+  saberName: string;
 }
 
 export interface ScoreboardData {
@@ -42,6 +54,7 @@ export interface ScoreboardData {
   scores1: number;
   scores2: number;
   players: ScoreboardPlayer[];
+  view?: ViewStats;
 }
 
 export interface FreeCamPose {
@@ -53,6 +66,11 @@ export interface FreeCamPose {
   roll: number;
 }
 
+export interface DemoInfo {
+  first: number;
+  duration: number;
+}
+
 export type Phase =
   | 'launcher'
   | 'validating'
@@ -60,6 +78,7 @@ export type Phase =
   | 'booting'
   | 'loading'
   | 'stopping'
+  | 'seeking'
   | 'ready'
   | 'playing'
   | 'paused'

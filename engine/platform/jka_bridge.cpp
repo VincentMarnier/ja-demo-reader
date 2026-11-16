@@ -99,6 +99,141 @@ EMSCRIPTEN_KEEPALIVE void JKA_Resume( void )
 	emscripten_resume_main_loop();
 }
 
+// Scan demo messages without handing EOF to CL_DemoCompleted (which would
+// throw through the browser bridge). Returns the last serverTime.
+static int JKA_ScanDemo( const char *name, int targetTime, qboolean stopAtTarget,
+	int *firstTime, int *lastTime )
+{
+	char path[256];
+	fileHandle_t file = 0;
+	byte body[MAX_MSGLEN];
+	msg_t msg;
+	int length;
+	int sequence;
+	int messageLength;
+	int first = 0;
+	int last = 0;
+	int count = 0;
+
+	*firstTime = 0;
+	*lastTime = 0;
+
+	if ( !name || !name[0] ) {
+		return 0;
+	}
+
+	Com_sprintf( path, sizeof( path ), "demos/%s.dm_26", name );
+	length = FS_FOpenFileRead( path, &file, qtrue );
+	if ( length < 8 ) {
+		if ( file ) {
+			FS_FCloseFile( file );
+		}
+		return 0;
+	}
+
+	try {
+		while ( FS_Read( &sequence, 4, file ) == 4 ) {
+			if ( FS_Read( &messageLength, 4, file ) != 4 ) {
+				break;
+			}
+			messageLength = LittleLong( messageLength );
+			if ( messageLength == -1 ) {
+				break;
+			}
+			if ( messageLength <= 0 || messageLength > MAX_MSGLEN ) {
+				break;
+			}
+			if ( FS_Read( body, messageLength, file ) != messageLength ) {
+				break;
+			}
+
+			clc.serverMessageSequence = LittleLong( sequence );
+			MSG_Init( &msg, body, sizeof( body ) );
+			msg.cursize = messageLength;
+			CL_ParseServerMessage( &msg );
+
+			if ( cl.snap.serverTime > 0 ) {
+				if ( !first ) {
+					first = cl.snap.serverTime;
+				}
+				last = cl.snap.serverTime;
+			}
+
+			if ( stopAtTarget && cl.snap.serverTime >= targetTime ) {
+				break;
+			}
+
+			if ( ( ++count & 127 ) == 0 ) {
+				emscripten_sleep( 0 );
+			}
+		}
+	} catch ( int ) {
+		// Malformed demo or a demo command that raised Com_Error; return what
+		// has been scanned so far.
+	}
+
+	FS_FCloseFile( file );
+	*firstTime = first;
+	*lastTime = last;
+	return last;
+}
+
+EMSCRIPTEN_KEEPALIVE const char *JKA_DemoInfo( const char *name )
+{
+	static char buffer[128];
+	int first = 0;
+	int last = 0;
+
+	emscripten_pause_main_loop();
+	CL_Disconnect( qtrue );
+	JKA_ScanDemo( name, 0, qfalse, &first, &last );
+	CL_Disconnect( qtrue );
+	emscripten_resume_main_loop();
+
+	Com_sprintf( buffer, sizeof( buffer ),
+		"{\"first\":%d,\"duration\":%d}",
+		first, last > first ? last - first : 0 );
+	return buffer;
+}
+
+EMSCRIPTEN_KEEPALIVE void JKA_SeekDemo( const char *name, int targetTime )
+{
+	if ( !name || !name[0] ) {
+		return;
+	}
+
+	emscripten_pause_main_loop();
+	CL_Disconnect( qtrue );
+
+	try {
+		Cbuf_AddText( va( "demo \"%s\"\n", name ) );
+		Cbuf_Execute();
+	} catch ( int ) {
+		emscripten_resume_main_loop();
+		return;
+	}
+
+	if ( clc.demofile ) {
+		int count = 0;
+		try {
+			while ( clc.demofile && cl.snap.serverTime < targetTime ) {
+				CL_ReadDemoMessage();
+				if ( !clc.demofile ) {
+					break;
+				}
+				if ( ( ++count & 127 ) == 0 ) {
+					emscripten_sleep( 0 );
+				}
+			}
+		} catch ( int ) {
+			// The target was at or past the end; leave the ended state to the
+			// normal status bridge.
+		}
+	}
+
+	emscripten_resume_main_loop();
+}
+
 // Parse the first gamestate of a demo and return CS_SERVERINFO's mapname.
 // Uses the engine's own MSG/Huffman decoder, so no second parser is needed.
 EMSCRIPTEN_KEEPALIVE const char *JKA_ParseDemoMap( const char *name )

@@ -13,19 +13,22 @@ export function ProgressOverlay({ progress, phase, onCancel }: ProgressOverlayPr
   const percent = total > 0 ? Math.min(100, (loaded / total) * 100) : 0;
   const loading = phase === 'loading';
   const stopping = phase === 'stopping';
+  const seeking = phase === 'seeking';
   const booting = phase === 'booting';
 
   return (
     <div className="overlay">
       <div className="panel compact">
         <div className="eyebrow">
-          {stopping ? 'Stopping demo' : loading ? 'Loading demo' : booting ? 'Starting engine' : 'Staging assets'}
+          {seeking ? 'Seeking demo' : stopping ? 'Stopping demo' : loading ? 'Loading demo' : booting ? 'Starting engine' : 'Staging assets'}
         </div>
         <h2>
-          {stopping ? 'Returning to the map' : loading ? 'Preparing the map' : booting ? 'Preparing the player' : 'Reading local files'}
+          {seeking ? 'Jumping to the selected time' : stopping ? 'Returning to the map' : loading ? 'Preparing the map' : booting ? 'Preparing the player' : 'Reading local files'}
         </h2>
         <p className="muted">
-          {stopping
+          {seeking
+            ? 'Rebuilding the demo state at the requested time.'
+            : stopping
             ? 'The engine is tearing down the demo.'
             : loading
             ? 'The engine is loading the map and compiling shaders. The interface stays responsive; this can take a moment.'
@@ -33,7 +36,7 @@ export function ProgressOverlay({ progress, phase, onCancel }: ProgressOverlayPr
               ? 'The wasm engine is initialising. The first frame can take a moment.'
               : progress?.current || 'Preparing the virtual filesystem…'}
         </p>
-        {!loading && !stopping ? (
+        {!loading && !stopping && !seeking ? (
           <>
             <div className="progress">
               <div className="progress-bar" style={{ width: `${percent}%` }} />

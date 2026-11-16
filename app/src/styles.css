@@ -544,3 +544,88 @@ summary { cursor: pointer; color: var(--muted); }
   .settings-overlay { padding: 12px; }
   .settings-panel { padding: 18px; }
 }
+
+.player-bottom {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+}
+.seek-bar {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px 4px;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.62), transparent);
+}
+.seek-bar input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  height: 18px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.seek-time {
+  min-width: 38px;
+  text-align: right;
+  color: var(--muted);
+  font-family: ui-monospace, "SF Mono", Menlo, consolas, monospace;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.seek-time.duration { text-align: left; }
+@media (max-width: 720px) {
+  .seek-bar { padding: 6px 8px 2px; gap: 6px; }
+  .seek-time { min-width: 30px; font-size: 9px; }
+}
+
+.vitals-hud {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 14px 0;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.66), transparent);
+}
+.vitals-left { min-width: 170px; }
+.vitals-name {
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 190px;
+}
+.vital-row { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+.vital-label { width: 18px; color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: 0.08em; }
+.vital-track { flex: 1; height: 6px; border-radius: 999px; overflow: hidden; background: rgba(255, 255, 255, 0.1); }
+.vital-fill { height: 100%; transition: width 0.2s linear; }
+.vital-track.health .vital-fill { background: linear-gradient(90deg, #ff5d5d, #ffb347); }
+.vital-track.armor .vital-fill { background: linear-gradient(90deg, #5fb3ff, #8ce1ff); }
+.vital-number { min-width: 28px; text-align: right; color: var(--text); font-size: 10px; font-variant-numeric: tabular-nums; }
+.vitals-right { text-align: right; font-size: 11px; max-width: 190px; }
+.vitals-right strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vitals-label {
+  display: block;
+  color: var(--muted);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 2px;
+}
+@media (max-width: 720px) {
+  .vitals-hud { padding: 6px 8px 0; gap: 8px; }
+  .vitals-left { min-width: 130px; }
+  .vitals-right { max-width: 120px; }
+  .vitals-name { max-width: 130px; }
+}
+
+.scoreboard-score small {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 400;
+}

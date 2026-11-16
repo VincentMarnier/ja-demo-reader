@@ -25,7 +25,9 @@ function PlayerRow(props: {
   const { player } = props;
   return (
     <div className={`scoreboard-row team-${player.team}`}>
-      <span className="scoreboard-score">{player.score}</span>
+      <span className="scoreboard-score" title={`${player.score} kills / ${player.deaths} deaths`}>
+        {player.score}<small>/{player.deaths}</small>
+      </span>
       <span className="scoreboard-name" title={stripColors(player.name)}>
         {stripColors(player.name)}
       </span>
@@ -86,7 +88,7 @@ export function ScoreboardPanel({ data, followClient, onFollow, onDemoCamera }: 
         ))
       )}
 
-      <p className="scoreboard-hint">Follow a player for a third-person camera, or use Free cam.</p>
+      <p className="scoreboard-hint">Follow a player for a first-person model camera, or use Free cam.</p>
     </aside>
   );
 }

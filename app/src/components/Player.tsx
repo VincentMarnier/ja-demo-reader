@@ -1,5 +1,7 @@
-import type { DemoStatus, Phase, ScoreboardData } from '../types';
+import type { DemoStatus, Phase, ScoreboardData, ViewStats } from '../types';
 import { ScoreStrip } from './ScoreStrip';
+import { SeekBar } from './SeekBar';
+import { VitalsHud } from './VitalsHud';
 import { stateLabel } from '../types';
 
 interface PlayerProps {
@@ -9,10 +11,14 @@ interface PlayerProps {
   paused: boolean;
   phase: Phase;
   scores: ScoreboardData | null;
+  view: ViewStats | null;
   showScores: boolean;
   showTimer: boolean;
+  currentMs: number;
+  durationMs: number;
   freeCam: boolean;
   followClient: number | null;
+  pointerLocked: boolean;
   demoName: string;
   demos: Array<{ name: string }>;
   onPause: () => void;
@@ -21,6 +27,8 @@ interface PlayerProps {
   onFullscreen: () => void;
   onToggleFreeCam: () => void;
   onDemoCamera: () => void;
+  onCaptureMouse: () => void;
+  onSeek: (positionMs: number) => void;
   onSelectDemo: (name: string) => void;
   onShowLogs: () => void;
 }
@@ -57,36 +65,55 @@ export function Player(props: PlayerProps) {
         </div>
       </div>
 
-      <div className="player-controls">
-        <button className="primary" onClick={props.onPause} disabled={ended}>
-          {props.paused ? 'Resume' : 'Pause'}
-        </button>
-        <button className="secondary" onClick={props.onRestart}>Restart</button>
-        <button className="ghost" onClick={props.onStop}>Stop</button>
-        <button className="ghost" onClick={props.onFullscreen}>Fullscreen</button>
-        <button
-          type="button"
-          className={props.freeCam ? 'secondary active' : 'ghost'}
-          onClick={props.onToggleFreeCam}
-          aria-pressed={props.freeCam}
-        >
-          Free cam
-        </button>
-        {props.freeCam || props.followClient !== null ? (
-          <button type="button" className="ghost" onClick={props.onDemoCamera}>
-            Demo camera
-          </button>
-        ) : null}
-        <button className="ghost" onClick={props.onShowLogs}>Log</button>
+      <div className="player-bottom">
+        <VitalsHud view={props.view} />
+        <SeekBar
+          currentMs={props.currentMs}
+          durationMs={props.durationMs}
+          disabled={ended}
+          onSeek={props.onSeek}
+        />
 
-        {demos.length > 1 ? (
-          <label className="inline-field">
-            <span>Demo</span>
-            <select value={props.demoName} onChange={e => props.onSelectDemo(e.target.value)}>
-              {demos.map(demo => <option key={demo.name} value={demo.name}>{demo.name}</option>)}
-            </select>
-          </label>
-        ) : null}
+        <div className="player-controls">
+          <button className="primary" onClick={props.onPause} disabled={ended}>
+            {props.paused ? 'Resume' : 'Pause'}
+          </button>
+          <button className="secondary" onClick={props.onRestart}>Restart</button>
+          <button className="ghost" onClick={props.onStop}>Stop</button>
+          <button className="ghost" onClick={props.onFullscreen}>Fullscreen</button>
+          <button
+            type="button"
+            className={props.freeCam ? 'secondary active' : 'ghost'}
+            onClick={props.onToggleFreeCam}
+            aria-pressed={props.freeCam}
+          >
+            Free cam
+          </button>
+          {props.freeCam ? (
+            <button
+              type="button"
+              className={props.pointerLocked ? 'secondary active' : 'ghost'}
+              onClick={props.onCaptureMouse}
+            >
+              {props.pointerLocked ? 'Mouse captured' : 'Capture mouse'}
+            </button>
+          ) : null}
+          {props.freeCam || props.followClient !== null ? (
+            <button type="button" className="ghost" onClick={props.onDemoCamera}>
+              Demo camera
+            </button>
+          ) : null}
+          <button className="ghost" onClick={props.onShowLogs}>Log</button>
+
+          {demos.length > 1 ? (
+            <label className="inline-field">
+              <span>Demo</span>
+              <select value={props.demoName} onChange={e => props.onSelectDemo(e.target.value)}>
+                {demos.map(demo => <option key={demo.name} value={demo.name}>{demo.name}</option>)}
+              </select>
+            </label>
+          ) : null}
+        </div>
       </div>
 
       {ended ? (

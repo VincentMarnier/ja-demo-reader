@@ -1,4 +1,4 @@
-import type { DemoStatus, FreeCamPose, LocalFile, ScoreboardData, StageProgress } from '../types';
+import type { DemoInfo, DemoStatus, FreeCamPose, LocalFile, ScoreboardData, StageProgress } from '../types';
 import { prepareAndStage } from '../fs/stage';
 
 interface ModuleLike {
@@ -85,6 +85,9 @@ export class EngineHost {
           '+set', 'cg_drawScores', '0',
           '+set', 'cg_drawTimer', '0',
           '+set', 'cg_drawRadar', '0',
+          '+set', 'cg_drawStatus', '0',
+          '+set', 'cg_hudFiles', '0',
+          '+set', 'cg_drawCrosshair', '0',
           '+set', 'com_maxfps', '60',
           '+set', 'logfile', '0'
       ];
@@ -276,6 +279,34 @@ export class EngineHost {
     this.asyncInFlight = true;
     try {
       await this.module?.ccall?.('JKA_RestartFS', null, [], [], { async: true });
+    } finally {
+      this.asyncInFlight = false;
+    }
+  }
+
+  async demoInfo(name: string): Promise<DemoInfo | null> {
+    if (!this.module?.ccall || this.asyncInFlight) return null;
+    this.asyncInFlight = true;
+    try {
+      const raw = await this.module.ccall('JKA_DemoInfo', 'string', ['string'], [name], { async: true });
+      if (!raw) return null;
+      const info = JSON.parse(String(raw)) as DemoInfo;
+      if (!Number.isFinite(info.first) || !Number.isFinite(info.duration) || info.duration <= 0) return null;
+      return info;
+    } catch {
+      return null;
+    } finally {
+      this.asyncInFlight = false;
+    }
+  }
+
+  async seekDemo(name: string, targetMs: number): Promise<void> {
+    if (!this.module?.ccall) throw new Error('Engine is not ready.');
+    this.asyncInFlight = true;
+    try {
+      await this.module.ccall('JKA_SeekDemo', null, ['string', 'number'], [name, Math.max(0, Math.round(targetMs))], {
+        async: true
+      });
     } finally {
       this.asyncInFlight = false;
     }

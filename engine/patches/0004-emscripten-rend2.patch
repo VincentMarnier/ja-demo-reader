@@ -61,11 +61,50 @@ index 5be40080..44aac184 100644
  	return CG_DrawOldScoreboard();
  }
  
+diff --git a/codemp/cgame/cg_event.c b/codemp/cgame/cg_event.c
+index 45af332e..21b44130 100644
+--- a/codemp/cgame/cg_event.c
++++ b/codemp/cgame/cg_event.c
+@@ -153,6 +153,8 @@ static void CG_Obituary( entityState_t *ent ) {
+ 	if ( !targetInfo ) {
+ 		return;
+ 	}
++
++	CG_ExternalTrackDeath( target, attacker );
+ 	Q_strncpyz( targetName, Info_ValueForKey( targetInfo, "n" ), sizeof(targetName) - 2);
+ 	strcat( targetName, S_COLOR_WHITE );
+ 
+diff --git a/codemp/cgame/cg_local.h b/codemp/cgame/cg_local.h
+index 52ab3fb5..9b5a374a 100644
+--- a/codemp/cgame/cg_local.h
++++ b/codemp/cgame/cg_local.h
+@@ -1893,6 +1893,8 @@ void CG_OutOfAmmoChange( int oldWeapon );	// should this be in pmove?
+ // cg_marks.c
+ //
+ void	CG_InitMarkPolys( void );
++void	CG_ExternalResetStats( void );
++void	CG_ExternalTrackDeath( int target, int attacker );
+ void	CG_AddMarks( void );
+ void	CG_ImpactMark( qhandle_t markShader,
+ 				    const vec3_t origin, const vec3_t dir,
+diff --git a/codemp/cgame/cg_main.c b/codemp/cgame/cg_main.c
+index 12bbd470..1a9c38c9 100644
+--- a/codemp/cgame/cg_main.c
++++ b/codemp/cgame/cg_main.c
+@@ -2408,6 +2408,8 @@ void CG_Init( int serverMessageNum, int serverCommandSequence, int clientNum )
+ 
+ 	Rand_Init( trap->Milliseconds() );
+ 
++	CG_ExternalResetStats();
++
+ 	BG_InitAnimsets(); //clear it out
+ 
+ 	trap->RegisterSharedMemory( cg.sharedBuffer.raw );
 diff --git a/codemp/cgame/cg_view.c b/codemp/cgame/cg_view.c
-index 02297602..7147b17f 100644
+index 02297602..48e06bfc 100644
 --- a/codemp/cgame/cg_view.c
 +++ b/codemp/cgame/cg_view.c
-@@ -26,9 +26,75 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
+@@ -26,9 +26,93 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
  #include "cg_local.h"
  #include "game/bg_saga.h"
  
@@ -80,6 +119,25 @@ index 02297602..7147b17f 100644
 +static vec3_t cg_freeCamOrigin;
 +static vec3_t cg_freeCamAngles;
 +static int cg_followClient = -1;
++static int cg_externalKills[MAX_CLIENTS];
++static int cg_externalDeaths[MAX_CLIENTS];
++
++void CG_ExternalResetStats( void )
++{
++	Com_Memset( cg_externalKills, 0, sizeof( cg_externalKills ) );
++	Com_Memset( cg_externalDeaths, 0, sizeof( cg_externalDeaths ) );
++}
++
++void CG_ExternalTrackDeath( int target, int attacker )
++{
++	if ( target >= 0 && target < MAX_CLIENTS && cgs.clientinfo[target].team != TEAM_SPECTATOR ) {
++		cg_externalDeaths[target]++;
++	}
++	if ( attacker >= 0 && attacker < MAX_CLIENTS && attacker != target &&
++		cgs.clientinfo[attacker].team != TEAM_SPECTATOR ) {
++		cg_externalKills[attacker]++;
++	}
++}
 +
 +static void CG_ApplyExternalCamera( void )
 +{
@@ -102,21 +160,20 @@ index 02297602..7147b17f 100644
 +		}
 +
 +		{
-+			vec3_t yawAngles = { 0.0f, cent->lerpAngles[YAW], 0.0f };
-+			vec3_t fwd, right, up;
-+			vec3_t cam, focus, dir;
++			// Put the camera at the followed player model's eye position and use
++			// that player's view angles when the client exposes them.
++			VectorCopy( cent->lerpOrigin, cg.refdef.vieworg );
++			cg.refdef.vieworg[2] += DEFAULT_VIEWHEIGHT;
 +
-+			AngleVectors( yawAngles, fwd, right, up );
-+			VectorMA( cent->lerpOrigin, -120.0f, fwd, cam );
-+			cam[2] += 20.0f;
-+
-+			VectorCopy( cent->lerpOrigin, focus );
-+			focus[2] += 48.0f;
-+			VectorSubtract( focus, cam, dir );
-+			vectoangles( dir, cg.refdef.viewangles );
++			if ( cg_followClient == cg.snap->ps.clientNum ) {
++				VectorCopy( cg.predictedPlayerState.viewangles, cg.refdef.viewangles );
++			} else {
++				// Remote demo entities do not carry the recorded player's view
++				// angles, so use the model's facing direction.
++				VectorCopy( cent->lerpAngles, cg.refdef.viewangles );
++			}
 +			cg.refdef.viewangles[ROLL] = 0.0f;
-+			VectorCopy( cam, cg.refdef.vieworg );
-+			cg.renderingThirdPerson = qtrue;
++			cg.renderingThirdPerson = qfalse;
 +		}
 +	}
 +}
@@ -141,7 +198,7 @@ index 02297602..7147b17f 100644
  
  /*
  =============================================================================
-@@ -1641,6 +1707,9 @@ static int CG_CalcViewValues( void ) {
+@@ -1641,6 +1725,9 @@ static int CG_CalcViewValues( void ) {
  		}
  	}
  
@@ -151,7 +208,7 @@ index 02297602..7147b17f 100644
  	// position eye relative to origin
  	AnglesToAxis( cg.refdef.viewangles, cg.refdef.viewaxis );
  
-@@ -2649,7 +2718,9 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
+@@ -2649,7 +2736,9 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
  		CG_AddPacketEntities(qfalse);			// adter calcViewValues, so predicted player state is correct
  		CG_AddMarks();
  	}
@@ -162,7 +219,7 @@ index 02297602..7147b17f 100644
  
  	if ( !cg.hyperspace)
  	{
-@@ -2735,3 +2806,111 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
+@@ -2735,3 +2824,165 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
  	}
  }
  
@@ -193,6 +250,8 @@ index 02297602..7147b17f 100644
 +		clientInfo_t *ci = &cgs.clientinfo[i];
 +		char name[2 * MAX_QPATH];
 +		int ping = 0;
++		int score;
++		int kills;
 +
 +		if ( !ci->infoValid || ci->team == TEAM_SPECTATOR || !ci->name[0] ) {
 +			continue;
@@ -205,14 +264,66 @@ index 02297602..7147b17f 100644
 +			}
 +		}
 +
++		kills = cg_externalKills[i];
++		score = ci->score > kills ? ci->score : kills;
++
 +		CG_JsonEscape( ci->name, name, sizeof( name ) );
 +		len += snprintf( buffer + len, sizeof( buffer ) - len,
-+			"%s{\"num\":%d,\"name\":\"%s\",\"score\":%d,\"ping\":%d,\"team\":%d}",
-+			first ? "" : ",", i, name, ci->score, ping, (int)ci->team );
++			"%s{\"num\":%d,\"name\":\"%s\",\"score\":%d,\"deaths\":%d,\"ping\":%d,\"team\":%d}",
++			first ? "" : ",", i, name, score, cg_externalDeaths[i], ping, (int)ci->team );
 +		first = qfalse;
 +	}
 +
-+	snprintf( buffer + len, sizeof( buffer ) - len, "]}" );
++	{
++		int viewClient = cg_followClient;
++		clientInfo_t *vci;
++		playerState_t *vps = NULL;
++		char viewName[2 * MAX_QPATH];
++		char saberName[2 * SABER_NAME_LENGTH];
++		int health = -1;
++		int armor = -1;
++		int weapon = 0;
++		int saberStyle = -1;
++		int saber = 0;
++
++		if ( viewClient < 0 || viewClient >= MAX_CLIENTS ) {
++			viewClient = cg.snap->ps.clientNum;
++		}
++		vci = ( viewClient >= 0 && viewClient < MAX_CLIENTS ) ? &cgs.clientinfo[viewClient] : NULL;
++
++		if ( viewClient == cg.snap->ps.clientNum ) {
++			vps = &cg.predictedPlayerState;
++			health = vps->stats[STAT_HEALTH];
++			armor = vps->stats[STAT_ARMOR];
++			weapon = vps->weapon;
++			saberStyle = vps->fd.saberAnimLevel;
++		} else if ( viewClient >= 0 && viewClient < MAX_CLIENTS ) {
++			// Base JKA snapshots do not carry remote health/armor or saber
++			// style. Duel health arrives separately in the duel configstring.
++			centity_t *cent = &cg_entities[viewClient];
++			weapon = cent->currentState.weapon;
++			if ( cgs.duelist1 == viewClient ) {
++				health = cgs.duelist1health;
++			} else if ( cgs.duelist2 == viewClient ) {
++				health = cgs.duelist2health;
++			} else if ( cgs.duelist3 == viewClient ) {
++				health = cgs.duelist3health;
++			}
++		}
++
++		saber = ( weapon == WP_SABER ) ? 1 : 0;
++		CG_JsonEscape( vci && vci->name[0] ? vci->name : "Demo player", viewName, sizeof( viewName ) );
++		CG_JsonEscape( vci ? vci->saberName : "", saberName, sizeof( saberName ) );
++
++		len += snprintf( buffer + len, sizeof( buffer ) - len,
++			"],\"view\":{\"num\":%d,\"name\":\"%s\",\"health\":%d,\"armor\":%d,"
++			"\"weapon\":%d,\"saber\":%d,\"saberStyle\":%d,\"saberName\":\"%s\"}}",
++			viewClient, viewName, health, armor, weapon, saber, saberStyle, saberName );
++		if ( len >= (int)sizeof( buffer ) ) {
++			buffer[sizeof( buffer ) - 1] = 0;
++		}
++	}
++
 +	return buffer;
 +}
 +

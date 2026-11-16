@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
-import type { AssetSelection, DemoStatus, FreeCamPose, LocalFile, Phase, ScoreboardData, StageProgress, ValidationResult } from './types';
+import type { AssetSelection, DemoInfo, DemoStatus, FreeCamPose, LocalFile, Phase, ScoreboardData, StageProgress, ValidationResult } from './types';
 import { CA_ACTIVE } from './types';
 import { validateDemoFile, validateSelection } from './fs/validate';
 import {
@@ -56,8 +56,10 @@ export default function App() {
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
   const [showSettings, setShowSettings] = useState(false);
   const [scoreboard, setScoreboard] = useState<ScoreboardData | null>(null);
+  const [demoInfo, setDemoInfo] = useState<DemoInfo | null>(null);
   const [freeCam, setFreeCam] = useState(false);
   const [followClient, setFollowClient] = useState<number | null>(null);
+  const [pointerLocked, setPointerLocked] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -90,6 +92,18 @@ export default function App() {
   useEffect(() => {
     saveSettings(settings);
   }, [settings]);
+
+  useEffect(() => {
+    const handler = () => setPointerLocked(document.pointerLockElement === stageRef.current);
+    document.addEventListener('pointerlockchange', handler);
+    return () => document.removeEventListener('pointerlockchange', handler);
+  }, []);
+
+  useEffect(() => {
+    if ((!freeCam || phase !== 'playing' || showSettings) && document.pointerLockElement) {
+      document.exitPointerLock();
+    }
+  }, [freeCam, phase, showSettings]);
 
   useEffect(() => {
     const engine = engineRef.current;
@@ -129,10 +143,17 @@ export default function App() {
       pressed.delete(event.code);
     };
     const clearKeys = () => pressed.clear();
+    const mouseDelta = { x: 0, y: 0 };
+    const onMouseMove = (event: MouseEvent) => {
+      if (document.pointerLockElement !== stageRef.current) return;
+      mouseDelta.x += event.movementX;
+      mouseDelta.y += event.movementY;
+    };
 
     window.addEventListener('keydown', onKeyDown, { capture: true });
     window.addEventListener('keyup', onKeyUp, { capture: true });
     window.addEventListener('blur', clearKeys);
+    document.addEventListener('mousemove', onMouseMove);
 
     let raf = 0;
     let last = performance.now();
@@ -155,6 +176,10 @@ export default function App() {
       if (pressed.has(keys.lookRight)) yaw -= lookSpeed * dt;
       if (pressed.has(keys.lookUp)) pitch -= lookSpeed * dt;
       if (pressed.has(keys.lookDown)) pitch += lookSpeed * dt;
+      yaw -= mouseDelta.x * 0.12;
+      pitch += mouseDelta.y * 0.12;
+      mouseDelta.x = 0;
+      mouseDelta.y = 0;
       pitch = Math.max(-89, Math.min(89, pitch));
 
       const yawRad = (yaw * Math.PI) / 180;
@@ -200,6 +225,7 @@ export default function App() {
       window.removeEventListener('keydown', onKeyDown, { capture: true });
       window.removeEventListener('keyup', onKeyUp, { capture: true });
       window.removeEventListener('blur', clearKeys);
+      document.removeEventListener('mousemove', onMouseMove);
     };
   }, [freeCam, phase, showSettings, settings.freeCamKeys]);
 
@@ -211,11 +237,21 @@ export default function App() {
     }));
   }, []);
 
+  const captureMouse = useCallback(() => {
+    const stage = stageRef.current;
+    if (!stage?.requestPointerLock) return;
+    const result = stage.requestPointerLock();
+    if (result && typeof (result as Promise<void>).catch === 'function') {
+      (result as Promise<void>).catch(() => undefined);
+    }
+  }, []);
+
   const toggleFreeCam = useCallback(() => {
     const engine = engineRef.current;
     if (!engine) return;
     if (freeCam) {
       engine.disableFreeCam();
+      if (document.pointerLockElement) document.exitPointerLock();
       setFreeCam(false);
       return;
     }
@@ -224,7 +260,8 @@ export default function App() {
     freeCamPoseRef.current = pose;
     setFollowClient(null);
     setFreeCam(true);
-  }, [freeCam]);
+    captureMouse();
+  }, [freeCam, captureMouse]);
 
   const followPlayer = useCallback((clientNum: number) => {
     const engine = engineRef.current;
@@ -260,6 +297,7 @@ export default function App() {
       setMapName('');
       setMapMissing(false);
       setMapError(null);
+      setDemoInfo(null);
       if (result.errors.length === 0) {
         setStep('demo');
       } else {
@@ -320,6 +358,7 @@ export default function App() {
       setMapName('');
       setMapMissing(false);
       setMapError(null);
+      setDemoInfo(null);
       if (file) {
         const warning = await validateDemoFile(file.file);
         setDemoWarning(warning);
@@ -432,6 +471,9 @@ export default function App() {
     setMapName(map);
     setMapMissing(!present);
     setStep('map');
+    setDemoInfo(null);
+    const info = await engine.demoInfo(name);
+    setDemoInfo(info);
     setChecking(false);
 
     if (present) {
@@ -522,6 +564,32 @@ export default function App() {
     }
   }, [demoFile]);
 
+  const handleSeek = useCallback(async (positionMs: number) => {
+    const engine = engineRef.current;
+    if (!engine || !demoFile || !demoInfo) return;
+    const maxPosition = Math.max(0, demoInfo.duration - 250);
+    const position = Math.max(0, Math.min(maxPosition, Math.round(positionMs)));
+    const target = demoInfo.first + position;
+
+    engine.disableFreeCam();
+    engine.followClient(-1);
+    setFreeCam(false);
+    setFollowClient(null);
+    setScoreboard(null);
+    setPaused(false);
+    playbackRequestedRef.current = true;
+    setPhase('seeking');
+
+    try {
+      await engine.seekDemo(demoBase(demoFile.name), target);
+      setDemoStart(demoInfo.first);
+      setPhase('playing');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setPhase('error');
+    }
+  }, [demoFile, demoInfo]);
+
   const stop = useCallback(async () => {
     const engine = engineRef.current;
     engine?.disableFreeCam();
@@ -552,6 +620,7 @@ export default function App() {
 
   const mapLabel = mapName || (status?.map ? status.map.replace(/^maps\//, '').replace(/\.bsp$/i, '') : '');
   const elapsed = status && demoStart !== null ? formatTime(status.serverTime - demoStart) : '0:00';
+  const demoPosition = demoInfo && status ? Math.max(0, status.serverTime - demoInfo.first) : 0;
   const showWizard = phase === 'launcher' || phase === 'validating';
   const showPlayer = phase === 'playing' || phase === 'paused' || phase === 'ended';
 
@@ -608,7 +677,7 @@ export default function App() {
             />
           ) : null}
 
-          {phase === 'staging' || phase === 'booting' || phase === 'loading' || phase === 'stopping' ? (
+          {phase === 'staging' || phase === 'booting' || phase === 'loading' || phase === 'stopping' || phase === 'seeking' ? (
             <ProgressOverlay
               progress={progress}
               phase={phase}
@@ -631,10 +700,15 @@ export default function App() {
               paused={paused}
               phase={phase}
               scores={scoreboard}
+              view={scoreboard?.view ?? null}
               showScores={settings.showScores}
               showTimer={settings.showTimer}
+              currentMs={demoPosition}
+              durationMs={demoInfo?.duration ?? 0}
               freeCam={freeCam}
               followClient={followClient}
+              pointerLocked={pointerLocked}
+              onCaptureMouse={captureMouse}
               demoName={demoFile?.name ?? ''}
               demos={assetSelection?.demos ?? []}
               onPause={togglePause}
@@ -643,6 +717,7 @@ export default function App() {
               onFullscreen={fullscreen}
               onToggleFreeCam={toggleFreeCam}
               onDemoCamera={demoCamera}
+              onSeek={handleSeek}
               onSelectDemo={handleDemoSelect}
               onShowLogs={() => setShowLogs(true)}
             />

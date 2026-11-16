@@ -10,7 +10,7 @@
 
 **Status:** Complete for the offline base-demo target. A React + Vite + TypeScript shell runs a three-phase wizard (assets → demo → map), validates and stages the retail assets, boots the wasm engine, parses the demo's map name, requests a map `.pk3` when the map is absent, and provides play/pause/restart, fullscreen, status, logs and error handling.
 **Date:** 2026-11-16
-**Scope:** Local picker, three-phase wizard, demo map resolution, map PK3 injection, staging progress, engine host, player controls, static build. No inspector, seek or camera controls (M5/M6).
+**Scope:** Local picker, three-phase wizard, demo map resolution, map PK3 injection, staging progress, engine host, player controls, static build. M5 adds follow/free camera, external HUD and settings; M6 adds seeking, a model-anchored follow camera, pointer-lock mouse look, event-backed scores/deaths and custom vitals. See [m5.md](./m5.md) and [m6.md](./m6.md).
 
 ---
 
@@ -164,10 +164,22 @@ Play is enabled. Nothing is written back to the user's folder.
 | Restart | `JKA_PlayDemo(name)` |
 | Stop | `JKA_StopDemo()` |
 | Status | `JKA_StatusJson()` every 250 ms |
+| Seek | `JKA_DemoInfo(name)` once, then `JKA_SeekDemo(name, demoInfo.first + position)` |
 | Fullscreen | browser Fullscreen API on the stage |
 
 The UI shows map, state, demo time, paused/ended overlays, an engine log panel
-and a downloadable log.
+and a downloadable log. Play and Seek use async `ccall` calls with a progress
+overlay so the tab stays responsive.
+
+### 3.5.1 M6 player additions
+
+Beyond the M4 controls, the player has a seek timeline, a Follow camera anchored
+to the followed player model's eye position, Pointer Lock mouse look in free
+cam, an event-backed `kills/deaths` scoreboard, and a custom Health/Armor/saber
+vitals strip. The in-game status HUD, HUD files, crosshair, scores, timer and
+radar are disabled with `cg_drawStatus 0`, `cg_hudFiles 0`,
+`cg_drawCrosshair 0`, `cg_drawScores 0`, `cg_drawTimer 0` and `cg_drawRadar 0`.
+See [m6.md](./m6.md) for the bridge calls and known limits.
 
 ### 3.6 Error handling
 
@@ -234,7 +246,9 @@ launcher capture.
   truncated demo shows an explicit map-read error instead of a guess.
 - **Map PK3:** the added PK3 must contain `maps/<map>.bsp` for the map to be
   accepted; the wizard stays on the map step otherwise.
-- **No seek/inspector:** replay seek and the inspector are later work; follow/free camera and external HUD are in [m5.md](./m5.md).
+- **Seek:** timeline scrubbing replays the demo to the requested time.
+- **No inspector:** the event inspector is later work; follow/free camera,
+  seeking and external HUD are in [m5.md](./m5.md) and [m6.md](./m6.md).
 - The `r_m2_pause` bridge is still a test/capture hook; normal UI pause uses it.
 
 ---
@@ -243,17 +257,20 @@ launcher capture.
 
 Implemented:
 
-- Follow-player third-person camera and free-fly camera with rebindable keys.
+- Follow-player first-person model camera and free-fly camera with rebindable
+  keys and Pointer Lock mouse look.
 - Persistent settings for `cg_fov` (default 97), scoreboard/scores/timer toggles
   and free-camera bindings.
 - External scoreboard panel, top-center score strip and timer.
-- In-game scoreboard, scores, timer, radar and score line disabled.
+- In-game scoreboard, scores, timer, radar, status HUD, HUD files and crosshair
+  disabled.
 
-See [m5.md](./m5.md) for the controls, bridge calls and evidence.
+See [m5.md](./m5.md) for the controls, bridge calls and evidence. M6 adds
+seeking, event-backed kills/deaths and custom vitals; see [m6.md](./m6.md).
 
 Remaining M5+ work:
 
 1. Engine speed control and reliable pause/step (`cl_freezeDemo` or custom flag).
-2. Replay-based seek with an index and progress UI.
+2. Seeking beyond replay-from-start (keyframe/index) on long demos.
 3. Hardware-GPU performance and memory baseline.
 4. Audio unlock and engine sound path if kept in scope.
