@@ -1,0 +1,1066 @@
+diff --git a/codemp/CMakeLists.txt b/codemp/CMakeLists.txt
+index 293a3b7b..35dbf209 100644
+--- a/codemp/CMakeLists.txt
++++ b/codemp/CMakeLists.txt
+@@ -631,6 +631,10 @@ if(BuildMPEngine)
+ 		# M2: statically link rd-vanilla; CL_InitRef calls GetRefAPI directly.
+ 		target_link_libraries(${MPEngine} ${MPVanillaRenderer})
+ 		target_compile_definitions(${MPEngine} PRIVATE OPENJK_WASM_RENDERER)
++	elseif(EMSCRIPTEN AND BuildMPRend2)
++		# M4: statically link rd-rend2; CL_InitRef calls GetRefAPI directly.
++		target_link_libraries(${MPEngine} ${MPRend2})
++		target_compile_definitions(${MPEngine} PRIVATE OPENJK_WASM_RENDERER)
+ 	endif()
+ 
+ 	if(EMSCRIPTEN AND BuildMPCGame)
+diff --git a/codemp/client/cl_main.cpp b/codemp/client/cl_main.cpp
+index 8a7c9d67..26b22f60 100644
+--- a/codemp/client/cl_main.cpp
++++ b/codemp/client/cl_main.cpp
+@@ -2468,7 +2468,7 @@ void CL_InitRef( void ) {
+ 	{
+ #ifdef OPENJK_WASM_RENDERER
+ 		GetRefAPI = ::GetRefAPI;
+-		Com_Printf( "Using statically linked rd-vanilla\n" );
++		Com_Printf( "Using statically linked renderer\n" );
+ #else
+ 		GetRefAPI = GetRefAPIStub;
+ 		Com_Printf( "Renderer not built; using static boot stub\n" );
+diff --git a/codemp/rd-rend2/CMakeLists.txt b/codemp/rd-rend2/CMakeLists.txt
+index 786cf254..a9098f0b 100644
+--- a/codemp/rd-rend2/CMakeLists.txt
++++ b/codemp/rd-rend2/CMakeLists.txt
+@@ -147,13 +147,22 @@ set(MPRend2Files
+ 	${CMAKE_CURRENT_BINARY_DIR}/glsl_shaders.cpp)
+ 
+ set(MPRend2IncludeDirectories ${MPRend2IncludeDirectories} ${OpenJKLibDir})
+-add_library(${MPRend2} SHARED ${MPRend2Files})
++if(EMSCRIPTEN)
++	# The engine target already compiles q_shared.cpp, matcomp.cpp and the
++	# shared/qcommon sources. Linking them again into the same wasm image
++	# would duplicate every symbol, so only renderer-specific files go in.
++	list(REMOVE_ITEM MPRend2Files ${MPRend2CommonFiles})
++	add_library(${MPRend2} STATIC ${MPRend2Files})
++else()
++	add_library(${MPRend2} SHARED ${MPRend2Files})
++endif()
+ 
+-if(NOT MSVC)
++if(NOT MSVC AND NOT EMSCRIPTEN)
+ 	# remove "lib" prefix for .so/.dylib files
+ 	set_target_properties(${MPRend2} PROPERTIES PREFIX "")
+ endif()
+ 
++if(NOT EMSCRIPTEN)
+ if(WIN32)
+ 	install(TARGETS ${MPRend2}
+ 		RUNTIME
+@@ -172,6 +181,7 @@ else(WIN32)
+ 			COMPONENT ${JKAMPClientComponent})
+ 	endif()
+ endif()
++endif()
+ 
+ set_target_properties(${MPRend2} PROPERTIES COMPILE_DEFINITIONS "${SharedDefines}")
+ 
+@@ -183,6 +193,12 @@ target_link_libraries(${MPRend2} ${MPRend2Libraries})
+ target_include_directories(${MPRend2} PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+ 
+ # GLSL shader file generator
++if(EMSCRIPTEN)
++	if(NOT EXISTS "${CMAKE_CURRENT_BINARY_DIR}/glsl_shaders.cpp" OR
++	   NOT EXISTS "${CMAKE_CURRENT_BINARY_DIR}/glsl_shaders.h")
++		message(FATAL_ERROR "rd-rend2: glsl_shaders.cpp/h are missing; run the host compact_glsl step before configuring")
++	endif()
++else()
+ add_executable(compact_glsl
+ 	${MPDir}/rd-rend2/glsl/compact.cpp
+ 	${MPDir}/rd-rend2/tr_allocator.cpp
+@@ -218,3 +234,4 @@ add_custom_command(
+ 	DEPENDS
+ 		compact_glsl ${MPRend2GLSLFiles})
+ endif()
++endif()
+diff --git a/codemp/rd-rend2/glsl/depthblur.glsl b/codemp/rd-rend2/glsl/depthblur.glsl
+index 50fc22cb..2b750000 100644
+--- a/codemp/rd-rend2/glsl/depthblur.glsl
++++ b/codemp/rd-rend2/glsl/depthblur.glsl
+@@ -60,7 +60,7 @@ vec4 depthGaussian1D(sampler2D imageMap, sampler2D depthMap, vec2 tex, float zFa
+ 	{
+ 		for (j = 1; j < GAUSS_SIZE; j++)
+ 		{
+-			vec2 offset = direction * j;
++			vec2 offset = direction * float(j);
+ 			float depthSample = zFar * getLinearDepth(depthMap, tex + offset, zFarDivZNear);
+ 			float depthExpected = depthCenter + dot(centerSlope, offset);
+ 			if(abs(depthSample - depthExpected) < 5.0)
+diff --git a/codemp/rd-rend2/glsl/generic.glsl b/codemp/rd-rend2/glsl/generic.glsl
+index 9d814303..005f9151 100644
+--- a/codemp/rd-rend2/glsl/generic.glsl
++++ b/codemp/rd-rend2/glsl/generic.glsl
+@@ -145,7 +145,7 @@ vec3 DeformPosition(const vec3 pos, const vec3 normal, const vec2 st)
+ 		{
+ 			normalScale = vec3(2.0, 2.0, 0.5);
+ 		}
+-		else if ( sqrDistance < u_Disintegration.w + 50 )
++		else if ( sqrDistance < u_Disintegration.w + 50.0 )
+ 		{
+ 			normalScale = vec3(1.0, 1.0, 0.0);
+ 		}
+diff --git a/codemp/rd-rend2/glsl/lightall.glsl b/codemp/rd-rend2/glsl/lightall.glsl
+index 33f54bba..007d6cd5 100644
+--- a/codemp/rd-rend2/glsl/lightall.glsl
++++ b/codemp/rd-rend2/glsl/lightall.glsl
+@@ -691,7 +691,7 @@ float D_Ashikhmin(float roughness, float nh){
+ 
+ vec3 Specular_CharlieSheen(float Roughness, float NoH, float NoV, float NoL, vec3 SpecularColor, float cloth)
+ {
+-	float D = cloth > 0.f ? D_Ashikhmin(Roughness, NoH) : D_Charlie(Roughness, NoH);
++	float D = cloth > 0.0 ? D_Ashikhmin(Roughness, NoH) : D_Charlie(Roughness, NoH);
+ 
+ 	return (D * V_Neubelt(NoV, NoL)) * SpecularColor; //No fresnel in the documentation.
+ }
+@@ -699,7 +699,7 @@ vec3 Specular_CharlieSheen(float Roughness, float NoH, float NoV, float NoL, vec
+ vec3 Fresnel_Schlick(const vec3 f0, float f90, float VoH)
+ {
+ 	// Schlick 1994, "An Inexpensive BRDF Model for Physically-Based Rendering"
+-	return f0 + (f90 - f0) * pow(1.0 - VoH, 5.f);
++	return f0 + (f90 - f0) * pow(1.0 - VoH, 5.0);
+ }
+ 
+ vec3 Diff_Burley(float roughness, float NoV, float NoL, float LoH)
+@@ -713,8 +713,8 @@ vec3 Diff_Burley(float roughness, float NoV, float NoL, float LoH)
+ 
+ vec3 F_Schlick(in vec3 SpecularColor, in float VH)
+ {
+-	float Fc = pow(1 - VH, 5);
+-	return clamp(50.0 * SpecularColor.g, 0.0, 1.0) * Fc + (1 - Fc) * SpecularColor; //hacky way to decide if reflectivity is too low (< 2%)
++	float Fc = pow(1.0 - VH, 5.0);
++	return clamp(50.0 * SpecularColor.g, 0.0, 1.0) * Fc + (1.0 - Fc) * SpecularColor; //hacky way to decide if reflectivity is too low (< 2%)
+ }
+ 
+ float D_GGX( in float NH, in float a )
+@@ -724,7 +724,7 @@ float D_GGX( in float NH, in float a )
+ 	return alphaSq / (f * f);*/
+ 
+ 	float a2 = a * a;
+-	float d = (NH * a2 - NH) * NH + 1;
++	float d = (NH * a2 - NH) * NH + 1.0;
+ 	return a2 / (M_PI * d * d);
+ }
+ 
+@@ -732,8 +732,8 @@ float D_GGX( in float NH, in float a )
+ // [Heitz 2014, "Understanding the Masking-Shadowing Function in Microfacet-Based BRDFs"]
+ float V_SmithJointApprox(in float a, in float NV, in float NL)
+ {
+-	float Vis_SmithV = NL * (NV * (1 - a) + a);
+-	float Vis_SmithL = NV * (NL * (1 - a) + a);
++	float Vis_SmithV = NL * (NV * (1.0 - a) + a);
++	float Vis_SmithL = NV * (NL * (1.0 - a) + a);
+ 	return 0.5 * (1.0 / (Vis_SmithV + Vis_SmithL));
+ }
+ 
+@@ -885,7 +885,7 @@ float getLightDepth(in vec3 Vec, in float f)
+ 
+ 	const float n = 1.0;
+ 
+-	float NormZComp = (f + n) / (f - n) - 2 * f*n / (Z* (f - n));
++	float NormZComp = (f + n) / (f - n) - 2.0 * f*n / (Z* (f - n));
+ 
+ 	return ((NormZComp + 1.0) * 0.5);
+ }
+diff --git a/codemp/rd-rend2/glsl/ssao.glsl b/codemp/rd-rend2/glsl/ssao.glsl
+index 10dcedad..2cfb52ea 100644
+--- a/codemp/rd-rend2/glsl/ssao.glsl
++++ b/codemp/rd-rend2/glsl/ssao.glsl
+@@ -68,7 +68,7 @@ float getLinearDepth(sampler2D depthMap, const vec2 tex, const float zFarDivZNea
+ 
+ float ambientOcclusion(sampler2D depthMap, const vec2 tex, const float zFarDivZNear, const float zFar)
+ {
+-	float result = 0;
++	float result = 0.0;
+ 
+ 	float sampleZ = zFar * getLinearDepth(depthMap, tex, zFarDivZNear);
+ 
+diff --git a/codemp/rd-rend2/qgl.h b/codemp/rd-rend2/qgl.h
+index 94941361..a3aebea8 100644
+--- a/codemp/rd-rend2/qgl.h
++++ b/codemp/rd-rend2/qgl.h
+@@ -7,6 +7,8 @@
+ #	include <gl/gl.h>
+ #elif defined(MACOS_X)
+ #	include <OpenGL/gl3.h>
++#elif defined(__EMSCRIPTEN__)
++#	include <GL/gl.h>
+ #elif defined( __linux__ )
+ #	include <GL/gl.h>
+ #	include <GL/glx.h>
+diff --git a/codemp/rd-rend2/tr_backend.cpp b/codemp/rd-rend2/tr_backend.cpp
+index 295223d4..65956a2e 100644
+--- a/codemp/rd-rend2/tr_backend.cpp
++++ b/codemp/rd-rend2/tr_backend.cpp
+@@ -373,7 +373,8 @@ void GL_State( uint32_t stateBits )
+ 
+ void GL_VertexAttribPointers(
+ 		size_t numAttributes,
+-		vertexAttribute_t *attributes )
++		vertexAttribute_t *attributes,
++		int baseVertex )
+ {
+ 	assert(attributes != nullptr || numAttributes == 0);
+ 
+@@ -383,36 +384,42 @@ void GL_VertexAttribPointers(
+ 		vertexAttribute_t& attrib = attributes[i];
+ 		vertexAttribute_t& currentAttrib = glState.currentVaoAttribs[attrib.index];
+ 
++		// WebGL2 has no glDrawElements*BaseVertex. Shift the attribute
++		// pointers by baseVertex vertices instead; this is equivalent for
++		// interleaved and tightly packed VBOs.
++		vertexAttribute_t adjusted = attrib;
++		adjusted.offset += baseVertex * attrib.stride;
++
+ 		newAttribs |= (1 << attrib.index);
+-		if (memcmp(&currentAttrib, &attrib, sizeof(currentAttrib)) == 0)
++		if (memcmp(&currentAttrib, &adjusted, sizeof(currentAttrib)) == 0)
+ 		{
+ 			// No change
+ 			continue;
+ 		}
+ 
+-		R_BindVBO(attrib.vbo);
+-		if ( attrib.integerAttribute )
++		R_BindVBO(adjusted.vbo);
++		if ( adjusted.integerAttribute )
+ 		{
+-			qglVertexAttribIPointer(attrib.index,
+-				attrib.numComponents,
+-				attrib.type,
+-				attrib.stride,
+-				BUFFER_OFFSET(attrib.offset));
++			qglVertexAttribIPointer(adjusted.index,
++				adjusted.numComponents,
++				adjusted.type,
++				adjusted.stride,
++				BUFFER_OFFSET(adjusted.offset));
+ 		}
+ 		else
+ 		{
+-			qglVertexAttribPointer(attrib.index,
+-				attrib.numComponents,
+-				attrib.type,
+-				attrib.normalize,
+-				attrib.stride,
+-				BUFFER_OFFSET(attrib.offset));
++			qglVertexAttribPointer(adjusted.index,
++				adjusted.numComponents,
++				adjusted.type,
++				adjusted.normalize,
++				adjusted.stride,
++				BUFFER_OFFSET(adjusted.offset));
+ 		}
+ 
+-		if (currentAttrib.stepRate != attrib.stepRate)
+-			qglVertexAttribDivisor(attrib.index, attrib.stepRate);
++		if (currentAttrib.stepRate != adjusted.stepRate)
++			qglVertexAttribDivisor(adjusted.index, adjusted.stepRate);
+ 
+-		currentAttrib = attrib;
++		currentAttrib = adjusted;
+ 	}
+ 
+ 	uint32_t diff = newAttribs ^ glState.vertexAttribsState;
+@@ -443,13 +450,13 @@ void GL_DrawIndexed(
+ 		int baseVertex)
+ {
+ 	assert(numInstances > 0);
+-	qglDrawElementsInstancedBaseVertex(
++	(void)baseVertex; // applied to the attribute pointers in GL_VertexAttribPointers
++	qglDrawElementsInstanced(
+ 			primitiveType,
+ 			numIndices,
+ 			indexType,
+ 			BUFFER_OFFSET(offset),
+-			numInstances,
+-			baseVertex);
++			numInstances);
+ }
+ 
+ void GL_MultiDrawIndexed(
+@@ -459,12 +466,16 @@ void GL_MultiDrawIndexed(
+ 		int numDraws)
+ {
+ 	assert(numDraws > 0);
+-	qglMultiDrawElements(
+-			primitiveType,
+-			numIndices,
+-			GL_INDEX_TYPE,
+-			(const GLvoid **)offsets,
+-			numDraws);
++	// WebGL2 may expose WEBGL_multi_draw, but looping is always available and
++	// the caller already has the IBO bound.
++	for ( int i = 0; i < numDraws; ++i )
++	{
++		qglDrawElements(
++				primitiveType,
++				numIndices[i],
++				GL_INDEX_TYPE,
++				offsets[i]);
++	}
+ }
+ 
+ void GL_Draw( GLenum primitiveType, int firstVertex, int numVertices, int numInstances )
+@@ -1071,7 +1082,10 @@ static void RB_DrawItems(
+ 
+ 		GLSL_BindProgram(drawItem.program);
+ 
+-		GL_VertexAttribPointers(drawItem.numAttributes, drawItem.attributes);
++		int baseVertex = 0;
++		if ( drawItem.draw.type == DRAW_COMMAND_INDEXED )
++			baseVertex = drawItem.draw.params.indexed.baseVertex;
++		GL_VertexAttribPointers(drawItem.numAttributes, drawItem.attributes, baseVertex);
+ 		RB_BindTextures(drawItem.numSamplerBindings, drawItem.samplerBindings);
+ 		RB_BindUniformBlocks(
+ 			drawItem.numUniformBlockBindings,
+@@ -2752,7 +2766,7 @@ static const void	*RB_SwapBuffers( const void *data ) {
+ 
+ 	GLimp_LogComment( "***************** RB_SwapBuffers *****************\n\n\n" );
+ 
+-	ri.WIN_Present( &window );
++	ri.WIN_Present( &tr_window );
+ 
+ 	return (const void *)(cmd + 1);
+ }
+diff --git a/codemp/rd-rend2/tr_cmds.cpp b/codemp/rd-rend2/tr_cmds.cpp
+index e29d63ee..7a8bd761 100644
+--- a/codemp/rd-rend2/tr_cmds.cpp
++++ b/codemp/rd-rend2/tr_cmds.cpp
+@@ -507,8 +507,16 @@ void RE_BeginFrame( stereoFrame_t stereoFrame ) {
+ 	int frameNumber = backEndData->realFrameNumber;
+ 	gpuFrame_t *thisFrame = &backEndData->frames[frameNumber % MAX_FRAMES];
+ 	backEndData->currentFrame = thisFrame;
++#ifdef __EMSCRIPTEN__
++	// WebGL2 does not give useful fence results through this path; the browser
++	// already orders buffer updates, so run the per-frame reset without the
++	// desktop fence wait.
++	if ( true )
++#else
+ 	if ( thisFrame->sync )
++#endif
+ 	{
++#ifndef __EMSCRIPTEN__
+ 		GLsync sync = thisFrame->sync;
+ 		GLenum result = qglClientWaitSync( sync, 0, 0 );
+ 		if ( result != GL_ALREADY_SIGNALED )
+@@ -543,6 +551,7 @@ void RE_BeginFrame( stereoFrame_t stereoFrame ) {
+ 		}
+ 		qglDeleteSync( sync );
+ 		thisFrame->sync = NULL;
++#endif
+ 
+ 		// Perform readback operations
+ 		if (thisFrame->screenshotReadback.pbo > 0)
+@@ -752,7 +761,11 @@ void R_NewFrameSync()
+ 	gpuFrame_t *currentFrame = backEndData->currentFrame;
+ 
+ 	assert(!currentFrame->sync);
++#ifdef __EMSCRIPTEN__
++	currentFrame->sync = NULL;
++#else
+ 	currentFrame->sync = qglFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
++#endif
+ 
+ 	backEndData->realFrameNumber++;
+ 	backEnd.framePostProcessed = qfalse;
+diff --git a/codemp/rd-rend2/tr_extensions.cpp b/codemp/rd-rend2/tr_extensions.cpp
+index 83190a34..e684ee18 100644
+--- a/codemp/rd-rend2/tr_extensions.cpp
++++ b/codemp/rd-rend2/tr_extensions.cpp
+@@ -250,18 +250,37 @@ static qboolean GLimp_HaveExtension(const char *ext)
+ 	return (qboolean)((*ptr == ' ') || (*ptr == '\0'));  // verify it's complete string.
+ }
+ 
++#ifdef __EMSCRIPTEN__
++extern "C" void *emscripten_webgl2_get_proc_address( const char *name );
++#endif
++
+ template<typename GLFuncType>
+ static qboolean GetGLFunction ( GLFuncType& glFunction, const char *glFunctionString, qboolean errorOnFailure )
+ {
++#ifdef __EMSCRIPTEN__
++	// SDL_GL_GetProcAddress resolves through the WebGL1 table first, which
++	// aliases core names such as glGenQueries to their EXT variants. Ask the
++	// WebGL2 table first so GLES3 core functions are used.
++	glFunction = (GLFuncType)emscripten_webgl2_get_proc_address( glFunctionString );
++	if ( glFunction == NULL )
++		glFunction = (GLFuncType)GL_GetProcAddress (glFunctionString);
++#else
+ 	glFunction = (GLFuncType)GL_GetProcAddress (glFunctionString);
++#endif
+ 	if ( glFunction == NULL )
+ 	{
++#ifdef __EMSCRIPTEN__
++		Com_DPrintf( S_COLOR_YELLOW "...missing GL function %s\n", glFunctionString );
++		(void)errorOnFailure;
++		return qfalse;
++#else
+ 		if ( errorOnFailure )
+ 		{
+ 			Com_Error (ERR_FATAL, "ERROR: OpenGL function '%s' could not be found.\n", glFunctionString);
+ 		}
+ 
+ 		return qfalse;
++#endif
+ 	}
+ 
+ 	return qtrue;
+@@ -305,6 +324,15 @@ static void QCALL GLimp_OnError(GLenum source, GLenum type, GLuint id, GLenum se
+ 	Com_Printf( S_COLOR_YELLOW "OpenGL -> [%s][%s][%s] %s\n", sourceText, severityText, typeText, message );
+ }
+ 
++#ifdef __EMSCRIPTEN__
++static void QCALL GLimp_GetQueryObjectiv( GLuint id, GLenum pname, GLint *params )
++{
++	GLuint value = 0;
++	qglGetQueryObjectuiv( id, pname, &value );
++	*params = (GLint)value;
++}
++#endif
++
+ void GLimp_InitCoreFunctions()
+ {
+ 	Com_Printf("Initializing OpenGL 3.2 functions\n");
+@@ -313,12 +341,24 @@ void GLimp_InitCoreFunctions()
+ 	GetGLFunction (qglDrawRangeElements, "glDrawRangeElements", qtrue);
+ 	GetGLFunction (qglDrawArraysInstanced, "glDrawArraysInstanced", qtrue);
+ 	GetGLFunction (qglDrawElementsInstanced, "glDrawElementsInstanced", qtrue);
++#ifndef __EMSCRIPTEN__
+ 	GetGLFunction (qglDrawElementsBaseVertex, "glDrawElementsBaseVertex", qtrue);
++#endif
++#ifndef __EMSCRIPTEN__
+ 	GetGLFunction (qglDrawRangeElementsBaseVertex, "glDrawRangeElementsBaseVertex", qtrue);
++#endif
++#ifndef __EMSCRIPTEN__
+ 	GetGLFunction (qglDrawElementsInstancedBaseVertex, "glDrawElementsInstancedBaseVertex", qtrue);
++#endif
++#ifndef __EMSCRIPTEN__
+ 	GetGLFunction (qglMultiDrawArrays, "glMultiDrawArrays", qtrue);
++#endif
++#ifndef __EMSCRIPTEN__
+ 	GetGLFunction (qglMultiDrawElements, "glMultiDrawElements", qtrue);
++#endif
++#ifndef __EMSCRIPTEN__
+ 	GetGLFunction (qglMultiDrawElementsBaseVertex, "glMultiDrawElementsBaseVertex", qtrue);
++#endif
+ 
+ 	// Vertex arrays
+ 	GetGLFunction (qglVertexAttribPointer, "glVertexAttribPointer", qtrue);
+@@ -354,7 +394,9 @@ void GLimp_InitCoreFunctions()
+ 	GetGLFunction (qglBindBufferRange, "glBindBufferRange", qtrue);
+ 	GetGLFunction (qglBindBufferBase, "glBindBufferBase", qtrue);
+ 	GetGLFunction (qglMapBufferRange, "glMapBufferRange", qtrue);
++#ifndef __EMSCRIPTEN__
+ 	GetGLFunction (qglMapBuffer, "glMapBuffer", qtrue);
++#endif
+ 	GetGLFunction (qglFlushMappedBufferRange, "glFlushMappedBufferRange", qtrue);
+ 	GetGLFunction (qglUnmapBuffer, "glUnmapBuffer", qtrue);
+ 	GetGLFunction (qglCopyBufferSubData, "glCopyBufferSubData", qtrue);
+@@ -386,7 +428,9 @@ void GLimp_InitCoreFunctions()
+ 	GetGLFunction (qglGetProgramiv, "glGetProgramiv", qtrue);
+ 	GetGLFunction (qglGetAttachedShaders, "glGetAttachedShaders", qtrue);
+ 	GetGLFunction (qglGetProgramInfoLog, "glGetProgramInfoLog", qtrue);
++#ifndef __EMSCRIPTEN__
+ 	GetGLFunction (qglBindFragDataLocation, "glBindFragDataLocation", qtrue);
++#endif
+ 
+ 	// Vertex attributes
+ 	GetGLFunction (qglGetActiveAttrib, "glGetActiveAttrib", qtrue);
+@@ -408,7 +452,9 @@ void GLimp_InitCoreFunctions()
+ 	GetGLFunction (qglGetActiveUniformBlockName, "glGetActiveUniformBlockName", qtrue);
+ 	GetGLFunction (qglGetActiveUniformBlockiv, "glGetActiveUniformBlockiv", qtrue);
+ 	GetGLFunction (qglGetUniformIndices, "glGetUniformIndices", qtrue);
++#ifndef __EMSCRIPTEN__
+ 	GetGLFunction (qglGetActiveUniformName, "glGetActiveUniformName", qtrue);
++#endif
+ 	GetGLFunction (qglGetActiveUniform, "glGetActiveUniform", qtrue);
+ 	GetGLFunction (qglGetActiveUniformsiv, "glGetActiveUniformsiv", qtrue);
+ 	GetGLFunction (qglUniform1i, "glUniform1i", qtrue);
+@@ -456,10 +502,14 @@ void GLimp_InitCoreFunctions()
+ 	// Texture compression
+ 	GetGLFunction (qglCompressedTexImage3D, "glCompressedTexImage3D", qtrue);
+ 	GetGLFunction (qglCompressedTexImage2D, "glCompressedTexImage2D", qtrue);
++#ifndef __EMSCRIPTEN__
+ 	GetGLFunction (qglCompressedTexImage1D, "glCompressedTexImage1D", qtrue);
++#endif
+ 	GetGLFunction (qglCompressedTexSubImage3D, "glCompressedTexSubImage3D", qtrue);
+ 	GetGLFunction (qglCompressedTexSubImage2D, "glCompressedTexSubImage2D", qtrue);
++#ifndef __EMSCRIPTEN__
+ 	GetGLFunction (qglCompressedTexSubImage1D, "glCompressedTexSubImage1D", qtrue);
++#endif
+ 	GetGLFunction (qglGetCompressedTexImage, "glGetCompressedTexImage", qtrue);
+ 
+ 	// GLSL
+@@ -486,10 +536,16 @@ void GLimp_InitCoreFunctions()
+ 	GetGLFunction (qglDeleteFramebuffers, "glDeleteFramebuffers", qtrue);
+ 	GetGLFunction (qglGenFramebuffers, "glGenFramebuffers", qtrue);
+ 	GetGLFunction (qglCheckFramebufferStatus, "glCheckFramebufferStatus", qtrue);
++#ifndef __EMSCRIPTEN__
+ 	GetGLFunction (qglFramebufferTexture1D, "glFramebufferTexture1D", qtrue);
++#endif
+ 	GetGLFunction (qglFramebufferTexture2D, "glFramebufferTexture2D", qtrue);
++#ifndef __EMSCRIPTEN__
+ 	GetGLFunction (qglFramebufferTexture3D, "glFramebufferTexture3D", qtrue);
++#endif
++#ifndef __EMSCRIPTEN__
+ 	GetGLFunction (qglFramebufferTexture, "glFramebufferTexture", qtrue);
++#endif
+ 	GetGLFunction (qglFramebufferTextureLayer, "glFramebufferTextureLayer", qtrue);
+ 	GetGLFunction (qglFramebufferRenderbuffer, "glFramebufferRenderbuffer", qtrue);
+ 	GetGLFunction (qglGetFramebufferAttachmentParameteriv, "glGetFramebufferAttachmentParameteriv", qtrue);
+@@ -507,7 +563,11 @@ void GLimp_InitCoreFunctions()
+ 	GetGLFunction (qglBeginQuery, "glBeginQuery", qtrue);
+ 	GetGLFunction (qglEndQuery, "glEndQuery", qtrue);
+ 	GetGLFunction (qglGetQueryiv, "glGetQueryiv", qtrue);
++#ifdef __EMSCRIPTEN__
++	qglGetQueryObjectiv = GLimp_GetQueryObjectiv;
++#else
+ 	GetGLFunction (qglGetQueryObjectiv, "glGetQueryObjectiv", qtrue);
++#endif
+ 	GetGLFunction (qglGetQueryObjectuiv, "glGetQueryObjectuiv", qtrue);
+ 
+ 	// GL state
+diff --git a/codemp/rd-rend2/tr_glsl.cpp b/codemp/rd-rend2/tr_glsl.cpp
+index 25b289fc..feeb8d2a 100644
+--- a/codemp/rd-rend2/tr_glsl.cpp
++++ b/codemp/rd-rend2/tr_glsl.cpp
+@@ -21,6 +21,23 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+ */
+ // tr_glsl.c
+ #include "tr_local.h"
++
++#ifdef __EMSCRIPTEN__
++// WebGL2 requires GLSL ES 3.00 and a default precision for fragment shaders.
++// The shader bodies are already written in GLSL 1.50-style in/out syntax.
++#define GLSL_VERSION_HEADER \
++	"#version 300 es\n" \
++	"precision highp float;\n" \
++	"precision highp int;\n" \
++	"precision highp sampler2D;\n" \
++	"precision highp samplerCube;\n" \
++	"precision highp sampler2DArray;\n" \
++	"precision highp sampler2DShadow;\n" \
++	"precision highp samplerCubeShadow;\n" \
++	"precision highp sampler2DArrayShadow;\n"
++#else
++#define GLSL_VERSION_HEADER "#version 150 core\n"
++#endif
+ #include "tr_allocator.h"
+ #include "glsl_shaders.h"
+ 
+@@ -252,7 +269,7 @@ static size_t GLSL_GetShaderHeader(
+ 
+ 	dest[0] = '\0';
+ 
+-	Q_strcat(dest, size, "#version 150 core\n");
++	Q_strcat(dest, size, GLSL_VERSION_HEADER);
+ 
+ 	Q_strcat(dest, size,
+ 					"#ifndef M_PI\n"
+@@ -494,6 +511,29 @@ static size_t GLSL_LoadGPUShaderSource(
+ 		result = strlen(dest);
+ 	}
+ 
++#ifdef __EMSCRIPTEN__
++	if ( shaderType == GL_FRAGMENT_SHADER && result > 0 )
++	{
++		// WebGL2 has no glBindFragDataLocation; bind the two renderer outputs
++		// by adding explicit locations to the fragment shader source.
++		std::string text(dest);
++		const auto replaceAll = [](std::string &value, const std::string &from, const std::string &to) {
++			std::string::size_type pos = 0;
++			while ((pos = value.find(from, pos)) != std::string::npos) {
++				value.replace(pos, from.length(), to);
++				pos += to.length();
++			}
++		};
++		replaceAll(text, "out vec4 out_Color;", "layout(location = 0) out vec4 out_Color;");
++		replaceAll(text, "out vec4 out_Glow;", "layout(location = 1) out vec4 out_Glow;");
++		if ( text.size() + 1 <= static_cast<size_t>(destSize) )
++		{
++			memcpy(dest, text.c_str(), text.size() + 1);
++			result = static_cast<int>(text.size());
++		}
++	}
++#endif
++
+ 	if ( buffer )
+ 	{
+ 		ri.FS_FreeFile(buffer);
+@@ -585,10 +625,14 @@ static void GLSL_BindShaderInterface( shaderProgram_t *program )
+ 		}
+ 	}
+ 
++#ifndef __EMSCRIPTEN__
++	// WebGL2 does not expose glBindFragDataLocation. The fragment shader
++	// source gets explicit layout(location = N) qualifiers instead.
+ 	for ( int outputIndex = 0; outputIndex < ARRAY_LEN(shaderOutputNames); ++outputIndex )
+ 	{
+ 		qglBindFragDataLocation(program->program, outputIndex, shaderOutputNames[outputIndex]);
+ 	}
++#endif
+ 
+ 	const uint32_t xfbVars = program->xfbVariables;
+ 	if (xfbVars != 0)
+@@ -919,12 +963,25 @@ void GLSL_InitUniforms(shaderProgram_t *program)
+ 			for (int j = 0; j < numMembers; ++j)
+ 			{
+ 				char memberName[512];
++#ifdef __EMSCRIPTEN__
++				// glGetActiveUniformName is not part of WebGL2. The active
++				// uniform index is also accepted by glGetActiveUniform.
++				qglGetActiveUniform(
++					program->program,
++					memberIndices[j],
++					sizeof(memberName),
++					nullptr,
++					nullptr,
++					nullptr,
++					memberName);
++#else
+ 				qglGetActiveUniformName(
+ 					program->program,
+ 					memberIndices[j],
+ 					sizeof(memberName),
+ 					nullptr,
+ 					memberName);
++#endif
+ 
+ 				ri.Printf(PRINT_DEVELOPER, "....uniform '%s'\n", memberName);
+ 				ri.Printf(PRINT_DEVELOPER, "......offset: %d\n", memberOffsets[j]);
+@@ -1354,7 +1411,7 @@ Block *FindBlock( const char *name, Block *blocks, size_t numBlocks )
+ void GLSL_InitSplashScreenShader()
+ {
+ 	const char *vs =
+-		"#version 150 core\n"
++		GLSL_VERSION_HEADER
+ 		"out vec2 var_TexCoords;\n"
+ 		"void main() {\n"
+ 		"  vec2 position = vec2(2.0 * float(gl_VertexID & 2) - 1.0, 4.0 * float(gl_VertexID & 1) - 1.0);\n"
+@@ -1363,7 +1420,7 @@ void GLSL_InitSplashScreenShader()
+ 		"}";
+ 
+ 	const char *fs =
+-		"#version 150 core\n"
++		GLSL_VERSION_HEADER
+ 		"uniform sampler2D u_SplashTexture;\n"
+ 		"in vec2 var_TexCoords;\n"
+ 		"out vec4 out_Color;\n"
+@@ -1723,7 +1780,7 @@ static int GLSL_LoadGPUProgramLightAll(
+ 
+ 			Q_strcat(
+ 				extradefines, sizeof(extradefines),
+-				va("#define r_shadowMapSize %d\n", r_shadowMapSize->integer));
++				va("#define r_shadowMapSize %.1f\n", (float)r_shadowMapSize->integer));
+ 			Q_strcat(
+ 				extradefines, sizeof(extradefines),
+ 				va("#define r_shadowCascadeZFar %f\n", r_shadowCascadeZFar->value));
+@@ -2354,20 +2411,26 @@ void GLSL_LoadGPUShaders()
+ 	numEtcShaders += GLSL_LoadGPUProgramRefraction(builder, allocator);
+ 	numEtcShaders += GLSL_LoadGPUProgramTextureColor(builder, allocator);
+ 	numEtcShaders += GLSL_LoadGPUProgramPShadow(builder, allocator);
++#ifndef __EMSCRIPTEN__
+ 	numEtcShaders += GLSL_LoadGPUProgramVShadow(builder, allocator);
++#endif
+ 	numEtcShaders += GLSL_LoadGPUProgramDownscale4x(builder, allocator);
+ 	numEtcShaders += GLSL_LoadGPUProgramBokeh(builder, allocator);
+ 	numEtcShaders += GLSL_LoadGPUProgramTonemap(builder, allocator);
+ 	numEtcShaders += GLSL_LoadGPUProgramCalcLuminanceLevel(builder, allocator);
+ 	numEtcShaders += GLSL_LoadGPUProgramSSAO(builder, allocator);
++#ifndef __EMSCRIPTEN__
+ 	if (r_cubeMapping->integer)
+ 		numEtcShaders += GLSL_LoadGPUProgramPrefilterEnvMap(builder, allocator);
++#endif
+ 	numEtcShaders += GLSL_LoadGPUProgramDepthBlur(builder, allocator);
+ 	numEtcShaders += GLSL_LoadGPUProgramGaussianBlur(builder, allocator);
+ 	numEtcShaders += GLSL_LoadGPUProgramDynamicGlowUpsample(builder, allocator);
+ 	numEtcShaders += GLSL_LoadGPUProgramDynamicGlowDownsample(builder, allocator);
+ 	numEtcShaders += GLSL_LoadGPUProgramSurfaceSprites(builder, allocator);
++#ifndef __EMSCRIPTEN__
+ 	numEtcShaders += GLSL_LoadGPUProgramWeather(builder, allocator);
++#endif
+ 
+ 	ri.Printf(PRINT_ALL, "loaded %i GLSL shaders (%i gen %i light %i etc) in %5.2f seconds\n",
+ 		numGenShaders + numLightShaders + numEtcShaders, numGenShaders, numLightShaders,
+diff --git a/codemp/rd-rend2/tr_image.cpp b/codemp/rd-rend2/tr_image.cpp
+index 62d4c29e..0efe191f 100644
+--- a/codemp/rd-rend2/tr_image.cpp
++++ b/codemp/rd-rend2/tr_image.cpp
+@@ -1906,6 +1906,16 @@ static GLenum RawImage_GetFormat(const byte *data, int numPixels, qboolean light
+ 		}
+ 	}
+ 
++#ifdef __EMSCRIPTEN__
++	// Image loaders always produce RGBA pixels. WebGL2 rejects RGB internal
++	// formats with RGBA data, and a 3-byte format would read the 4-byte rows
++	// with the wrong stride.
++	if ( internalFormat == GL_RGB8 || internalFormat == GL_RGB5 || internalFormat == GL_RGB4 )
++		internalFormat = GL_RGBA8;
++	else if ( internalFormat == GL_SRGB8 )
++		internalFormat = GL_SRGB8_ALPHA8;
++#endif
++
+ 	return internalFormat;
+ }
+ 
+@@ -1954,13 +1964,69 @@ static void RawImage_UploadTexture( byte *data, int x, int y, int width, int hei
+ 
+ 	switch (internalFormat)
+ 	{
++#ifdef __EMSCRIPTEN__
++	// WebGL2 validates the (internalformat, format, type) triple strictly.
++	// The desktop GL defaults below are not valid for sized formats.
++	case GL_RGB8:
++	case GL_SRGB8:
++		dataFormat = GL_RGB;
++		dataType = GL_UNSIGNED_BYTE;
++		break;
++	case GL_RGBA8:
++	case GL_SRGB8_ALPHA8:
++		dataFormat = GL_RGBA;
++		dataType = GL_UNSIGNED_BYTE;
++		break;
++	case GL_R8:
++		dataFormat = GL_RED;
++		dataType = GL_UNSIGNED_BYTE;
++		break;
++	case GL_R16:
++		dataFormat = GL_RED;
++		dataType = GL_UNSIGNED_SHORT;
++		break;
++	case GL_RG8:
++		dataFormat = GL_RG;
++		dataType = GL_UNSIGNED_BYTE;
++		break;
++	case GL_RG16:
++		dataFormat = GL_RG;
++		dataType = GL_UNSIGNED_SHORT;
++		break;
++	case GL_R16F:
++		dataFormat = GL_RED;
++		dataType = GL_HALF_FLOAT;
++		break;
++	case GL_R32F:
++		dataFormat = GL_RED;
++		dataType = GL_FLOAT;
++		break;
++	case GL_RGB32F:
++		dataFormat = GL_RGB;
++		dataType = GL_FLOAT;
++		break;
+ 	case GL_DEPTH_COMPONENT:
++	case GL_DEPTH_COMPONENT32:
++		dataFormat = GL_DEPTH_COMPONENT;
++		dataType = GL_UNSIGNED_INT;
++		break;
+ 	case GL_DEPTH_COMPONENT16:
++		dataFormat = GL_DEPTH_COMPONENT;
++		dataType = GL_UNSIGNED_SHORT;
++		break;
+ 	case GL_DEPTH_COMPONENT24:
+-	case GL_DEPTH_COMPONENT32:
+ 		dataFormat = GL_DEPTH_COMPONENT;
+-		dataType = GL_UNSIGNED_BYTE;
++		dataType = GL_UNSIGNED_INT;
++		break;
++	case GL_DEPTH_COMPONENT32F:
++		dataFormat = GL_DEPTH_COMPONENT;
++		dataType = GL_FLOAT;
++		break;
++	case GL_DEPTH24_STENCIL8:
++		dataFormat = GL_DEPTH_STENCIL;
++		dataType = GL_UNSIGNED_INT_24_8;
+ 		break;
++#endif
+ 	case GL_RG16F:
+ 		dataFormat = GL_RG;
+ 		dataType = GL_HALF_FLOAT;
+@@ -2395,7 +2461,11 @@ image_t *R_CreateImage( const char *name, byte *pic, int width, int height, imgT
+ 		qglTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+ 		qglTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+ 
++#ifdef __EMSCRIPTEN__
++		int format = GL_RGBA;
++#else
+ 		int format = GL_BGRA;
++#endif
+ 		switch (internalFormat)
+ 		{
+ 		case GL_DEPTH_COMPONENT:
+@@ -2494,6 +2564,7 @@ image_t *R_Create2DImageArray(const char *name, byte *pic, int width, int height
+ 	long		hash;
+ 	int         glWrapClampMode;
+ 	int			format;
++	GLenum		dataType = GL_UNSIGNED_BYTE;
+ 
+ 	if (strlen(name) >= MAX_QPATH) {
+ 		ri.Error(ERR_DROP, "R_Create2DImageArray: \"%s\" is too long", name);
+@@ -2520,13 +2591,32 @@ image_t *R_Create2DImageArray(const char *name, byte *pic, int width, int height
+ 	switch (internalFormat)
+ 	{
+ 	case GL_DEPTH_COMPONENT:
++	case GL_DEPTH_COMPONENT32:
++		format = GL_DEPTH_COMPONENT;
++		dataType = GL_UNSIGNED_INT;
++		break;
+ 	case GL_DEPTH_COMPONENT16:
++		format = GL_DEPTH_COMPONENT;
++		dataType = GL_UNSIGNED_SHORT;
++		break;
+ 	case GL_DEPTH_COMPONENT24:
+-	case GL_DEPTH_COMPONENT32:
+ 		format = GL_DEPTH_COMPONENT;
++		dataType = GL_UNSIGNED_INT;
++		break;
++	case GL_DEPTH_COMPONENT32F:
++		format = GL_DEPTH_COMPONENT;
++		dataType = GL_FLOAT;
++		break;
++	case GL_DEPTH24_STENCIL8:
++		format = GL_DEPTH_STENCIL;
++		dataType = GL_UNSIGNED_INT_24_8;
+ 		break;
+ 	default:
++#ifdef __EMSCRIPTEN__
++		format = GL_RGBA;
++#else
+ 		format = GL_BGRA;
++#endif
+ 		break;
+ 	}
+ 
+@@ -2535,7 +2625,7 @@ image_t *R_Create2DImageArray(const char *name, byte *pic, int width, int height
+ 	if (ShouldUseImmutableTextures(image->flags, internalFormat))
+ 		qglTexStorage3D(GL_TEXTURE_2D_ARRAY, 0, internalFormat, width, height, layers);
+ 	else
+-		qglTexImage3D(GL_TEXTURE_2D_ARRAY, 0, internalFormat, width, height, layers, 0, format, GL_UNSIGNED_BYTE, NULL);
++		qglTexImage3D(GL_TEXTURE_2D_ARRAY, 0, internalFormat, width, height, layers, 0, format, dataType, NULL);
+ 
+ 	switch (internalFormat)
+ 	{
+diff --git a/codemp/rd-rend2/tr_init.cpp b/codemp/rd-rend2/tr_init.cpp
+index 183fbcae..5a8c7ac2 100644
+--- a/codemp/rd-rend2/tr_init.cpp
++++ b/codemp/rd-rend2/tr_init.cpp
+@@ -48,9 +48,9 @@ glconfig_t  glConfig;
+ glconfigExt_t glConfigExt;
+ glRefConfig_t glRefConfig;
+ glstate_t	glState;
+-window_t	window;
++window_t	tr_window;
+ 
+-cvar_t	*se_language;
++cvar_t	*tr_se_language;
+ 
+ cvar_t	*r_verbose;
+ cvar_t	*r_ignore;
+@@ -63,7 +63,7 @@ cvar_t	*r_stereoSeparation;
+ 
+ cvar_t	*r_skipBackEnd;
+ 
+-cvar_t	*r_stereo;
++cvar_t	*tr_r_stereo;
+ cvar_t	*r_anaglyphMode;
+ 
+ cvar_t	*r_greyscale;
+@@ -296,7 +296,7 @@ static void R_Splash()
+ 	GLSL_BindProgram(&tr.splashScreenShader);
+ 	RB_InstantTriangle();
+ 
+-	ri.WIN_Present(&window);
++	ri.WIN_Present(&tr_window);
+ }
+ 
+ /*
+@@ -505,13 +505,20 @@ static void InitOpenGL( void )
+ 		memset(&glConfig, 0, sizeof(glConfig));
+ 
+ 		windowDesc.api = GRAPHICS_API_OPENGL;
++#ifdef __EMSCRIPTEN__
++		// Emscripten's SDL/EGL creates the WebGL2 context selected by the
++		// linker flags; it rejects desktop GL version/profile attributes.
++		windowDesc.gl.majorVersion = 0;
++		windowDesc.gl.minorVersion = 0;
++#else
+ 		windowDesc.gl.majorVersion = 3;
+ 		windowDesc.gl.minorVersion = 2;
+ 		windowDesc.gl.profile = GLPROFILE_CORE;
+ 		if ( r_debugContext->integer )
+ 			windowDesc.gl.contextFlags = GLCONTEXT_DEBUG;
++#endif
+ 
+-		window = ri.WIN_Init(&windowDesc, &glConfig);
++		tr_window = ri.WIN_Init(&windowDesc, &glConfig);
+ 
+ 		GLimp_InitCoreFunctions();
+ 
+@@ -1465,7 +1472,7 @@ void R_Register( void )
+ 	r_uiFullScreen = ri.Cvar_Get( "r_uifullscreen", "0", 0, "");
+ 	r_subdivisions = ri.Cvar_Get ("r_subdivisions", "4", CVAR_ARCHIVE | CVAR_LATCH, "");
+ 	ri.Cvar_CheckRange( r_subdivisions, 4, 80, qfalse );
+-	r_stereo = ri.Cvar_Get( "r_stereo", "0", CVAR_ARCHIVE | CVAR_LATCH, "");
++	tr_r_stereo = ri.Cvar_Get( "r_stereo", "0", CVAR_ARCHIVE | CVAR_LATCH, "");
+ 	r_greyscale = ri.Cvar_Get("r_greyscale", "0", CVAR_ARCHIVE | CVAR_LATCH, "");
+ 	ri.Cvar_CheckRange(r_greyscale, 0, 1, qfalse);
+ 
+@@ -1647,7 +1654,7 @@ Ghoul2 Insert End
+ 
+ 	r_patchStitching = ri.Cvar_Get("r_patchStitching", "1", CVAR_ARCHIVE, "Enable stitching of neighbouring patch surfaces" );
+ 
+-	se_language = ri.Cvar_Get ( "se_language", "english", CVAR_ARCHIVE | CVAR_NORESTART, "" );
++	tr_se_language = ri.Cvar_Get ( "se_language", "english", CVAR_ARCHIVE | CVAR_NORESTART, "" );
+ 
+ 	for ( size_t i = 0; i < numCommands; i++ )
+ 		ri.Cmd_AddCommand( commands[i].cmd, commands[i].func, "" );
+diff --git a/codemp/rd-rend2/tr_local.h b/codemp/rd-rend2/tr_local.h
+index f03215cd..e14e15a0 100644
+--- a/codemp/rd-rend2/tr_local.h
++++ b/codemp/rd-rend2/tr_local.h
+@@ -87,7 +87,8 @@ extern cvar_t	*r_stereoSeparation;
+ 
+ extern cvar_t	*r_skipBackEnd;
+ 
+-extern cvar_t	*r_stereo;
++extern cvar_t	*tr_r_stereo;
++extern cvar_t	*tr_se_language;
+ extern cvar_t	*r_anaglyphMode;
+ 
+ extern cvar_t	*r_greyscale;
+@@ -2640,7 +2641,7 @@ extern backEndState_t	backEnd;
+ extern trGlobals_t	tr;
+ extern glstate_t	glState;		// outside of TR since it shouldn't be cleared during ref re-init
+ extern glRefConfig_t glRefConfig;
+-extern window_t		window;
++extern window_t		tr_window;
+ 
+ //
+ // cvars
+@@ -2892,7 +2893,8 @@ void    GL_SetModelviewMatrix(matrix_t matrix);
+ void	GL_Cull( int cullType );
+ void	GL_DepthRange( float min, float max );
+ void	GL_VertexAttribPointers(size_t numAttributes,
+-								vertexAttribute_t *attributes);
++								vertexAttribute_t *attributes,
++								int baseVertex = 0);
+ void	GL_DrawIndexed(GLenum primitiveType, int numIndices, GLenum indexType,
+ 						int offset, int numInstances, int baseVertex);
+ void	GL_MultiDrawIndexed(GLenum primitiveType, int *numIndices,
+diff --git a/codemp/rd-rend2/tr_vbo.cpp b/codemp/rd-rend2/tr_vbo.cpp
+index 4025bd31..e253c72f 100644
+--- a/codemp/rd-rend2/tr_vbo.cpp
++++ b/codemp/rd-rend2/tr_vbo.cpp
+@@ -608,6 +608,10 @@ void RB_UpdateVBOs(unsigned int attribBits)
+ 		R_BindVBO(frameVbo);
+ 
+ 		void *dstPtr;
++#ifdef __EMSCRIPTEN__
++		(void)mapFlags;
++		dstPtr = malloc(totalVertexDataSize);
++#else
+ 		if ( glRefConfig.immutableBuffers )
+ 		{
+ 			dstPtr = (byte *)currentFrame->dynamicVboMemory + currentFrame->dynamicVboWriteOffset;
+@@ -617,6 +621,7 @@ void RB_UpdateVBOs(unsigned int attribBits)
+ 			dstPtr = qglMapBufferRange(GL_ARRAY_BUFFER, currentFrame->dynamicVboWriteOffset,
+ 				totalVertexDataSize, mapFlags);
+ 		}
++#endif
+ 
+ 		// Interleave the data
+ 		void *writePtr = dstPtr;
+@@ -634,10 +639,18 @@ void RB_UpdateVBOs(unsigned int attribBits)
+ 			}
+ 		}
+ 
++#ifdef __EMSCRIPTEN__
++		// Emscripten's map buffer path rejects unsynchronized writes; upload
++		// the interleaved data directly instead.
++		qglBufferSubData(GL_ARRAY_BUFFER, currentFrame->dynamicVboWriteOffset,
++			totalVertexDataSize, dstPtr);
++		free(dstPtr);
++#else
+ 		if ( !glRefConfig.immutableBuffers )
+ 		{
+ 			qglUnmapBuffer(GL_ARRAY_BUFFER);
+ 		}
++#endif
+ 
+ 		currentFrame->dynamicVboWriteOffset += totalVertexDataSize;
+ 	}
+@@ -659,6 +672,10 @@ void RB_UpdateVBOs(unsigned int attribBits)
+ 		}
+ 
+ 		void *dst;
++#ifdef __EMSCRIPTEN__
++		(void)mapFlags;
++		dst = malloc(totalIndexDataSize);
++#else
+ 		if ( glRefConfig.immutableBuffers )
+ 		{
+ 			dst = (byte *)currentFrame->dynamicIboMemory + currentFrame->dynamicIboWriteOffset;
+@@ -668,13 +685,20 @@ void RB_UpdateVBOs(unsigned int attribBits)
+ 			dst = qglMapBufferRange(GL_ELEMENT_ARRAY_BUFFER, currentFrame->dynamicIboWriteOffset,
+ 				totalIndexDataSize, mapFlags);
+ 		}
++#endif
+ 
+ 		memcpy(dst, tess.indexes, totalIndexDataSize);
+ 
++#ifdef __EMSCRIPTEN__
++		qglBufferSubData(GL_ELEMENT_ARRAY_BUFFER, currentFrame->dynamicIboWriteOffset,
++			totalIndexDataSize, dst);
++		free(dst);
++#else
+ 		if ( !glRefConfig.immutableBuffers )
+ 		{
+ 			qglUnmapBuffer(GL_ELEMENT_ARRAY_BUFFER);
+ 		}
++#endif
+ 
+ 		currentFrame->dynamicIboWriteOffset += totalIndexDataSize;
+ 	}
+@@ -792,11 +816,16 @@ void RB_BeginConstantsUpdate(gpuFrame_t *frame)
+ 		GL_MAP_FLUSH_EXPLICIT_BIT;
+ 
+ 	frame->uboMapBase = frame->uboWriteOffset;
++#ifdef __EMSCRIPTEN__
++	(void)mapFlags;
++	frame->uboMemory = malloc(frame->uboSize - frame->uboWriteOffset);
++#else
+ 	frame->uboMemory = qglMapBufferRange(
+ 		GL_UNIFORM_BUFFER,
+ 		frame->uboWriteOffset,
+ 		frame->uboSize - frame->uboWriteOffset,
+ 		mapFlags);
++#endif
+ }
+ 
+ int RB_AppendConstantsData(
+@@ -817,9 +846,18 @@ int RB_AppendConstantsData(
+ 
+ void RB_EndConstantsUpdate(const gpuFrame_t *frame)
+ {
++#ifdef __EMSCRIPTEN__
++	qglBufferSubData(
++		GL_UNIFORM_BUFFER,
++		frame->uboMapBase,
++		frame->uboWriteOffset - frame->uboMapBase,
++		frame->uboMemory);
++	free(frame->uboMemory);
++#else
+ 	qglFlushMappedBufferRange(
+ 		GL_UNIFORM_BUFFER,
+ 		frame->uboMapBase,
+ 		frame->uboWriteOffset - frame->uboMapBase);
+ 	qglUnmapBuffer(GL_UNIFORM_BUFFER);
++#endif
+ }
+\ No newline at end of file

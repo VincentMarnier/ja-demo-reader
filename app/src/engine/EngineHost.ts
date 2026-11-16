@@ -66,7 +66,7 @@ export class EngineHost {
       };
 
       const args = [
-          '+set', 'cl_renderer', 'rd-vanilla',
+          '+set', 'cl_renderer', 'rd-rend2',
           '+set', 'fs_basepath', '/jka',
           '+set', 'fs_homepath', '/userdata',
           '+set', 'cl_allowDownload', '0',
@@ -74,11 +74,27 @@ export class EngineHost {
           '+set', 'com_bootlogo', '0',
           '+set', 'r_fullscreen', '0',
           '+set', 'r_mode', '4',
+          '+set', 'r_hdr', '0',
+          '+set', 'r_cubeMapping', '0',
+          '+set', 'r_ssao', '0',
+          '+set', 'cg_shadows', '0',
+          '+set', 'r_ext_compressed_textures', '0',
           '+set', 'com_maxfps', '60',
           '+set', 'logfile', '0'
       ];
-      if (new URLSearchParams(window.location.search).get('norefresh') === '1') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('norefresh') === '1') {
         args.push('+set', 'r_norefresh', '1');
+      }
+      if (params.get('quality') === 'low') {
+        // Software rasterisers / low-end GPUs: fewer texture pixels and a
+        // lower frame cap, while keeping the same rd-rend2 path.
+        args.push(
+          '+set', 'r_mode', '4',
+          '+set', 'r_picmip', '3',
+          '+set', 'com_maxfps', '10',
+          '+set', 'r_swapInterval', '0'
+        );
       }
 
       const module: ModuleLike = {

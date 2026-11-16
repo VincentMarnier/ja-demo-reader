@@ -1,5 +1,10 @@
 # Browser MVP (M4)
 
+> **Branch note:** `spike/rd-rend2` replaces the `rd-vanilla` renderer with the
+> statically linked `rd-rend2` renderer on a WebGL2/GLES3 context. See
+> [rd-rend2-spike.md](./rd-rend2-spike.md) for the build and current
+> limitations. The `rd-vanilla` evidence below is the M4 baseline.
+
 **Status:** Complete for the offline base-demo target. A React + Vite + TypeScript shell runs a three-phase wizard (assets → demo → map), validates and stages the retail assets, boots the wasm engine, parses the demo's map name, requests a map `.pk3` when the map is absent, and provides play/pause/restart, fullscreen, status, logs and error handling.
 **Date:** 2026-11-16
 **Scope:** Local picker, three-phase wizard, demo map resolution, map PK3 injection, staging progress, engine host, player controls, static build. No inspector, seek or camera controls (M5/M6).
@@ -30,6 +35,23 @@
 ---
 
 ## 2. Running it
+
+### 2.1 rd-rend2 build (this branch)
+
+```bash
+BUILD_REND2=1 BUILD_CGAME=1 NO_PRELOAD=1 \
+  WORK=/tmp/opencode/rend2/final-work \
+  BUILD=/tmp/opencode/rend2/final-build \
+  OUT=/tmp/opencode/rend2/final-out \
+  engine/scripts/build-mp-wasm.sh
+
+scripts/stage-engine.sh /tmp/opencode/rend2/final-out
+cd app && npm run dev      # http://127.0.0.1:5173
+```
+
+Add `?quality=low` for software rasterisers (800×600, `r_picmip 3`, 10 fps).
+
+### 2.2 rd-vanilla baseline
 
 ```bash
 # 1. Build the engine for the app (no preloaded fixture; the app stages PK3s).

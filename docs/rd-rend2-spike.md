@@ -1,72 +1,121 @@
-# rd-rend2 WebGL2 spike
+# rd-rend2 WebGL2 bring-up
 
-**Status:** Branch created; build integration not started.
+**Status:** Working. The app on branch `spike/rd-rend2` boots the statically
+linked `rd-rend2` renderer on a WebGL2/GLES3 context, loads a map, and plays
+demos.
 **Branch:** `spike/rd-rend2`
 **Base:** `5e03758 fix(m4): make Stop tear down the demo and return to the map step`
 
-## Goal
+## Result
 
-Replace the current `rd-vanilla` + `LEGACY_GL_EMULATION` path with `rd-rend2`
-statically linked into the wasm engine, targeting a WebGL2/GLES3 context.
-The aim is a modern GLSL renderer that maps much more directly to WebGL2 than
-the fixed-function GL1 emulation, and to remove the unsupported
-`GL_TEXTURE_RECTANGLE_ARB` warnings seen in the current build.
+| Check | Result |
+|---|---|
+| Static `rd-rend2` in the wasm engine | **Pass** — linked into `MPEngine` |
+| WebGL2 / GLES3 context | **Pass** — `OpenGL ES 3.0 (WebGL 2.0)` |
+| GLSL ES 3.00 shader set | **Pass** — 671 shaders compile and link |
+| Boot + `R_Init` | **Pass** — no FBO attachment errors |
+| Base demo `mp/duel1` | **Pass** — playing, 0:14 capture |
+| Custom map `ffa_YavinPlaza` | **Pass** — map added at the map step, renders |
+| Play / pause / restart / stop | **Pass** |
+| Map parsing + map PK3 restart path | **Pass** |
+| Texture/portrait correctness | **Pass** — JPG/RGBA upload path fixed |
+| Production app build | **Pass** |
 
-## Why this before Vulkan/WebGPU
+Evidence:
 
-- `rd-rend2` is already in the pinned OpenJK tree and is a GL3/GLSL renderer.
-- WebGL2 exposes GLES3 features (32-bit indices, VAOs, FBOs, instancing) that
-  the current WebGL1 + legacy emulation path cannot use cleanly.
-- A native Vulkan renderer cannot run in the browser; porting it means a full
-  WebGPU rewrite. `rd-rend2` is the smaller, reversible experiment.
+- `/tmp/opencode/rend2/final-visual.png` — `mp/duel1`, normal WebGL2 frame.
+- `/tmp/opencode/rend2/final-map.png` — `ffa_YavinPlaza` after adding the map PK3.
+- `/tmp/opencode/rend2/final-play.log`, `/tmp/opencode/rend2/final-map.log` — CDP runs.
+- `/tmp/opencode/rend2/final-build.log` — clean build from the patch set.
 
-## Work plan
+## Build
 
-1. **Build wiring**
-   - Add `BUILD_REND2=1` to `engine/scripts/build-mp-wasm.sh`; set
-     `BuildMPRend2=ON`, `BuildMPRdVanilla=OFF`, `BuildMPCGame=ON`.
-   - Build `rd-rend2` as a **STATIC** library under Emscripten and link it into
-     `MPEngine`, mirroring the existing `rd-vanilla`/cgame patches.
-   - Remove duplicated common sources (`q_shared.cpp`, `matcomp.cpp`,
-     shared/qcommon) from the static renderer target.
-2. **Renderer selection**
-   - Make `CL_InitRef` use the statically linked `GetRefAPI` from `rd-rend2`
-     (new define, e.g. `OPENJK_WASM_REND2`), with the existing stub fallback.
-   - Default `cl_renderer` to `rd-rend2` in the app engine arguments.
-3. **Host shader tool**
-   - `compact_glsl` is a host build tool; under `emcmake` it becomes a wasm
-     executable and the CMake custom command cannot run it.
-   - Build it natively (host compiler) or pre-generate
-     `glsl_shaders.cpp`/`glsl_shaders.h` before the wasm build.
-4. **WebGL2/GLES3**
-   - Require WebGL2: `-sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2`
-     (optionally `-sFULL_ES3=1`).
-   - Audit GL calls and extensions: VAOs, FBOs, texture formats, 32-bit
-     indices, shader/program paths, and unsupported desktop-only targets.
-5. **Shaders**
-   - Port the shader set to GLSL ES 3.00 (`#version 300 es`, precision,
-     `in`/`out`, `texture()`), or add an ES-compatible shader generation path.
-   - Keep a fallback for shader compile failures with a visible log message.
-6. **Validation**
-   - `mp/duel1` and `ffa_YavinPlaza` render with textures, HUD and characters.
-   - Play/pause/restart/stop still work; no new console GL errors.
-   - Compare against the native screenshots and record frame time.
+```bash
+BUILD_REND2=1 BUILD_CGAME=1 NO_PRELOAD=1 \
+  WORK=/tmp/opencode/rend2/final-work \
+  BUILD=/tmp/opencode/rend2/final-build \
+  OUT=/tmp/opencode/rend2/final-out \
+  engine/scripts/build-mp-wasm.sh
 
-## Known first blockers
+scripts/stage-engine.sh /tmp/opencode/rend2/final-out
 
-- **Emscripten shared libraries.** `rd-rend2/CMakeLists.txt` uses
-  `add_library(${MPRend2} SHARED ...)`. CMake 4.2.3 + Emscripten rejects shared
-  libraries (`does not support emscripten shared libraries`); the target must
-  be `STATIC` under `EMSCRIPTEN`, as already done for `rd-vanilla` and cgame.
-- **Shader generator.** The `compact_glsl` custom command
-  (`${CMAKE_BINARY_DIR}/compact_glsl`) assumes a runnable host executable; a
-  wasm build tool cannot be invoked that way.
-- **GLSL dialect.** The GLSL files carry no `#version`; they need an explicit
-  GLSL ES 3.00 pass and a shader audit before WebGL2 will accept them.
-- **Context.** The current app build allows WebGL1 (`MIN_WEBGL_VERSION=1`);
-  `rd-rend2` needs a WebGL2 context to expose the required GLES3 features.
+cd app
+npm install
+npm run dev        # http://127.0.0.1:5173
+npm run build      # static output in app/dist
+```
 
-## Acceptance
+Requirements:
 
-A build from this branch that boots, loads `mp/duel1`, reaches `CA_ACTIVE`,
-renders a correct frame, and passes the same demo playback checks as master.
+- Emscripten 6.0.1 (`EMSDK`, default `/tmp/opencode/emsdk`).
+- A host C++ compiler (`HOST_CXX`, default `g++`) to build the
+  `compact_glsl` shader-table generator.
+- `BUILD_REND2=1` and `BUILD_RENDERER=1` are mutually exclusive: both export
+  `GetRefAPI`.
+- The engine is built with `NO_PRELOAD=1`; the app stages the user's PK3s.
+
+The web renderer requires WebGL2. `?quality=low` selects 800×600, `r_picmip 3`,
+`com_maxfps 10` and no vsync for software rasterisers such as SwiftShader.
+Without it the app uses 800×600 at picmip 0 and 60 fps.
+
+## Implementation
+
+- **Build integration** (`0004-emscripten-rend2.patch`):
+  - `rd-rend2` is built `STATIC` under Emscripten, with the common
+    `q_shared`/`matcomp`/shared-qcommon sources removed so the engine and
+    renderer do not define them twice.
+  - The engine links `${MPRend2}` and defines `OPENJK_WASM_RENDERER`;
+    `CL_InitRef` uses the linked `GetRefAPI`.
+  - `compact_glsl` is built as a host tool once, then its generated
+    `glsl_shaders.cpp`/`.h` are used by the wasm build.
+- **Context** (`rd-rend2/tr_init.cpp`): Emscripten's SDL/EGL creates the
+  WebGL2 context from the linker settings; desktop GL 3.2 core attributes are
+  skipped.
+- **Shaders**:
+  - Header changed to `#version 300 es` with default precision declarations,
+    including shadow sampler types.
+  - Fragment outputs get explicit `layout(location = N)` because WebGL2 has no
+    `glBindFragDataLocation`.
+  - GLSL ES 3.00 rejects implicit integer→float arithmetic; the few offending
+    expressions were corrected.
+  - Geometry-shader programs (shadow volumes, weather, environment prefilter)
+    are not loaded; their features are disabled in the app arguments.
+- **Draw paths**:
+  - WebGL2 has no `glDrawElements*BaseVertex`; base vertices are applied by
+    offsetting the vertex attribute pointers, and the draw uses
+    `glDrawElementsInstanced`.
+  - Multi-draw is emulated with a loop.
+  - Unsupported desktop GL query/base-vertex/framebuffer-1D/3D entry points
+    are skipped; the query-object path uses `glGetQueryObjectuiv`.
+- **Dynamic buffers**:
+  - WebGL2/Emscripten does not support the renderer's mapped-buffer access
+    flags. Dynamic VBO/IBO/UBO updates use `glBufferSubData` instead.
+  - Desktop GPU fences are skipped; per-frame reset/readback still runs.
+- **Textures**:
+  - RGB images are uploaded as `GL_RGBA8` because the image loaders always
+    produce RGBA pixel rows; this fixed wrong-stride JPG icons/portraits.
+  - Depth/stencil 2D and 2D-array textures use the WebGL2
+    `(internalformat, format, type)` combinations.
+  - Cubemap uploads use `GL_RGBA` rather than `GL_BGRA`.
+- **Symbols**: renderer globals `window`, `r_stereo` and `se_language` are
+  renamed (`tr_window`, `tr_r_stereo`, `tr_se_language`) to avoid collisions
+  with the engine and `mp3code`.
+
+## Limitations
+
+- **Geometry-shader effects are off.** Shadow volumes, weather and the
+  environment prefilter are not loaded; the app runs with `cg_shadows 0`,
+  `r_hdr 0`, `r_cubeMapping 0` and `r_ssao 0`.
+- **Optional GL entry points.** `glGetBufferSubData`, `glGetVertexAttribdv`
+  and `glGetCompressedTexImage` are not exposed; the renderer paths that use
+  them are not exercised by this demo player.
+- **Performance.** The headless verification runs on SwiftShader; hardware GPU
+  frame times are not yet measured.
+- **Audio/input** remain as in the M4 baseline.
+
+## Why not Vulkan/WebGPU
+
+The native JKA Vulkan renderer is a desktop Vulkan module. Browsers expose
+WebGL/WebGPU, not Vulkan; using it in the browser would require a WebGPU port
+or a Vulkan→WebGPU translation layer. `rd-rend2` was the smaller path to a
+modern GLSL renderer and now works in the app.

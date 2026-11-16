@@ -22,6 +22,10 @@ extern "C" {
 
 void glArrayElement( GLint i ) { (void)i; }
 
+// rd-vanilla maps glClientActiveTextureARB to this desktop entry point; rd-rend2
+// does not use client texture units, and WebGL2 has no glClientActiveTexture.
+void glClientActiveTexture( GLenum texture ) { (void)texture; }
+
 void glNewList( GLuint list, GLenum mode ) { (void)list; (void)mode; }
 void glEndList( void ) {}
 void glCallList( GLuint list ) { (void)list; }
