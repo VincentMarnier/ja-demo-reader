@@ -1,8 +1,8 @@
 # engine/ — OpenJK MP Emscripten port
 
-**Status:** M1 boot is verified. M2 is in progress: `rd-vanilla` is statically
-linked, initializes through WebGL and presents frames. No cgame, map, UI, assets,
-audio or demo playback yet.
+**Status:** M1 boot and M2 renderer/cgame bring-up are verified. `rd-vanilla` and
+cgame are statically linked; a retail base demo on `mp/duel1` renders with
+textures, geometry and HUD in Chrome. No UI, input or audio yet.
 
 This directory is the project-owned port layer around upstream OpenJK. Upstream
 source is not vendored here yet: `references/OpenJK` is the pinned, read-only
@@ -79,10 +79,23 @@ engine/scripts/verify-boot-node.sh
 # M2 renderer (static rd-vanilla + WebGL)
 BUILD_RENDERER=1 engine/scripts/build-mp-wasm.sh
 
-# M2 with a local asset fixture (extracted from user PK3s; not committed)
+# M2 renderer + cgame (demo playback; assets served at runtime)
+BUILD_RENDERER=1 BUILD_CGAME=1 engine/scripts/build-mp-wasm.sh
+
+# M2 with a small asset fixture (extracted from user PK3s; not committed)
 BUILD_RENDERER=1 PRELOAD_DIR=/tmp/opencode/m2/testassets/base \
   engine/scripts/build-mp-wasm.sh
 ```
+
+For the full-asset run, serve `assets0..3.pk3` and `demos/m05_base.dm_26`
+alongside the built page, then open:
+
+```text
+/?renderer=rd-vanilla&assets=full&pause=1
+```
+
+`pause=1` stops the RAF loop after the first active frame so the harness can
+read the canvas; it is test-only.
 
 Open the page normally for the M1 stub, or `?renderer=rd-vanilla` for the
 statically linked renderer.
@@ -99,9 +112,11 @@ Defaults: worktree `/tmp/opencode/m1/OpenJK-work`, build
 - `Com_Init`, `FS_Startup`, `NET_Init` stub, `CL_InitRef`,
   `--- Common Initialization Complete ---`.
 - `/jka` and `/userdata` are compiled defaults; IDBFS is mounted at `/userdata`.
-- Stub renderer boots without assets; `rd-vanilla` initializes WebGL, parses
-  shaders, loads fonts and presents frames when a fixture is staged.
-- Chrome (SwiftShader) and Node runs, no wasm trap.
+- Stub renderer boots without assets; `rd-vanilla` + cgame render a retail
+  `mp/duel1` demo with textures, characters and HUD.
+- Full retail assets are staged into MEMFS at runtime; a 1.2 GB run boots and
+  plays in Chrome under SwiftShader.
+- Chrome and Node runs, no wasm trap.
 
 ## Known limitations
 
@@ -111,8 +126,9 @@ Defaults: worktree `/tmp/opencode/m1/OpenJK-work`, build
   source-list/side-module build path.
 - The default `cl_renderer=stub` keeps the boot test asset-free; `rd-vanilla`
   needs at least a shader/font fixture to initialize.
-- No cgame or map: the canvas has no scene yet (the `r_m2_clear` probe is test-only).
-- UI is not loaded; `uiStarted` stays false.
+- No UI, input, audio or product file picker. Assets are staged by the test HTML.
+- SwiftShader only: no hardware-GPU performance baseline yet.
+- The `r_m2_pause` capture hook is test-only.
 - No cgame, no map, no demo, no assets, no audio, no input.
 - Emscripten's POSIX layer compiles `sys_unix.cpp` today. A dedicated
   `sys_emscripten.cpp` is deferred until browser-specific behaviour (paths,

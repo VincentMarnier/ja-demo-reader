@@ -26,22 +26,68 @@
     // shader/font registration).
     var params = new URLSearchParams(window.location.search);
     var renderer = params.get('renderer') === 'rd-vanilla' ? 'rd-vanilla' : 'stub';
+    var fullAssets = params.get('assets') === 'full';
+    var args = [
+      '+set', 'cl_renderer', renderer,
+      '+set', 'cl_allowDownload', '0',
+      '+set', 'logfile', '2',
+      '+set', 'r_fullscreen', '0',
+      '+set', 's_initsound', '0',
+      '+set', 'com_bootlogo', '0',
+      '+set', 'r_clear', '0',
+    ];
+    if (fullAssets) {
+      args.push('+set', 'com_maxfps', '5');
+      args.push('+set', 'r_mode', '3');
+      args.push('+set', 'r_picmip', '3');
+      args.push('+set', 'r_shadows', '0');
+      args.push('+set', 'r_dynamicglow', '0');
+      args.push('+set', 'r_flares', '0');
+      if (params.get('pause') === '1') { args.push('+set', 'r_m2_pause', '1'); }
+      args.push('+demo', 'm05_base');
+    }
     var Module = {
-      arguments: [
-        '+set', 'cl_renderer', renderer,
-        '+set', 'cl_allowDownload', '0',
-        '+set', 'logfile', '2',
-        '+set', 'r_fullscreen', '0',
-        '+set', 's_initsound', '0',
-        '+set', 'com_bootlogo', '0',
-        '+set', 'r_clear', renderer === 'rd-vanilla' ? '1' : '0',
-        '+set', 'r_m2_clear', renderer === 'rd-vanilla' ? '1' : '0'
-      ],
+      arguments: args,
       canvas: document.getElementById('canvas'),
       print: function (t) { m1log(t); },
       printErr: function (t) { m1log("ERR " + t); },
       onAbort: function (what) { m1log("ABORT " + what); },
       preRun: [function () {
+        if (fullAssets) {
+          // M2 full-asset run: stage the retail PK3s and the native baseline
+          // demo into MEMFS. The files are served locally and never uploaded.
+          try { FS.mkdir('/jka'); } catch (e) { /* exists */ }
+          try { FS.mkdir('/jka/base'); } catch (e) { /* exists */ }
+          try { FS.mkdir('/jka/base/demos'); } catch (e) { m1log('mkdir demos: ' + e); }
+          var files = [
+            ['/assets0.pk3', '/jka/base/assets0.pk3'],
+            ['/assets1.pk3', '/jka/base/assets1.pk3'],
+            ['/assets2.pk3', '/jka/base/assets2.pk3'],
+            ['/assets3.pk3', '/jka/base/assets3.pk3'],
+            ['/demos/m05_base.dm_26', '/jka/base/demos/m05_base.dm_26']
+          ];
+          files.forEach(function (pair) {
+            var dep = 'stage:' + pair[1];
+            addRunDependency(dep);
+            m1log('staging ' + pair[0]);
+            fetch(pair[0]).then(function (r) {
+              if (!r.ok) { throw new Error(pair[0] + ': HTTP ' + r.status); }
+              return r.arrayBuffer();
+            }).then(function (buf) {
+              var bytes = new Uint8Array(buf);
+              if (pair[1].endsWith('.pk3')) {
+                FS.createDataFile('/jka/base', pair[1].split('/').pop(), bytes, true, false, true);
+              } else {
+                FS.createDataFile('/jka/base/demos', pair[1].split('/').pop(), bytes, true, false, true);
+              }
+              m1log('staged ' + pair[0] + ' (' + bytes.length + ' bytes)');
+              removeRunDependency(dep);
+            }).catch(function (err) {
+              m1log('STAGE FAILED ' + err);
+              removeRunDependency(dep);
+            });
+          });
+        }
         // Persist engine config/saves in /userdata only; /jka stays read-only.
         // Node has no IndexedDB, so the smoke test skips this.
         if (typeof IDBFS === 'undefined' || typeof indexedDB === 'undefined') {
@@ -61,6 +107,17 @@
         }
       }]
     };
+  </script>
+  <script>
+    // Preserve the WebGL back buffer so the harness can read the last frame
+    // after pausing the engine (evidence capture only).
+    (function () {
+      var orig = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (type, attrs) {
+        var a = Object.assign({}, attrs || {}, { preserveDrawingBuffer: true });
+        return orig.call(this, type, a);
+      };
+    })();
   </script>
   <script src="openjk.x86.js"></script>
 </body>

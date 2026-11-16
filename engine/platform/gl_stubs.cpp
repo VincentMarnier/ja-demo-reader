@@ -31,4 +31,10 @@ GLuint glGenLists( GLsizei range ) { (void)range; return 0; }
 void glPushAttrib( GLbitfield mask ) { (void)mask; }
 void glPopAttrib( void ) {}
 
+// Emscripten's LEGACY_GL_EMULATION aborts on these.
+void glDrawBuffer( GLenum mode ) { (void)mode; }
+void glReadBuffer( GLenum mode ) { (void)mode; }
+void glShadeModel( GLenum mode ) { (void)mode; }
+void glPolygonMode( GLenum face, GLenum mode ) { (void)face; (void)mode; }
+
 }

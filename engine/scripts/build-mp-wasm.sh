@@ -25,6 +25,9 @@ WORK="${WORK:-/tmp/opencode/m1/OpenJK-work}"
 BUILD="${BUILD:-/tmp/opencode/m1/build-wasm}"
 OUT="${OUT:-/tmp/opencode/m1/web}"
 BUILD_RENDERER="${BUILD_RENDERER:-0}"
+BUILD_CGAME="${BUILD_CGAME:-0}"
+NODE_RAWF="${NODE_RAWF:-0}"
+DEBUG_WASM="${DEBUG_WASM:-0}"
 
 REF="$ROOT/references/OpenJK"
 
@@ -65,24 +68,41 @@ cp "$ROOT/engine/platform/gl_stubs.cpp" "$WORK/codemp/client/gl_stubs.cpp"
 # shellcheck disable=SC1090
 source "$EMSDK/emsdk_env.sh" >/dev/null 2>&1
 
-if [ -n "${PRELOAD_DIR:-}" ]; then
+if [ "$NODE_RAWF" = "1" ]; then
+  PRELOAD_ARGS=""
+elif [ -n "${PRELOAD_DIR:-}" ]; then
   PRELOAD_ARGS="--preload-file=$PRELOAD_DIR@/jka/base"
 else
   PRELOAD_ARGS="--preload-file=$ROOT/engine/platform/fixtures/base/mpdefault.cfg@/jka/base/mpdefault.cfg"
 fi
 
 RENDERER=OFF
-GL_FLAGS=""
+CGAME=OFF
+GL_FLAGS="-sALLOW_MEMORY_GROWTH=1 -sASSERTIONS=1 -sSTACK_SIZE=8388608 -sSTACK_OVERFLOW_CHECK=1 -sDISABLE_EXCEPTION_CATCHING=0"
 if [ "$BUILD_RENDERER" = "1" ]; then
   RENDERER=ON
-  GL_FLAGS="-sMIN_WEBGL_VERSION=1 -sMAX_WEBGL_VERSION=2 -sLEGACY_GL_EMULATION=1 -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=268435456 -sMAXIMUM_MEMORY=2147483648 -sASSERTIONS=1"
+  GL_FLAGS="$GL_FLAGS -sMIN_WEBGL_VERSION=1 -sMAX_WEBGL_VERSION=2 -sLEGACY_GL_EMULATION=1 -sGL_UNSAFE_OPTS=0"
+fi
+if [ "$NODE_RAWF" = "1" ]; then
+  GL_FLAGS="$GL_FLAGS -sNODERAWFS=1"
+fi
+if [ "$DEBUG_WASM" = "1" ]; then
+  GL_FLAGS="$GL_FLAGS -g -sASSERTIONS=2"
+fi
+if [ "$BUILD_CGAME" = "1" ]; then
+  CGAME=ON
+  GL_FLAGS="$GL_FLAGS -sINITIAL_MEMORY=805306368 -sMAXIMUM_MEMORY=4294967296"
+else
+  GL_FLAGS="$GL_FLAGS -sINITIAL_MEMORY=268435456 -sMAXIMUM_MEMORY=2147483648"
 fi
 
-echo "==> configuring (renderer=$RENDERER)"
+echo "==> configuring (renderer=$RENDERER, cgame=$CGAME)"
 emcmake cmake -S "$WORK" -B "$BUILD" \
-  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_BUILD_TYPE=${BUILD_TYPE:-Release} \
+  -DCMAKE_C_FLAGS="-fno-strict-aliasing" \
+  -DCMAKE_CXX_FLAGS="-fexceptions -fno-strict-aliasing" \
   -DCMAKE_EXE_LINKER_FLAGS="$PRELOAD_ARGS -lidbfs.js $GL_FLAGS" \
-  -DBuildMPEngine=ON -DBuildMPRdVanilla=$RENDERER -DBuildMPCGame=OFF -DBuildMPUI=OFF \
+  -DBuildMPEngine=ON -DBuildMPRdVanilla=$RENDERER -DBuildMPCGame=$CGAME -DBuildMPUI=OFF \
   -DBuildMPGame=OFF -DBuildMPDed=OFF -DBuildMPRend2=OFF \
   -DBuildSPEngine=OFF -DBuildSPGame=OFF -DBuildSPRdVanilla=OFF \
   -DBuildJK2SPEngine=OFF -DBuildJK2SPGame=OFF -DBuildJK2SPRdVanilla=OFF
@@ -92,10 +112,14 @@ emmake cmake --build "$BUILD" -j"$(nproc)"
 
 echo "==> assembling browser output: $OUT"
 mkdir -p "$OUT"
-cp "$BUILD"/openjk.x86.js "$BUILD"/openjk.x86.wasm "$BUILD"/openjk.x86.data "$OUT"/
+cp "$BUILD"/openjk.x86.js "$BUILD"/openjk.x86.wasm "$OUT"/
+if [ -f "$BUILD/openjk.x86.data" ]; then
+  cp "$BUILD"/openjk.x86.data "$OUT"/
+fi
 cp "$ROOT/engine/platform/web/index.html" "$OUT"/
 
 printf '\nBuilt:\n'
-ls -l "$OUT/openjk.x86.js" "$OUT/openjk.x86.wasm" "$OUT/openjk.x86.data"
+ls -l "$OUT/openjk.x86.js" "$OUT/openjk.x86.wasm"
+[ -f "$OUT/openjk.x86.data" ] && ls -l "$OUT/openjk.x86.data" || true
 printf '\nServe it, e.g.:\n  (cd %q && python3 -m http.server 8123)\n' "$OUT"
 printf 'Open the page for M1 boot; append ?renderer=rd-vanilla for the M2 renderer test.\n'

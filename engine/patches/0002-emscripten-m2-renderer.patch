@@ -1,3 +1,67 @@
+--- a/codemp/cgame/cg_local.h
++++ b/codemp/cgame/cg_local.h
+@@ -1653,6 +1653,17 @@
+ extern	markPoly_t		cg_markPolys[MAX_MARK_POLYS];
+ 
+ // cg_cvar.c
++#ifdef __EMSCRIPTEN__
++// The engine and renderer are linked into the same wasm image as cgame. These
++// cvar names exist in those modules too; give cgame private symbols while
++// keeping the registered cvar names (stringized in cg_xcvar.h) unchanged.
++#define broadsword cg_broadsword
++#define cl_paused cg_cl_paused
++#define com_buildScript cg_com_buildScript
++#define com_cameraMode cg_com_cameraMode
++#define com_optvehtrace cg_com_optvehtrace
++#define r_autoMap cg_r_autoMap
++#endif
+ #define XCVAR_PROTO
+ 	#include "cg_xcvar.h"
+ #undef XCVAR_PROTO
+--- a/codemp/cgame/CMakeLists.txt
++++ b/codemp/cgame/CMakeLists.txt
+@@ -140,14 +140,24 @@
+ source_group("ghoul2" FILES ${MPCGameG2Files})
+ set(MPCGameFiles ${MPCGameFiles} ${MPCGameG2Files})
+ 
+-add_library(${MPCGame} SHARED ${MPCGameFiles})
++if(EMSCRIPTEN)
++	# The engine provides the shared/qcommon C objects. Keep cgame's C copy of
++	# q_shared.c: it provides the C-linkage parse/va symbols that the engine's
++	# C++ q_shared.cpp exports with C++ linkage.
++	list(REMOVE_ITEM MPCGameFiles ${SharedCommonFiles} ${SharedCommonSafeFiles})
++	add_library(${MPCGame} STATIC ${MPCGameFiles})
++else()
++	add_library(${MPCGame} SHARED ${MPCGameFiles})
++endif()
+ 
+-if(NOT MSVC)
++if(NOT MSVC AND NOT EMSCRIPTEN)
+ 	# remove "lib" prefix for .so/.dylib files
+ 	set_target_properties(${MPCGame} PROPERTIES PREFIX "")
+ endif()
+ 
+-if(MakeApplicationBundles AND BuildMPEngine)
++if(EMSCRIPTEN)
++	# static library, no install
++elseif(MakeApplicationBundles AND BuildMPEngine)
+ 	install(TARGETS ${MPCGame}
+ 		LIBRARY
+ 		DESTINATION "${JKAInstallDir}/${MPEngine}.app/Contents/MacOS/OpenJK"
+--- a/codemp/client/cl_cgameapi.cpp
++++ b/codemp/client/cl_cgameapi.cpp
+@@ -506,6 +506,11 @@
+ }
+ 
+ static int CL_G2API_InitGhoul2Model( void **ghoul2Ptr, const char *fileName, int modelIndex, qhandle_t customSkin, qhandle_t customShader, int modelFlags, int lodBias ) {
++#ifdef __EMSCRIPTEN__
++	if ( !re || !re->G2API_InitGhoul2Model ) {
++		return 0;
++	}
++#endif
+ #ifdef _FULL_G2_LEAK_CHECKING
+ 		g_G2AllocServer = 0;
+ #endif
 --- a/codemp/client/cl_main.cpp
 +++ b/codemp/client/cl_main.cpp
 @@ -2421,7 +2421,8 @@
@@ -34,9 +98,36 @@
  #else
  	if( !(rendererLib = Sys_LoadDll( dllName, qfalse )) && strcmp( cl_renderer->string, cl_renderer->resetString ) )
  	{
+@@ -2556,6 +2570,7 @@
+ 
+ 	re = ret;
+ 
++
+ 	// unpause so the cgame definately gets a snapshot and renders a frame
+ 	Cvar_Set( "cl_paused", "0" );
+ }
+@@ -2908,6 +2923,7 @@
+ 	Cmd_AddCommand ("model", CL_SetModel_f, "Set the player model" );
+ 	Cmd_AddCommand ("forcepowers", CL_SetForcePowers_f );
+ 	Cmd_AddCommand ("video", CL_Video_f, "Record demo to avi" );
++
+ 	Cmd_AddCommand ("stopvideo", CL_StopVideo_f, "Stop avi recording" );
+ 
+ 	CL_InitRef();
 --- a/codemp/client/cl_scrn.cpp
 +++ b/codemp/client/cl_scrn.cpp
-@@ -420,8 +420,17 @@
+@@ -25,6 +25,10 @@
+ // cl_scrn.c -- master for refresh, status bar, console, chat, notify, etc
+ 
+ #include "client.h"
++
++#ifdef __EMSCRIPTEN__
++#include <emscripten.h>
++#endif
+ #include "cl_uiapi.h"
+ 
+ extern console_t con;
+@@ -420,8 +424,17 @@
  	qboolean uiFullscreen = (qboolean)(cls.uiStarted && UIVM_IsFullscreen());
  
  	if ( !cls.uiStarted ) {
@@ -54,7 +145,7 @@
  	}
  
  	// if the menu is going to cover the entire screen, we
-@@ -506,7 +515,11 @@
+@@ -506,7 +519,11 @@
  
  	// If there is no VM, there are also no rendering commands issued. Stop the renderer in
  	// that case.
@@ -66,6 +157,21 @@
  	{
  		// if running in stereo, we need to draw the frame twice
  		if ( cls.glconfig.stereoEnabled ) {
+@@ -521,6 +538,14 @@
+ 		} else {
+ 			re->EndFrame( NULL, NULL );
+ 		}
++
++#ifdef __EMSCRIPTEN__
++		if ( Cvar_VariableIntegerValue( "r_m2_pause" ) && cls.state == CA_ACTIVE && cls.cgameStarted ) {
++			Cvar_Set( "r_m2_pause", "0" );
++			Com_Printf( "M2: paused after active frame\n" );
++			emscripten_pause_main_loop();
++		}
++#endif
+ 	}
+ 
+ 	recursive = 0;
 --- a/codemp/CMakeLists.txt
 +++ b/codemp/CMakeLists.txt
 @@ -555,8 +555,10 @@
@@ -81,7 +187,7 @@
  	endif()
  	source_group("sys" FILES ${MPEngineSysFiles})
  
-@@ -623,6 +625,12 @@
+@@ -623,6 +625,18 @@
  	set_target_properties(${MPEngine} PROPERTIES INCLUDE_DIRECTORIES "${MPEngineIncludeDirectories}")
  	set_target_properties(${MPEngine} PROPERTIES PROJECT_LABEL "MP Client")
  	target_link_libraries(${MPEngine} ${MPEngineLibraries})
@@ -90,6 +196,12 @@
 +		# M2: statically link rd-vanilla; CL_InitRef calls GetRefAPI directly.
 +		target_link_libraries(${MPEngine} ${MPVanillaRenderer})
 +		target_compile_definitions(${MPEngine} PRIVATE OPENJK_WASM_RENDERER)
++	endif()
++
++	if(EMSCRIPTEN AND BuildMPCGame)
++		# M2: static cgame; Sys_LoadGameDll returns its GetModuleAPI directly.
++		target_link_libraries(${MPEngine} ${MPCGame})
++		target_compile_definitions(${MPEngine} PRIVATE OPENJK_WASM_CGAME)
 +	endif()
  endif(BuildMPEngine)
  
@@ -115,6 +227,24 @@
  		IN_Frame();
  
  		lastTime = com_frameTime;
+--- a/codemp/qcommon/q_shared.h
++++ b/codemp/qcommon/q_shared.h
+@@ -682,7 +682,14 @@
+ qboolean Info_NextPair( const char **s, char *key, char *value );
+ 
+ // this is only here so the functions in q_shared.c and bg_*.c can link
+-#if defined( _GAME ) || defined( _CGAME ) || defined( UI_BUILD )
++#if defined( __EMSCRIPTEN__ ) && ( defined( _GAME ) || defined( _CGAME ) || defined( UI_BUILD ) )
++	// Static wasm link: the engine's Com_Error/Com_Printf functions share these
++	// names. Give the game modules private pointers so the symbols do not clash.
++	extern NORETURN_PTR void (*game_Com_Error)( int level, const char *error, ... );
++	extern void (*game_Com_Printf)( const char *msg, ... );
++	#define Com_Error game_Com_Error
++	#define Com_Printf game_Com_Printf
++#elif defined( _GAME ) || defined( _CGAME ) || defined( UI_BUILD )
+ 	extern NORETURN_PTR void (*Com_Error)( int level, const char *error, ... );
+ 	extern void (*Com_Printf)( const char *msg, ... );
+ #else
 --- a/codemp/rd-common/tr_font.cpp
 +++ b/codemp/rd-common/tr_font.cpp
 @@ -22,6 +22,8 @@
@@ -199,7 +329,35 @@
  #	include <GL/glx.h>
 --- a/codemp/rd-vanilla/tr_backend.cpp
 +++ b/codemp/rd-vanilla/tr_backend.cpp
-@@ -1919,7 +1919,7 @@
+@@ -71,11 +71,19 @@
+ 		texnum = tr.dlightImage->texnum;
+ 	}
+ 
++#ifdef __EMSCRIPTEN__
++	// The GL emulation's texture-unit state can diverge from the renderer's
++	// cached state during init; always bind so texImage2D has a target.
++	image->frameUsed = tr.frameCount;
++	glState.currenttextures[glState.currenttmu] = texnum;
++	qglBindTexture (GL_TEXTURE_2D, texnum);
++#else
+ 	if ( glState.currenttextures[glState.currenttmu] != texnum ) {
+ 		image->frameUsed = tr.frameCount;
+ 		glState.currenttextures[glState.currenttmu] = texnum;
+ 		qglBindTexture (GL_TEXTURE_2D, texnum);
+ 	}
++#endif
+ }
+ 
+ /*
+@@ -521,6 +529,7 @@
+ 		qglClear( clearBits );
+ 	}
+ 
++
+ 	if ( ( backEnd.refdef.rdflags & RDF_HYPERSPACE ) )
+ 	{
+ 		RB_Hyperspace();
+@@ -1919,7 +1928,7 @@
  
      GLimp_LogComment( "***************** RB_SwapBuffers *****************\n\n\n" );
  
@@ -210,23 +368,14 @@
  
 --- a/codemp/rd-vanilla/tr_cmds.cpp
 +++ b/codemp/rd-vanilla/tr_cmds.cpp
-@@ -471,6 +471,16 @@
- 	}
- 	cmd->commandId = RC_SWAP_BUFFERS;
+@@ -24,6 +24,7 @@
+ #include "tr_local.h"
  
-+#ifdef __EMSCRIPTEN__
-+	// M2 bring-up probe: prove the WebGL back buffer reaches the canvas before
-+	// cgame/map rendering exists. Off by default; enabled only by test harness.
-+	if ( ri.Cvar_VariableIntegerValue( "r_m2_clear" ) ) {
-+		qglDisable( GL_SCISSOR_TEST );
-+		qglClearColor( 0.15f, 0.65f, 0.25f, 1.0f );
-+		qglClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
-+	}
-+#endif
+ 
 +
- 	R_IssueRenderCommands( qtrue );
- 
- 	// use the other buffers next frame, because another CPU
+ /*
+ =====================
+ R_PerformanceCounters
 --- a/codemp/rd-vanilla/tr_image.cpp
 +++ b/codemp/rd-vanilla/tr_image.cpp
 @@ -708,6 +708,12 @@
@@ -242,6 +391,22 @@
  		*pUploadWidth = width;
  		*pUploadHeight = height;
  
+@@ -1011,7 +1017,15 @@
+ 	image = (image_t*) Z_Malloc( sizeof( image_t ), TAG_IMAGE_T, qtrue );
+ //	memset(image,0,sizeof(*image));	// qtrue above does this
+ 
++#ifdef __EMSCRIPTEN__
++	{
++		GLuint generated = 0;
++		qglGenTextures( 1, &generated );
++		image->texnum = generated;
++	}
++#else
+ 	image->texnum = 1024 + giTextureBindNum++;	// ++ is of course staggeringly important...
++#endif
+ 
+ 	// record which map it was used on...
+ 	//
 --- a/codemp/rd-vanilla/tr_init.cpp
 +++ b/codemp/rd-vanilla/tr_init.cpp
 @@ -34,7 +34,7 @@
@@ -292,7 +457,38 @@
  		// set default state
  		GL_SetDefaultState();
  		R_Splash();	//get something on screen asap
-@@ -1456,6 +1461,11 @@
+@@ -917,7 +922,30 @@
+ 	buffer = (byte *)Hunk_AllocateTempMemory(padwidth * height + *offset + packAlign - 1);
+ 
+ 	bufstart = (byte *)PADP((intptr_t) buffer + *offset, packAlign);
++
++#ifdef __EMSCRIPTEN__
++	// The GL emulation implements RGBA readback reliably; RGB readback can
++	// return mis-strided rows. Read RGBA and convert to the RGB layout the
++	// screenshot/levelshot writers expect.
++	{
++		byte *rgba = (byte *)Hunk_AllocateTempMemory(width * height * 4);
++		int row, col;
++
++		qglReadPixels(x, y, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
++		for (row = 0; row < height; row++) {
++			byte *dst = bufstart + row * padwidth;
++			const byte *src = rgba + row * width * 4;
++			for (col = 0; col < width; col++) {
++				dst[col * 3 + 0] = src[col * 4 + 0];
++				dst[col * 3 + 1] = src[col * 4 + 1];
++				dst[col * 3 + 2] = src[col * 4 + 2];
++			}
++		}
++		ri.Hunk_FreeTempMemory(rgba);
++	}
++#else
+ 	qglReadPixels(x, y, width, height, GL_RGB, GL_UNSIGNED_BYTE, bufstart);
++#endif
+ 
+ 	*offset = bufstart - buffer;
+ 	*padlen = padwidth - linelen;
+@@ -1456,6 +1484,11 @@
  
  		// default is to use triangles if compiled vertex arrays are present
  		ri.Printf( PRINT_ALL, "rendering primitives: " );
@@ -304,7 +500,7 @@
  		primitives = r_primitives->integer;
  		if ( primitives == 0 ) {
  			if ( qglLockArraysEXT ) {
-@@ -1464,6 +1474,7 @@
+@@ -1464,6 +1497,7 @@
  				primitives = 1;
  			}
  		}
@@ -312,7 +508,7 @@
  		if ( primitives == -1 ) {
  			ri.Printf( PRINT_ALL, "none\n" );
  		} else if ( primitives == 2 ) {
-@@ -1559,7 +1570,7 @@
+@@ -1559,7 +1593,7 @@
  void R_Register( void )
  {
  	//FIXME: lol badness
@@ -348,20 +544,137 @@
  
  
  //
+--- a/codemp/rd-vanilla/tr_scene.cpp
++++ b/codemp/rd-vanilla/tr_scene.cpp
+@@ -414,6 +414,7 @@
+ 		Com_Error (ERR_DROP, "R_RenderScene: NULL worldmodel");
+ 	}
+ 
++
+ 	memcpy( tr.refdef.text, fd->text, sizeof( tr.refdef.text ) );
+ 
+ 	tr.refdef.x = fd->x;
+--- a/codemp/rd-vanilla/tr_shade.cpp
++++ b/codemp/rd-vanilla/tr_shade.cpp
+@@ -173,6 +173,11 @@
+ static void R_DrawElements( int numIndexes, const glIndex_t *indexes ) {
+ 	int		primitives;
+ 
++#ifdef __EMSCRIPTEN__
++	// WebGL has no compiled-vertex-array extension and glArrayElement is not
++	// usable under GL emulation. Always use indexed glDrawElements.
++	primitives = 2;
++#else
+ 	primitives = r_primitives->integer;
+ 
+ 	// default is to use triangles if compiled vertex arrays are present
+@@ -183,6 +188,7 @@
+ 			primitives = 1;
+ 		}
+ 	}
++#endif
+ 
+ 
+ 	if ( primitives == 2 ) {
+@@ -426,7 +432,10 @@
+ 	//
+ 	// disable texturing on TEXTURE1, then select TEXTURE0
+ 	//
+-	//qglDisableClientState( GL_TEXTURE_COORD_ARRAY );
++	// Emscripten's LEGACY_GL_EMULATION derives the vertex stride from enabled
++	// client arrays; a stale TEXTURE1 coord array corrupts later single-texture
++	// draws. Desktop GL ignores it, WebGL does not.
++	qglDisableClientState( GL_TEXTURE_COORD_ARRAY );
+ 	qglDisable( GL_TEXTURE_2D );
+ 
+ 	GL_SelectTexture( 0 );
+--- a/lib/minizip/unzip.c
++++ b/lib/minizip/unzip.c
+@@ -113,7 +113,7 @@
+    binding the bundled minizip lib to the rest of the engine. */
+ 
+ void* openjk_minizip_malloc(int);
+-int   openjk_minizip_free(void*);
++void  openjk_minizip_free(void*);
+ 
+ #ifndef ALLOC
+ # define ALLOC(size) (openjk_minizip_malloc(size))
+--- a/shared/sdl/sdl_window.cpp
++++ b/shared/sdl/sdl_window.cpp
+@@ -22,6 +22,9 @@
+ #include <SDL.h>
+ #include <SDL_syswm.h>
+ #include "qcommon/qcommon.h"
++#ifdef __EMSCRIPTEN__
++#include <GL/gl.h>
++#endif
+ #include "rd-common/tr_types.h"
+ #include "sys/sys_local.h"
+ #include "sdl_icon.h"
+@@ -891,6 +894,16 @@
+ 
+ void *WIN_GL_GetProcAddress( const char *proc )
+ {
++#if defined(__EMSCRIPTEN__) && defined(OPENJK_WASM_RENDERER)
++	// LEGACY_GL_EMULATION exposes the core names; SDL_GL_GetProcAddress does not
++	// resolve the ARB aliases the renderer asks for.
++	if ( !Q_stricmp( proc, "glActiveTextureARB" ) ) {
++		return (void *)glActiveTexture;
++	}
++	if ( !Q_stricmp( proc, "glClientActiveTextureARB" ) ) {
++		return (void *)glClientActiveTexture;
++	}
++#endif
+ 	return SDL_GL_GetProcAddress( proc );
+ }
+ 
 --- a/shared/sys/sys_main.cpp
 +++ b/shared/sys/sys_main.cpp
-@@ -26,6 +26,10 @@
+@@ -26,6 +26,14 @@
  #include <sys/stat.h>
  #define __STDC_FORMAT_MACROS
  #include <inttypes.h>
 +#ifdef __EMSCRIPTEN__
 +#include <emscripten.h>
++#ifdef OPENJK_WASM_CGAME
++// Statically linked cgame (M2). C linkage matches cg_main.c's GetModuleAPI.
++extern "C" void *GetModuleAPI( int apiVersion, void *import );
++#endif
 +#endif
 +
  #include "qcommon/qcommon.h"
  #include "sys_local.h"
  #include "sys_loadlib.h"
-@@ -794,6 +798,13 @@
+@@ -282,6 +290,11 @@
+ */
+ void Sys_UnloadDll( void *dllHandle )
+ {
++#ifdef __EMSCRIPTEN__
++	// Modules are statically linked; there is nothing to unload.
++	(void)dllHandle;
++	return;
++#endif
+ 	if( !dllHandle )
+ 	{
+ 		Com_Printf("Sys_UnloadDll(NULL)\n");
+@@ -601,6 +614,16 @@
+ 
+ void *Sys_LoadGameDll( const char *name, GetModuleAPIProc **moduleAPI )
+ {
++#ifdef __EMSCRIPTEN__
++#ifdef OPENJK_WASM_CGAME
++	if ( !Q_stricmp( name, "cgame" ) ) {
++		*moduleAPI = (GetModuleAPIProc *)GetModuleAPI;
++		return (void *)1;
++	}
++#endif
++	Com_Printf( "Sys_LoadGameDll: %s is not linked in the wasm build\n", name );
++	return NULL;
++#endif
+ 	void	*libHandle = NULL;
+ 	char	filename[MAX_OSPATH];
+ 
+@@ -794,6 +817,13 @@
  	Com_Printf( "SDL Version Linked: %d.%d.%d\n", linked.major, linked.minor, linked.patch );
  #endif
  
@@ -375,7 +688,7 @@
  	// main game loop
  	while (1)
  	{
-@@ -825,4 +836,5 @@
+@@ -825,4 +855,5 @@
  
  	// never gets here
  	return 0;

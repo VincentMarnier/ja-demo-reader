@@ -1,157 +1,130 @@
 # WebGL bring-up (M2)
 
-**Status:** In progress. The statically linked `rd-vanilla` renderer initializes through WebGL and presents frames. A map/cgame render is not yet achieved.
+**Status:** Complete for the base demo/map target. `rd-vanilla`, cgame, retail assets and a `.dm_26` demo run in Chrome; `mp/duel1` renders with textures, geometry and HUD, and the native and browser frames are compared below.
 **Date:** 2026-11-16
-**Scope:** Static renderer link, WebGL1 compatibility fixes, browser frame loop. No cgame, UI, asset staging layer or demo playback yet.
+**Scope:** Static renderer and cgame, WebGL1 fixes, MEMFS asset staging, browser demo playback, native-vs-browser screenshot comparison.
 
 ---
 
-## 1. Result so far
+## 1. Result
 
 | Check | Result |
 |---|---|
 | `rd-vanilla` linked into the wasm engine (static) | **Pass** |
-| `GetRefAPI` called without a shared object | **Pass** |
-| SDL2 WebGL context created | **Pass** — `GL_RENDERER: WebKit WebGL` |
-| Extensions enumerated | **Pass** — multitexture, anisotropic, edge clamp; no compiled vertex arrays, no texenv add |
-| Shader files parsed | **Pass** — with a local asset fixture (68 base shaders) |
-| Base fonts loaded | **Pass** — `ocr_a` from the fixture |
-| `--- Common Initialization Complete ---` | **Pass** |
-| RAF frame loop runs | **Pass** — `emscripten_set_main_loop` |
-| WebGL frame reaches the canvas | **Pass** — screen probe renders green (`rgb(38,166,64)` at canvas centre) |
-| Map geometry + textures | **Not yet** — needs cgame and a complete asset set |
-| cgame loaded | **Not yet** |
-| UI | **Not yet** (deliberately skipped) |
+| cgame linked (static) and loaded by `VM_Create` | **Pass** — `VM_Create: cgamex86.wasm succeeded` |
+| WebGL context | **Pass** — `WebKit WebGL` / WebGL 1.0, SwiftShader |
+| Retail `assets0..3.pk3` staged (1.2 GB) | **Pass** — 23,744 files |
+| Demo gamestate parsed | **Pass** — `mp/duel1`, protocol 26 |
+| Map BSP loaded | **Pass** — `...loaded 550 faces, 66 meshes, 46 trisurfs, 2 flares` |
+| `CA_ACTIVE` and cgame HUD | **Pass** |
+| Playback advances in the browser | **Pass** — chat/kill events over multiple minutes |
+| Textured world + characters + HUD | **Pass** — see §4 |
+| Native vs browser comparison | **Pass** — same map, textures, HUD, player names; different playback instant |
 
-The current binary is a renderer bring-up, not a playable client.
+**M2 / G2: PASS** for the base `mp/duel1` demo on SwiftShader. The browser and native frames differ in camera instant and minor effects, not in map, texture or HUD content.
 
 ---
 
-## 2. Renderer strategy: static link
+## 2. What was added
 
-`rd-vanilla` is built as a **STATIC** library under Emscripten and linked into the engine target (`0002-emscripten-m2-renderer.patch`). `CL_InitRef` calls the real `GetRefAPI` unless `cl_renderer` is `stub`:
+### 2.1 Static cgame
 
-```c
-#ifdef __EMSCRIPTEN__
-    if ( !Q_stricmp( cl_renderer->string, "stub" ) ) {
-        GetRefAPI = GetRefAPIStub;
-    } else {
-        GetRefAPI = ::GetRefAPI;   // rd-vanilla, linked into the wasm image
-    }
-#else
-    // Sys_LoadDll path
-#endif
-```
+cgame is built as a **STATIC** library and linked into the engine. `Sys_LoadGameDll` returns its `GetModuleAPI` directly for `"cgame"` and `Sys_UnloadDll` is a no-op.
 
-The M1 boot smoke test keeps `cl_renderer stub`; `?renderer=rd-vanilla` in the harness exercises the real renderer.
-
-### 2.1 Static-link conflicts resolved
-
-The renderer and engine were separate modules upstream. Static linking required:
+Static linking surfaced symbol collisions that do not exist with separate modules:
 
 | Conflict | Fix |
 |---|---|
-| `window` data symbol vs mp3code `window` function | rename the renderer's window handle to `tr_window` |
-| `se_language` defined in both engine and renderer | renderer uses `tr_se_language` (same cvar name) |
-| shared/qcommon sources compiled into both | omit `MPVanillaRendererCommonFiles` from the static lib; engine supplies them |
-| display-list / array-element GL entry points absent from emulation | `engine/platform/gl_stubs.cpp` (inert; `r_primitives=2` means they are not on the draw path) |
+| `Com_Printf` / `Com_Error` are function pointers in cgame but functions in the engine | `game_Com_Printf` / `game_Com_Error` under `__EMSCRIPTEN__` + `_CGAME` |
+| cgame cvar globals collide with engine/renderer (`broadsword`, `cl_paused`, `com_buildScript`, `com_cameraMode`, `com_optvehtrace`, `r_autoMap`) | private `cg_*` symbols via macros; registered cvar names unchanged |
+| shared/qcommon sources compiled into both | use the engine's copies; keep cgame's C `q_shared.c` for C-linkage parse/`va` symbols |
+| `window` / `se_language` renderer globals | renamed `tr_window` / `tr_se_language` |
+
+### 2.2 Full asset staging
+
+The M2 harness fetches the four retail PK3s and the native baseline demo from a local HTTP server and writes them into MEMFS **before** `Com_Init`:
+
+```text
+/jka/base/assets0.pk3   561,806,019 B
+/jka/base/assets1.pk3   652,804,510 B
+/jka/base/assets2.pk3     1,116,384 B
+/jka/base/assets3.pk3     9,282,026 B
+/jka/base/demos/m05_base.dm_26
+```
+
+`FS.createDataFile(..., canOwn=true)` avoids a second copy of each PK3. The files are served locally and are never committed or uploaded.
 
 ---
 
-## 3. WebGL fixes applied
+## 3. Renderer fixes that mattered
 
-These are the classes predicted by [rendering-triage.md](./rendering-triage.md):
+| Fix | Effect |
+|---|---|
+| **`glGenTextures` for every image** | The final blocker. OpenJK assigns texture names manually (`1024 + n`); under Emscripten/WebGL that left textures unbound and the world black. Generated names fixed texture upload/sampling. |
+| 16-bit `glIndex_t` | WebGL1 client-array indices are `GL_UNSIGNED_SHORT`. |
+| Force `GL_RGBA` internal format | WebGL1 requires `internalformat == format` for uncompressed uploads. |
+| Force indexed draws in **`R_DrawElements`** | The earlier `tr_init` change only affected the log; the actual draw still chose the `glArrayElement` path. |
+| Disable TEXTURE1 client-array state after multitexture | A stale unit-1 texcoord array corrupted later single-texture draws. |
+| Map `glActiveTextureARB` / `glClientActiveTextureARB` to core names | `SDL_GL_GetProcAddress` does not resolve the ARB aliases. |
+| `emscripten_set_main_loop(Com_Frame, 0, 1)` | A wasm `while(1)` blocks RAF and devtools. |
+| Remove blocking `select`/`Sys_Sleep` frame pacing | Emscripten's `poll` has no timeout; the loop starved the browser. |
+| minizip `openjk_minizip_free` signature (`void`, not `int`) | Wasm traps on signature mismatch while reading PK3s. |
+| 8 MB stack, `-fexceptions`, `-fno-strict-aliasing` | Deep BSP/cgame stacks and OpenJK's `Com_Error` exceptions. |
+| RGBA screenshot readback | RGB readback is unreliable under the GL emulation; convert RGBA to the existing RGB layout. |
 
-| Fix | File | Detail |
-|---|---|---|
-| 16-bit indices | `rd-vanilla/tr_local.h` | `glIndex_t` is `unsigned short` under `__EMSCRIPTEN__`; vertex budget is 1000 |
-| Texture internal format | `rd-vanilla/tr_image.cpp` | force `*pformat = GL_RGBA` for uncompressed uploads (WebGL1 requires `internalformat == format`) |
-| Draw primitives | `rd-vanilla/tr_init.cpp` | force `r_primitives = 2` (indexed `glDrawElements`; no `glArrayElement`) |
-| Texture compression | `rd-vanilla/tr_init.cpp` | force `TC_NONE` after extension probing |
-| Browser frame loop | `shared/sys/sys_main.cpp` | `emscripten_set_main_loop(Com_Frame, 0, 1)` instead of `while(1)` |
-| Frame pacing | `codemp/qcommon/common.cpp` | skip the blocking `select()`/`NET_Sleep` loop; RAF owns timing |
-| Sleep | `shared/sys/sys_unix.cpp` | `Sys_Sleep` returns immediately in the browser |
-| GL headers | `rd-vanilla/qgl.h` | `__EMSCRIPTEN__` branch includes `<GL/gl.h>` (no GLX) |
-
-The 16-bit index, internalformat and primitive fixes match the defects fixed by `jka-web` in its SP tree. They are now in the MP tree.
+A test-only `r_m2_pause` cvar stops the RAF loop after the first active frame so the harness can read the canvas. It is not used by normal runs.
 
 ---
 
 ## 4. Evidence
 
-### 4.1 Chrome console (renderer path)
+Browser capture (engine paused on the first active frame):
+
+- `/tmp/opencode/m2/shots/browser-final.png` (640x480)
+- Native comparison: `/tmp/opencode/m2/shots/native-duel1-crop.png`
+- Side-by-side: `/tmp/opencode/m2/shots/native-vs-browser-final.png`
+
+The browser frame shows:
+
+- `mp/duel1` floor slats, walls, ceiling and skybox textures;
+- the recorded player and a second duellist;
+- the sabers and saber glow;
+- HUD bars, `amda / Dueling / 0/0`, `Lightsaber`, `Score: 0/0`, health/shield.
+
+Console excerpt:
 
 ```text
-OpenJK-MP: latest emscripten-x86 Nov 16 2026
------ FS_Startup -----
-/jka/base
+VM_Create: cgamex86.wasm succeeded
+...loaded 550 faces, 66 meshes, 46 trisurfs, 2 flares
+CL_InitCGame:  1.35 seconds
 ...
-GL_RENDERER: WebKit WebGL
-Initializing OpenGL extensions
-...using GL_ARB_multitexture
-...GL_EXT_compiled_vertex_array not found
-compiled vertex arrays: disabled
-texenv add: disabled
-compressed textures: disabled
-texture compression method: None
-...
-Shader console has a stage with no image      (fixture lacks gfx/interface/stars)
-Shader cursor has a stage with no image       (fixture lacks gfx/menus/cursor1)
-...
---- Common Initialization Complete ---
-SDL Version Compiled: 2.32.10
-SDL Version Linked: 2.32.10
+<player> was sabered by <player>
 ```
 
-### 4.2 Frame presentation
-
-With `+set r_m2_clear 1` (test-only probe in `RE_EndFrame`), the canvas centre samples `srgb(38,166,64)`, proving that the WebGL back buffer is presented. Screenshot: `/tmp/opencode/m2/shots/m2-green.png`.
-
-Screenshot capture uses CDP:
-
-```bash
-CHROME=~/.cache/ms-playwright/.../chrome-headless-shell
-"$CHROME" --headless --no-sandbox --use-gl=angle --use-angle=swiftshader \
-  --enable-unsafe-swiftshader --remote-debugging-port=9228 \
-  --window-size=800,600 "http://127.0.0.1:8140/?renderer=rd-vanilla"
-node /tmp/opencode/m2/shot2.mjs /tmp/opencode/m2/shots/m2-green.png 6000
-```
-
-SwiftShader is used because the headless shell has no GPU; this is a correctness path, not a performance measurement.
-
-### 4.3 Local asset fixture
-
-A 7.5 MB fixture was extracted from the user's `assets1.pk3` into `/tmp` (not committed):
-
-```text
-shaders/*.shader
-fonts/ocr_a.fontdat, fonts/ocr_a.tga
-gfx/2d/*
-mpdefault.cfg
-```
-
-It is enough for renderer/shaders/fonts init, not for a map. `--preload-file=<dir>@/jka/base` stages it.
+The native frame was captured from the same demo at 640x480. It is a later playback instant (a jump/attack pose), while the browser frame is the first active frame; map, textures, HUD layout and player names match.
 
 ---
 
-## 5. Remaining blockers
+## 5. Limitations
 
-1. **cgame.** `VM_Create` needs `cgame.wasm`. CMake 4.2.3 cannot build Emscripten shared libraries; the options are a newer CMake (> 4.3.3), a source-list side-module build, or a static cgame link with the same conflict work as the renderer.
-2. **Complete assets.** A map needs retail `assets0..3.pk3` staged into MEMFS (MEMFS/IDBFS staging layer is M3/M4 work). Fetching 1.2 GB into the wasm VFS is feasible but must be measured.
-3. **UI.** Still skipped. `SCR_DrawScreenField` now allows cgame rendering without UI when `CA_ACTIVE`; the main menu path remains disabled.
-4. **Texture path defects.** Observed but not fixed:
-   - `GL_TEXTURE_RECTANGLE_ARB` is not available in WebGL1; rectangle-texture paths must fall back to `GL_TEXTURE_2D`.
-   - `glTexEnvf` receives pnames the emulation does not handle.
-   - `texImage2D: no texture bound to target` during init (bind ordering; resolve before map rendering).
-   - `glShadeModel` is a TODO in the emulation.
-5. **Map/cgame test.** No visual comparison with the native baseline yet.
+- **SwiftShader only.** The headless shell has no GPU; frame times are not representative. A hardware-GPU run is still required for the M2 performance baseline.
+- **Test harness, not a product shell.** The page serves assets from a local node/Python server and stages 1.2 GB into MEMFS. The product picker and error UI are M4 work.
+- **640x480 / low quality for capture.** `r_mode 3`, `r_picmip 3`, `r_shadows 0`, no dynamic glow, 5 fps cap to keep the software rasterizer responsive.
+- **First active frame comparison.** Exact-frame parity would need a deterministic pause at a chosen demo `serverTime`; current comparison is same-scene, different instant.
+- **UI not loaded.** Menus/console remain disabled; cgame HUD is drawn without the UI VM.
+- **Audio/input not exercised.** `s_initsound 0`; input is not wired to the browser.
+- **G2/character animation** is visible at the captured frame; a long soak for Ghoul2/effects is not done.
+- The `r_m2_pause` capture hook is test-only and should be removed or compiled out for a release build.
 
 ---
 
-## 6. Next actions
+## 6. Next: M3
 
-1. Build cgame as a side module (resolve the CMake limitation) or static-link it.
-2. Stage the full retail PK3 set into MEMFS and load `mp/duel1` or the native baseline demo.
-3. Fix rectangle-texture fallback and the texture-binding/texenv issues found in §5.4.
-4. Capture a browser screenshot of the same scene as `native-baseline.md` and compare.
-5. Measure frame time and memory before any optimization.
+M2 has already demonstrated local `.dm_26` playback in the browser. M3 should productize the path:
+
+1. Replace the test fetch loop with the filesystem/source layer (FSA + file input) and progress/cancel.
+2. Keep `cl_allowDownload 0`, enforce no-network, and validate the demo/PK3 set before boot.
+3. Add a headless browser test that asserts `CA_ACTIVE`, advancing `serverTime`, a non-blank frame, and clean demo end.
+4. Record failure modes: wrong protocol, truncated demo, missing mod/map, missing `productid.txt`.
+5. Optional: build UI or keep the UI-skip path; add the end-of-demo callback.
+6. Measure hardware-GPU frame time and memory (M2 baseline is SwiftShader-only).
