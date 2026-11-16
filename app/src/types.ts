@@ -33,9 +33,11 @@ export interface ScoreboardPlayer {
   num: number;
   name: string;
   score: number;
+  kills?: number;
   deaths: number;
   ping: number;
   team: number;
+  left?: boolean;
 }
 
 export interface ViewStats {
@@ -70,6 +72,48 @@ export interface FreeCamPose {
 export interface DemoInfo {
   first: number;
   duration: number;
+  fullSnapshots?: number;
+  totalSnapshots?: number;
+}
+
+export interface DemoEvent {
+  time: number;
+  target: number;
+  attacker: number;
+  mod: number;
+}
+
+export interface DemoPlayerSummary {
+  num: number;
+  name: string;
+  team: number;
+  score: number;
+  kills: number;
+  deaths: number;
+  left: boolean;
+  leftAt: number;
+  returned: boolean;
+  firstSeen: number;
+  lastSeen: number;
+}
+
+export interface DemoGameSummary {
+  map: string;
+  startTime: number;
+  endTime: number;
+  duration: number;
+  levelTime: number;
+  eventOverflow?: boolean;
+  players: DemoPlayerSummary[];
+  events: DemoEvent[];
+}
+
+export interface DemoSummary {
+  first: number;
+  duration: number;
+  fullSnapshots?: number;
+  totalSnapshots?: number;
+  games: DemoGameSummary[];
 }
 
 export type Phase =

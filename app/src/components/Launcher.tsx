@@ -1,5 +1,7 @@
 import type { ChangeEvent, RefObject } from 'react';
-import type { AssetSelection, LocalFile, ValidationResult } from '../types';
+import type { AssetSelection, DemoSummary, LocalFile, ValidationResult } from '../types';
+import type { CachedAssets } from '../fs/assetCache';
+import { DemoSummaryView } from './DemoSummaryView';
 
 type WizardStep = 'assets' | 'demo' | 'map';
 
@@ -12,6 +14,10 @@ interface LauncherProps {
   mapName: string;
   mapMissing: boolean;
   mapError: string | null;
+  summary: DemoSummary | null;
+  cachedAssets: CachedAssets | null;
+  cacheStatus: string | null;
+  onUseCachedAssets: () => void;
   savedHandle: FileSystemDirectoryHandle | null;
   busy: boolean;
   onPickAssets: () => void;
@@ -59,7 +65,22 @@ export function Launcher(props: LauncherProps) {
               {props.savedHandle ? (
                 <button className="ghost" onClick={props.onSaved} disabled={props.busy}>Use last folder</button>
               ) : null}
+              {props.cachedAssets ? (
+                <button className="ghost" onClick={props.onUseCachedAssets} disabled={props.busy}>Use cached assets</button>
+              ) : null}
             </div>
+
+            {props.cacheStatus ? (
+              <p className="scan-status">
+                <span className="spinner" aria-hidden="true" />
+                <span>{props.cacheStatus}</span>
+              </p>
+            ) : null}
+            {props.cachedAssets ? (
+              <p className="fineprint">
+                Cached game data is stored on this device ({props.cachedAssets.files.length} PK3s).
+              </p>
+            ) : null}
 
             {assetSelection ? (
               <div className="selection">
@@ -166,6 +187,15 @@ export function Launcher(props: LauncherProps) {
             ) : null}
 
             {props.mapError ? <ul className="alerts error"><li>{props.mapError}</li></ul> : null}
+
+            <DemoSummaryView summary={props.summary} />
+
+            {props.cacheStatus ? (
+              <p className="scan-status">
+                <span className="spinner" aria-hidden="true" />
+                <span>{props.cacheStatus}</span>
+              </p>
+            ) : null}
 
             {!mapName && !mapMissing ? (
               <div className="row">

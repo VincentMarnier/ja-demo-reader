@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
-import type { AssetSelection, DemoInfo, DemoStatus, FreeCamPose, LocalFile, Phase, ScoreboardData, StageProgress, ValidationResult } from './types';
+import type { AssetSelection, DemoInfo, DemoStatus, DemoSummary, FreeCamPose, LocalFile, Phase, ScoreboardData, StageProgress, ValidationResult } from './types';
 import { CA_ACTIVE } from './types';
 import { validateDemoFile, validateSelection } from './fs/validate';
 import {
@@ -10,6 +10,11 @@ import {
   selectionFromFileList
 } from './fs/sources';
 import { loadDirectoryHandle, saveDirectoryHandle } from './fs/handles';
+import { loadDemoSummary, saveDemoSummary, clearDemoSummaries } from './fs/demoCache';
+import { assetCacheKey, clearAssetCache, loadCachedAssets, saveAssetFiles } from './fs/assetCache';
+import type { CachedAssets } from './fs/assetCache';
+import { mergeScoreboard } from './summary';
+import { formatTime } from './format';
 import { EngineHost } from './engine/EngineHost';
 import { Launcher } from './components/Launcher';
 import { Player } from './components/Player';
@@ -21,13 +26,6 @@ import type { AppSettings } from './settings';
 import { loadSettings, saveSettings } from './settings';
 
 type WizardStep = 'assets' | 'demo' | 'map';
-
-function formatTime(ms: number): string {
-  const total = Math.max(0, Math.floor(ms / 1000));
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${m}:${s.toString().padStart(2, '0')}`;
-}
 
 function demoBase(name: string): string {
   return name.replace(/\.dm_26$/i, '');
@@ -56,6 +54,9 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [scoreboard, setScoreboard] = useState<ScoreboardData | null>(null);
   const [demoInfo, setDemoInfo] = useState<DemoInfo | null>(null);
+  const [demoSummary, setDemoSummary] = useState<DemoSummary | null>(null);
+  const [cachedAssets, setCachedAssets] = useState<CachedAssets | null>(null);
+  const [cacheStatus, setCacheStatus] = useState<string | null>(null);
   const [freeCam, setFreeCam] = useState(false);
   const [followClient, setFollowClient] = useState<number | null>(null);
   const [pointerLocked, setPointerLocked] = useState(false);
@@ -70,9 +71,15 @@ export default function App() {
   const logCursorRef = useRef(0);
   const playbackRequestedRef = useRef(false);
   const freeCamPoseRef = useRef<FreeCamPose | null>(null);
+  const demoSummaryRef = useRef<DemoSummary | null>(null);
+  const statusRef = useRef<DemoStatus | null>(null);
+  const cacheInFlightRef = useRef(false);
 
   useEffect(() => {
     loadDirectoryHandle().then(handle => setSavedHandle(handle));
+    loadCachedAssets().then(cached => {
+      if (cached) setCachedAssets(cached);
+    });
   }, []);
 
   useEffect(() => {
@@ -93,6 +100,14 @@ export default function App() {
   }, [settings]);
 
   useEffect(() => {
+    demoSummaryRef.current = demoSummary;
+  }, [demoSummary]);
+
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
+
+  useEffect(() => {
     const handler = () => setPointerLocked(document.pointerLockElement === stageRef.current);
     document.addEventListener('pointerlockchange', handler);
     return () => document.removeEventListener('pointerlockchange', handler);
@@ -111,10 +126,18 @@ export default function App() {
   }, [settings.cgFov, phase]);
 
   useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    engine.setCvar('timescale', String(settings.playbackSpeed));
+  }, [settings.playbackSpeed, phase]);
+
+  useEffect(() => {
     if (phase !== 'playing' && phase !== 'paused' && phase !== 'ended') return;
     const tick = () => {
       const data = engineRef.current?.getScoreboard();
-      if (data) setScoreboard(data);
+      if (data) {
+        setScoreboard(mergeScoreboard(data, demoSummaryRef.current, statusRef.current?.serverTime ?? 0));
+      }
     };
     tick();
     const timer = window.setInterval(tick, 500);
@@ -297,6 +320,7 @@ export default function App() {
       setMapMissing(false);
       setMapError(null);
       setDemoInfo(null);
+      setDemoSummary(null);
       if (result.errors.length === 0) {
         setStep('demo');
       } else {
@@ -358,6 +382,7 @@ export default function App() {
       setMapMissing(false);
       setMapError(null);
       setDemoInfo(null);
+      setDemoSummary(null);
       if (file) {
         const warning = await validateDemoFile(file.file);
         setDemoWarning(warning);
@@ -399,6 +424,37 @@ export default function App() {
     [selectDemo]
   );
 
+  const cacheAssets = useCallback(async (files: LocalFile[], label: string) => {
+    const assets = files.filter(file => /^assets[0-3]\.pk3$/i.test(file.name));
+    if (assets.length !== 4) return;
+    if (cacheInFlightRef.current) return;
+    if (cachedAssets && cachedAssets.key === assetCacheKey(assets)) return;
+    cacheInFlightRef.current = true;
+    setCacheStatus('Caching game data for faster reloads…');
+    try {
+      const saved = await saveAssetFiles(assets, label, progress => {
+        const percent = progress.total > 0 ? Math.round((progress.loaded / progress.total) * 100) : 0;
+        setCacheStatus(`Caching game data… ${percent}%`);
+      });
+      if (saved) setCachedAssets(saved);
+    } finally {
+      cacheInFlightRef.current = false;
+      setCacheStatus(null);
+    }
+  }, [cachedAssets]);
+
+  const useCachedAssets = useCallback(async () => {
+    if (!cachedAssets) return;
+    await applyAssets({ files: cachedAssets.files, demos: [], label: cachedAssets.label });
+  }, [cachedAssets]);
+
+  const clearCache = useCallback(async () => {
+    await clearAssetCache();
+    await clearDemoSummaries();
+    setCachedAssets(null);
+    setCacheStatus(null);
+  }, []);
+
   const checkMap = useCallback(async () => {
     if (!assetSelection || !demoFile || !canvasRef.current) return;
     setChecking(true);
@@ -419,6 +475,7 @@ export default function App() {
           setPhase(next.total > 0 && next.loaded >= next.total ? 'booting' : 'staging');
         },
         onStatus: next => {
+          statusRef.current = next;
           setStatus(next);
           if (playbackRequestedRef.current && next.state === CA_ACTIVE && next.demo === 1) {
             setPhase(current => (current === 'paused' ? current : 'playing'));
@@ -469,40 +526,40 @@ export default function App() {
     setMapMissing(!present);
     setStep('map');
     setDemoInfo(null);
+    setDemoSummary(null);
 
-    // Scanning an eight-minute demo takes a few seconds. Remember the result
-    // for the same file so switching back to the map step is instant.
-    const infoKey = `jka-demo-player.demo-info.v1:${demoFile.name}:${demoFile.file.size}:${demoFile.file.lastModified}`;
+    // Scanning an eight-minute demo takes a few seconds. Cache the parsed
+    // summary per file so the map step and the resume are instant next time.
+    const cacheKey = `${demoFile.name}:${demoFile.file.size}:${demoFile.file.lastModified}`;
+    let summary = await loadDemoSummary(cacheKey);
     let info: DemoInfo | null = null;
-    try {
-      const cached = localStorage.getItem(infoKey);
-      if (cached) {
-        const parsed = JSON.parse(cached) as DemoInfo;
-        if (Number.isFinite(parsed.first) && Number.isFinite(parsed.duration) && parsed.duration > 0) {
-          info = parsed;
-        }
-      }
-    } catch {
-      // Ignore storage failures and scan again.
-    }
-    if (!info) {
+    if (summary) {
+      info = {
+        first: summary.first,
+        duration: summary.duration,
+        fullSnapshots: summary.fullSnapshots,
+        totalSnapshots: summary.totalSnapshots
+      };
+    } else {
       info = await engine.demoInfo(name);
       if (info) {
-        try {
-          localStorage.setItem(infoKey, JSON.stringify(info));
-        } catch {
-          // Storage full or disabled; the scan still works.
+        summary = engine.demoSummary();
+        if (summary) {
+          await saveDemoSummary(cacheKey, summary);
         }
       }
     }
     setDemoInfo(info);
+    setDemoSummary(summary);
+    demoSummaryRef.current = summary;
     setChecking(false);
+    void cacheAssets(assetValidation?.assets ?? [], 'Retail assets');
 
     if (present) {
       // Keep the engine warm; Play starts the actual demo.
       setPhase('launcher');
     }
-  }, [assetSelection, assetValidation, demoFile]);
+  }, [assetSelection, assetValidation, demoFile, cacheAssets]);
 
   const startPlay = useCallback(async () => {
     const engine = engineRef.current;
@@ -601,6 +658,8 @@ export default function App() {
     setPhase('seeking');
 
     try {
+      // Seeking from a paused player should resume the engine first.
+      await engine.setPaused(false);
       await engine.seekDemo(demoBase(demoFile.name), target);
       setPhase('playing');
     } catch (err) {
@@ -677,6 +736,10 @@ export default function App() {
               mapName={mapName}
               mapMissing={mapMissing}
               mapError={mapError}
+              summary={demoSummary}
+              cachedAssets={cachedAssets}
+              cacheStatus={cacheStatus}
+              onUseCachedAssets={useCachedAssets}
               savedHandle={savedHandle}
               busy={checking}
               onPickAssets={handlePickAssets}
@@ -712,6 +775,8 @@ export default function App() {
           {showPlayer ? (
             <Player
               matchTime={matchTime}
+              speed={settings.playbackSpeed}
+              onSpeedChange={value => setSettings(current => ({ ...current, playbackSpeed: value }))}
               paused={paused}
               phase={phase}
               scores={scoreboard}
@@ -755,6 +820,7 @@ export default function App() {
           settings={settings}
           onChange={updateSettings}
           onClose={() => setShowSettings(false)}
+          onClearCache={clearCache}
         />
       ) : null}
 

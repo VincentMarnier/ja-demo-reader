@@ -20,7 +20,7 @@ export function ScoreStrip({ data, matchTime, showScores, showTimer }: ScoreStri
 
   const teamGame = !!data && data.gametype >= 6;
   const players = data
-    ? [...data.players].sort((a, b) => b.score - a.score)
+    ? [...data.players].filter(player => !player.left).sort((a, b) => b.score - a.score)
     : [];
 
   let left = '—';

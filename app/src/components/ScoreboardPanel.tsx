@@ -24,12 +24,13 @@ function PlayerRow(props: {
 }) {
   const { player } = props;
   return (
-    <div className={`scoreboard-row team-${player.team}`}>
+    <div className={`scoreboard-row team-${player.team}${player.left ? ' left' : ''}`}>
       <span className="scoreboard-score" title={`${player.score} kills / ${player.deaths} deaths`}>
         {player.score}<small>/{player.deaths}</small>
       </span>
       <span className="scoreboard-name" title={stripColors(player.name)}>
         {stripColors(player.name)}
+        {player.left ? <small className="left-tag">left</small> : null}
       </span>
       <span className="scoreboard-ping">{player.ping > 0 ? `${player.ping} ms` : '—'}</span>
       <button
@@ -37,6 +38,7 @@ function PlayerRow(props: {
         className={props.following ? 'follow-btn active' : 'follow-btn'}
         onClick={() => props.onFollow(player.num)}
         aria-pressed={props.following}
+        disabled={player.left}
       >
         {props.following ? 'Following' : 'Follow'}
       </button>

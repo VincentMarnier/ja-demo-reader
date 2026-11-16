@@ -635,3 +635,91 @@ summary { cursor: pointer; color: var(--muted); }
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+.demo-summary {
+  margin-top: 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.demo-summary h3 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.demo-game + .demo-game { margin-top: 14px; }
+.demo-game-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.demo-game-head strong { color: var(--accent); }
+.demo-summary-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.demo-summary-table th,
+.demo-summary-table td {
+  text-align: left;
+  padding: 3px 6px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.demo-summary-table th {
+  color: var(--muted);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+.demo-summary-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.demo-summary-table tr.left { color: var(--muted); opacity: 0.55; }
+.badge-left {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.08);
+  color: var(--muted);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.speed-bar {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px 6px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.speed-bar input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.speed-label { letter-spacing: 0.08em; text-transform: uppercase; }
+.speed-bar strong { min-width: 42px; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+@media (max-width: 720px) {
+  .speed-bar { padding: 0 8px 4px; }
+}
+
+.scoreboard-row.left { opacity: 0.5; }
+.scoreboard-row.left .scoreboard-name { text-decoration: line-through; text-decoration-color: rgba(255,255,255,0.3); }
+.left-tag {
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.1);
+  color: var(--muted);
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  vertical-align: middle;
+}

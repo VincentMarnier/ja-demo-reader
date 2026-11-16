@@ -443,6 +443,21 @@ index 8a7c9d67..26b22f60 100644
  #else
  		GetRefAPI = GetRefAPIStub;
  		Com_Printf( "Renderer not built; using static boot stub\n" );
+diff --git a/codemp/client/cl_parse.cpp b/codemp/client/cl_parse.cpp
+index 379c458e..9ca7b6ab 100644
+--- a/codemp/client/cl_parse.cpp
++++ b/codemp/client/cl_parse.cpp
+@@ -499,6 +499,10 @@ CL_ParseGamestate
+ ==================
+ */
+ void CL_ParseGamestate( msg_t *msg ) {
++#ifdef __EMSCRIPTEN__
++	extern int jka_demoGamestates;
++	jka_demoGamestates++;
++#endif
+ 	int				i;
+ 	entityState_t	*es;
+ 	int				newnum;
 diff --git a/codemp/rd-rend2/CMakeLists.txt b/codemp/rd-rend2/CMakeLists.txt
 index 786cf254..a9098f0b 100644
 --- a/codemp/rd-rend2/CMakeLists.txt

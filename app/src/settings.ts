@@ -17,6 +17,7 @@ export interface AppSettings {
   showScoreboard: boolean;
   showScores: boolean;
   showTimer: boolean;
+  playbackSpeed: number;
   freeCamKeys: FreeCamKeys;
 }
 
@@ -51,17 +52,28 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showScoreboard: true,
   showScores: true,
   showTimer: true,
+  playbackSpeed: 1,
   freeCamKeys: { ...DEFAULT_FREE_CAM_KEYS }
 };
 
 const STORAGE_KEY = 'jka-demo-player.settings.v1';
 const MIN_FOV = 60;
 const MAX_FOV = 130;
+const MIN_SPEED = 0.25;
+const MAX_SPEED = 2.5;
+const SPEED_STEP = 0.25;
 
 function clampFov(value: unknown): number {
   const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n)) return DEFAULT_SETTINGS.cgFov;
   return Math.min(MAX_FOV, Math.max(MIN_FOV, Math.round(n)));
+}
+
+export function clampSpeed(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n)) return DEFAULT_SETTINGS.playbackSpeed;
+  const stepped = Math.round(n / SPEED_STEP) * SPEED_STEP;
+  return Math.min(MAX_SPEED, Math.max(MIN_SPEED, Number(stepped.toFixed(2))));
 }
 
 export function loadSettings(): AppSettings {
@@ -80,6 +92,7 @@ export function loadSettings(): AppSettings {
       showScoreboard: parsed.showScoreboard !== false,
       showScores: parsed.showScores !== false,
       showTimer: parsed.showTimer !== false,
+      playbackSpeed: clampSpeed(parsed.playbackSpeed),
       freeCamKeys
     };
   } catch {

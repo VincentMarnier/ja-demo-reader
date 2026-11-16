@@ -6,6 +6,7 @@ interface SettingsPanelProps {
   settings: AppSettings;
   onChange: (patch: Partial<AppSettings>) => void;
   onClose: () => void;
+  onClearCache: () => void;
 }
 
 function KeyBindButton(props: {
@@ -42,7 +43,7 @@ function KeyBindButton(props: {
   );
 }
 
-export function SettingsPanel({ settings, onChange, onClose }: SettingsPanelProps) {
+export function SettingsPanel({ settings, onChange, onClose, onClearCache }: SettingsPanelProps) {
   const setKey = (action: FreeCamAction, code: string) => {
     onChange({ freeCamKeys: { ...settings.freeCamKeys, [action]: code } });
   };
@@ -132,6 +133,16 @@ export function SettingsPanel({ settings, onChange, onClose }: SettingsPanelProp
               </div>
             ))}
           </div>
+        </section>
+
+        <section className="settings-section">
+          <h3>Local data</h3>
+          <p className="muted settings-note">
+            Cached game data and parsed demo summaries stay on this device.
+          </p>
+          <button type="button" className="ghost" onClick={onClearCache}>
+            Clear cached game data
+          </button>
         </section>
 
         <p className="fineprint">Settings are saved automatically in this browser.</p>

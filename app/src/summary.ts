@@ -1,0 +1,86 @@
+import type { DemoGameSummary, DemoSummary, ScoreboardData, ScoreboardPlayer } from './types';
+
+export function chooseGame(summary: DemoSummary, serverTime: number): DemoGameSummary | null {
+  if (!summary.games.length) return null;
+  for (let i = summary.games.length - 1; i >= 0; i--) {
+    const game = summary.games[i];
+    if (serverTime >= game.startTime && serverTime <= game.endTime) return game;
+  }
+  if (serverTime < summary.games[0].startTime) return summary.games[0];
+  return summary.games[summary.games.length - 1];
+}
+
+export interface PlayerStats {
+  kills: number;
+  deaths: number;
+}
+
+export function statsAt(game: DemoGameSummary, serverTime: number): Map<number, PlayerStats> {
+  const stats = new Map<number, PlayerStats>();
+  for (const player of game.players) {
+    stats.set(player.num, { kills: 0, deaths: 0 });
+  }
+  for (const event of game.events) {
+    if (event.time > serverTime) break;
+    const target = stats.get(event.target);
+    if (target) target.deaths++;
+    if (event.attacker >= 0 && event.attacker !== event.target) {
+      const attacker = stats.get(event.attacker);
+      if (attacker) attacker.kills++;
+    }
+  }
+  return stats;
+}
+
+/**
+ * Replaces the cgame's event counters with the exact counts replayed from the
+ * parsed demo summary, and keeps players who left the game in the list with
+ * `left: true` so the UI can grey them out.
+ */
+export function mergeScoreboard(
+  data: ScoreboardData,
+  summary: DemoSummary | null,
+  serverTime: number
+): ScoreboardData {
+  if (!summary) return data;
+  const game = chooseGame(summary, serverTime);
+  if (!game) return data;
+
+  const stats = statsAt(game, serverTime);
+  const players: ScoreboardPlayer[] = [];
+  const used = new Set<number>();
+
+  for (const player of data.players) {
+    const value = stats.get(player.num);
+    players.push({
+      ...player,
+      score: value ? value.kills : player.score,
+      kills: value ? value.kills : player.kills,
+      deaths: value ? value.deaths : player.deaths,
+      left: false
+    });
+    used.add(player.num);
+  }
+
+  let synthetic = -1;
+  for (const record of game.players) {
+    if (record.team === 3) continue; // spectators
+    const left = record.left && !record.returned;
+    if (used.has(record.num) && !left) continue;
+    const value = stats.get(record.num) ?? { kills: record.kills, deaths: record.deaths };
+    const num = used.has(record.num) ? synthetic-- : record.num;
+    players.push({
+      num,
+      name: record.name,
+      score: value.kills,
+      kills: value.kills,
+      deaths: value.deaths,
+      ping: 0,
+      team: record.team,
+      left
+    });
+    used.add(record.num);
+  }
+
+  return { ...data, players };
+}

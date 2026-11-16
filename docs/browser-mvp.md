@@ -271,6 +271,22 @@ Implemented:
 See [m5.md](./m5.md) for the controls, bridge calls and evidence. M6 adds
 seeking, event-backed kills/deaths and custom vitals; see [m6.md](./m6.md).
 
+## 6.1 M8: analysis, cache and indexed seek
+
+M8 adds:
+
+- A full demo scan that returns a per-game resume: map, time played, match
+  clock, and final score/deaths for every player. Players who left and never
+  returned stay in the list, greyed out.
+- Exact kills/deaths at any seek target, replayed from the parsed event list.
+- OPFS caching of the retail PK3s plus an IndexedDB summary cache, with a
+  **Use cached assets** button and **Clear cached game data** in Settings.
+- A playback-speed slider (`0.25×`–`2.5×`, `0.25` steps).
+- A 10-second keyframe cache for fast forward seeks and a restart path for
+  backward seeks.
+
+See [m8.md](./m8.md) for the bridge additions, measurements and limits.
+
 Remaining M5+ work:
 
 1. Engine speed control and reliable pause/step (`cl_freezeDemo` or custom flag).

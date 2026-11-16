@@ -1,4 +1,4 @@
-import type { DemoInfo, DemoStatus, FreeCamPose, LocalFile, ScoreboardData, StageProgress } from '../types';
+import type { DemoInfo, DemoStatus, DemoSummary, FreeCamPose, LocalFile, ScoreboardData, StageProgress } from '../types';
 import { prepareAndStage } from '../fs/stage';
 
 interface ModuleLike {
@@ -297,6 +297,19 @@ export class EngineHost {
       return null;
     } finally {
       this.asyncInFlight = false;
+    }
+  }
+
+  demoSummary(): DemoSummary | null {
+    if (!this.module?.ccall || this.asyncInFlight) return null;
+    try {
+      const raw = this.module.ccall('JKA_DemoSummaryJson', 'string', [], []) as string;
+      if (!raw) return null;
+      const summary = JSON.parse(raw) as DemoSummary;
+      if (!summary || !Array.isArray(summary.games)) return null;
+      return summary;
+    } catch {
+      return null;
     }
   }
 

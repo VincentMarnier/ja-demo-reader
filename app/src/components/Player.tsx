@@ -5,6 +5,8 @@ import { VitalsHud } from './VitalsHud';
 
 interface PlayerProps {
   matchTime: string;
+  speed: number;
+  onSpeedChange: (value: number) => void;
   paused: boolean;
   phase: Phase;
   scores: ScoreboardData | null;
@@ -54,6 +56,20 @@ export function Player(props: PlayerProps) {
           disabled={ended}
           onSeek={props.onSeek}
         />
+        <div className="speed-bar">
+          <span className="speed-label">Speed</span>
+          <input
+            type="range"
+            min={0.25}
+            max={2.5}
+            step={0.25}
+            value={props.speed}
+            disabled={ended}
+            aria-label="Playback speed"
+            onChange={event => props.onSpeedChange(Number(event.target.value))}
+          />
+          <strong>{props.speed.toFixed(2)}×</strong>
+        </div>
 
         <div className="player-controls">
           <button className="primary" onClick={props.onPause} disabled={ended}>
