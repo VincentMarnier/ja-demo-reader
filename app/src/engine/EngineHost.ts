@@ -188,6 +188,10 @@ export class EngineHost {
   stopDemo(): void {
     if (!this.module?.ccall) return;
     this.module.ccall?.('JKA_StopDemo', null, [], []);
+    // Stop can be pressed while paused; leave the engine loop running so the
+    // disconnected scene can render behind the wizard.
+    this.module.ccall?.('JKA_SetPaused', null, ['number'], [0]);
+    this.module.ccall?.('JKA_Resume', null, [], []);
     this.currentDemo = null;
   }
 

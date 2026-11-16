@@ -64,8 +64,19 @@ EMSCRIPTEN_KEEPALIVE void JKA_PlayDemo( const char *name )
 
 EMSCRIPTEN_KEEPALIVE void JKA_StopDemo( void )
 {
-	Cbuf_AddText( "disconnect\n" );
-	Cbuf_Execute();
+	char message[] = "Server disconnected";
+
+	// The console "disconnect" command routes through Com_Error(), which
+	// throws an int on ERR_DISCONNECT. That throw has no C++ catch frame when
+	// this is called from JavaScript, so it would escape the ccall and abort
+	// the UI handler. Perform the same teardown directly instead.
+	if ( cls.state == CA_DISCONNECTED ) {
+		return;
+	}
+	SV_Shutdown( message );
+	CL_Disconnect( qtrue );
+	CL_FlushMemory();
+	FS_PureServerSetLoadedPaks( "", "" );
 }
 
 EMSCRIPTEN_KEEPALIVE void JKA_SetPaused( int paused )

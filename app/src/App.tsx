@@ -321,7 +321,13 @@ export default function App() {
   }, [demoFile]);
 
   const stop = useCallback(() => {
-    engineRef.current?.stopDemo();
+    try {
+      engineRef.current?.stopDemo();
+    } catch (error) {
+      // The UI should still return to the map step even if the engine call
+      // misbehaves; the next Play reuses or reloads the engine.
+      console.warn('Could not stop the demo cleanly.', error);
+    }
     playbackRequestedRef.current = false;
     setPaused(false);
     setDemoStart(null);
