@@ -22,7 +22,7 @@
     window.alert = function (msg) { m3log("ALERT>>>" + msg + "<<<"); };
 
     var params = new URLSearchParams(window.location.search);
-    var demoName = params.get('demo') || 'm05_base';
+    var demoName = params.get('demo') || 'demo';
     if (!/^[A-Za-z0-9._-]+$/.test(demoName)) {
       throw new Error('invalid demo name');
     }

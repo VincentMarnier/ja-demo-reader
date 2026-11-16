@@ -20,11 +20,13 @@ import { createReadStream, existsSync, statSync, writeFileSync, mkdirSync, readF
 import { extname, join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 
-const WEB_DIR = resolve(process.env.WEB_DIR || '/tmp/opencode/m3/web');
-const ASSETS_DIR = resolve(process.env.ASSETS_DIR || '/home/vincent/Games/JediAcademy/base');
-const DEMO = process.env.DEMO || 'm05_base';
-const DEMO_FILE = resolve(process.env.DEMO_FILE || join(ASSETS_DIR, 'demos', `${DEMO}.dm_26`));
-const OUT_DIR = resolve(process.env.OUT_DIR || '/tmp/opencode/m3/artifacts');
+const WEB_DIR = resolve(process.env.WEB_DIR || '/tmp/jka-demo-player/m3/web');
+const ASSETS_DIR = process.env.ASSETS_DIR ? resolve(process.env.ASSETS_DIR) : null;
+const DEMO = process.env.DEMO || '';
+const DEMO_FILE = process.env.DEMO_FILE
+  ? resolve(process.env.DEMO_FILE)
+  : (ASSETS_DIR && DEMO ? join(ASSETS_DIR, 'demos', `${DEMO}.dm_26`) : null);
+const OUT_DIR = resolve(process.env.OUT_DIR || '/tmp/jka-demo-player/m3/artifacts');
 const CHROME = process.env.CHROME ||
   join(process.env.HOME || '', '.cache/ms-playwright/chromium_headless_shell-1248/chrome-headless-shell-linux64/chrome-headless-shell');
 const WAIT_END = process.env.WAIT_END === '1';
@@ -41,6 +43,14 @@ function fail(msg) {
   process.exit(1);
 }
 
+if (!ASSETS_DIR) {
+  console.error('Set ASSETS_DIR to the base/ directory containing assets0..3.pk3.');
+  process.exit(2);
+}
+if (!DEMO_FILE) {
+  console.error('Set DEMO or DEMO_FILE to a .dm_26 demo.');
+  process.exit(2);
+}
 for (const [label, path] of [['web dir', WEB_DIR], ['assets dir', ASSETS_DIR], ['demo file', DEMO_FILE], ['chrome', CHROME]]) {
   if (!existsSync(path)) fail(`${label} not found: ${path}`);
 }

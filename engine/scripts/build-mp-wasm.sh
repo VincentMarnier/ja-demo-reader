@@ -7,7 +7,7 @@
 # patch, adds the platform files, and builds the engine-only target.
 #
 # Requirements:
-#   - Emscripten 6.0.1 (EMSDK, default /tmp/opencode/emsdk)
+#   - Emscripten 6.0.1 (EMSDK, default $HOME/emsdk)
 #   - CMake 4.2.x
 #   - The pinned OpenJK submodule checkout
 #
@@ -20,10 +20,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PIN="260c59c2907187af555a676fe0cc798893bf7757"
 
-EMSDK="${EMSDK:-/tmp/opencode/emsdk}"
-WORK="${WORK:-/tmp/opencode/m1/OpenJK-work}"
-BUILD="${BUILD:-/tmp/opencode/m1/build-wasm}"
-OUT="${OUT:-/tmp/opencode/m1/web}"
+EMSDK="${EMSDK:-$HOME/emsdk}"
+TMP_ROOT="${TMPDIR:-/tmp}/jka-demo-player"
+WORK="${WORK:-$TMP_ROOT/m1/OpenJK-work}"
+BUILD="${BUILD:-$TMP_ROOT/m1/build-wasm}"
+OUT="${OUT:-$TMP_ROOT/m1/web}"
 BUILD_RENDERER="${BUILD_RENDERER:-0}"
 BUILD_REND2="${BUILD_REND2:-0}"
 BUILD_CGAME="${BUILD_CGAME:-0}"

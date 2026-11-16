@@ -16,7 +16,7 @@
 | `CA_PRIMED` → `CA_ACTIVE` | **Pass** (`state: 7` → `8`) |
 | cgame loaded | **Pass** — `VM_Create: cgamex86.wasm succeeded` |
 | `serverTime` advances | **Pass** — 9/9 samples with `r_norefresh`; 1 advance in 60 s with full SwiftShader rendering |
-| First frame renders | **Pass** — `/tmp/opencode/m3/artifacts-shot/browser-demo.png` (325 KB) |
+| First frame renders | **Pass** — `/tmp/jka-demo-player/m3/artifacts-shot/browser-demo.png` (325 KB) |
 | No network requests after staging | **Pass** — none |
 | Demo end | **Pass** — `ended: 1`, state 1 (`CA_DISCONNECTED`) |
 | No wasm trap | **Pass** |
@@ -42,7 +42,7 @@ Query parameters:
 
 | Parameter | Meaning |
 |---|---|
-| `demo` | demo name, default `m05_base` |
+| `demo` | demo name, default `demo` |
 | `timescale` | `com_timescale`, default `1` |
 | `fps` | `com_maxfps`, default `10` |
 | `norefresh=1` | sets `r_norefresh 1` for a rendering-free clock test |
@@ -78,21 +78,21 @@ Usage:
 
 ```bash
 # Playback clock, no rendering (fast, reliable):
-WEB_DIR=/tmp/opencode/m3/web \
+WEB_DIR=/tmp/jka-demo-player/m3/web \
 ASSETS_DIR=/path/to/JediAcademy/base \
-DEMO_FILE=/path/to/demos/m05_base.dm_26 \
+DEMO_FILE=/path/to/demos/demo.dm_26 \
 NOREFRESH=1 node scripts/verify-demo.mjs
 
 # First active frame capture:
-WEB_DIR=/tmp/opencode/m3/web \
+WEB_DIR=/tmp/jka-demo-player/m3/web \
 ASSETS_DIR=/path/to/JediAcademy/base \
-DEMO_FILE=/path/to/demos/m05_base.dm_26 \
+DEMO_FILE=/path/to/demos/demo.dm_26 \
 PAUSE_FIRST=1 node scripts/verify-demo.mjs
 
 # Demo-end path:
-WEB_DIR=/tmp/opencode/m3/web \
+WEB_DIR=/tmp/jka-demo-player/m3/web \
 ASSETS_DIR=/path/to/JediAcademy/base \
-DEMO_FILE=/path/to/demos/m05_base.dm_26 \
+DEMO_FILE=/path/to/demos/demo.dm_26 \
 NOREFRESH=1 WAIT_END=1 TIMESCALE=20 node scripts/verify-demo.mjs
 ```
 
@@ -105,7 +105,7 @@ NOREFRESH=1 WAIT_END=1 TIMESCALE=20 node scripts/verify-demo.mjs
 ### 3.1 Staging and state
 
 ```text
-staging /assets0.pk3 … /demos/m05_base.dm_26
+staging /assets0.pk3 … /demos/demo.dm_26
 staging complete
 M3STATUS {"state":7,"demo":1,...,"clientNum":2,"map":"maps/mp/duel1.bsp","ended":0}
 M3STATUS {"state":8,"demo":1,"serverTime":1032552976,...}

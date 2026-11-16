@@ -23,7 +23,7 @@
 
 **Native baseline verdict: PASS.**
 
-Evidence artefacts are under `/tmp/opencode/m0.5` (logs, screenshots, build trees). They are not part of the repository.
+Evidence artefacts are under `/tmp/jka-demo-player/m0.5` (logs, screenshots, build trees). They are not part of the repository.
 
 ---
 
@@ -37,7 +37,7 @@ $ git -C references/OpenJK status --short
 (no output)
 ```
 
-The tree was **not modified**. All work used out-of-tree build directories. No patch was required, so `/tmp/opencode/m0.5/patches/` is empty. The checkout remained clean after the work (see §11).
+The tree was **not modified**. All work used out-of-tree build directories. No patch was required, so `/tmp/jka-demo-player/m0.5/patches/` is empty. The checkout remained clean after the work (see §11).
 
 ---
 
@@ -74,7 +74,7 @@ GL_VERSION: 4.6 (Compatibility Profile) Mesa 26.0.8-1ubuntu0.3
 ### 4.1 Configure
 
 ```bash
-cmake -S references/OpenJK -B /tmp/opencode/m0.5/build-openjk \
+cmake -S references/OpenJK -B /tmp/jka-demo-player/m0.5/build-openjk \
   -DCMAKE_BUILD_TYPE=Release \
   -DBuildMPEngine=ON -DBuildMPRdVanilla=ON -DBuildMPCGame=ON -DBuildMPUI=ON \
   -DBuildMPGame=OFF -DBuildMPDed=OFF -DBuildMPRend2=OFF \
@@ -97,14 +97,14 @@ Observed dependency detection:
 ### 4.2 Build
 
 ```bash
-cmake --build /tmp/opencode/m0.5/build-openjk -j"$(nproc)"
+cmake --build /tmp/jka-demo-player/m0.5/build-openjk -j"$(nproc)"
 ```
 
 Result: exit code 0. Logs:
 
-- `/tmp/opencode/m0.5/logs/configure.log` (Release configure)
-- `/tmp/opencode/m0.5/logs/build.log` (full build)
-- `/tmp/opencode/m0.5/logs/configure-dbg.log` (debug build configure)
+- `/tmp/jka-demo-player/m0.5/logs/configure.log` (Release configure)
+- `/tmp/jka-demo-player/m0.5/logs/build.log` (full build)
+- `/tmp/jka-demo-player/m0.5/logs/configure-dbg.log` (debug build configure)
 
 ### 4.3 Warnings
 
@@ -128,13 +128,13 @@ They are upstream code-quality warnings, not build failures. No warning was trea
 For state introspection only, a second build with symbols was produced from the same source and options:
 
 ```bash
-cmake -S references/OpenJK -B /tmp/opencode/m0.5/build-openjk-dbg \
+cmake -S references/OpenJK -B /tmp/jka-demo-player/m0.5/build-openjk-dbg \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   -DBuildMPEngine=ON -DBuildMPRdVanilla=ON -DBuildMPCGame=ON -DBuildMPUI=ON \
   -DBuildMPGame=OFF -DBuildMPDed=OFF -DBuildMPRend2=OFF \
   -DBuildSPEngine=OFF -DBuildSPGame=OFF -DBuildSPRdVanilla=OFF \
   -DBuildJK2SPEngine=OFF -DBuildJK2SPGame=OFF -DBuildJK2SPRdVanilla=OFF
-cmake --build /tmp/opencode/m0.5/build-openjk-dbg -j"$(nproc)"
+cmake --build /tmp/jka-demo-player/m0.5/build-openjk-dbg -j"$(nproc)"
 ```
 
 The shipped baseline binary is the `Release` build. `RelWithDebInfo` only adds debug info; no source or optimisation-relevant setting changed.
@@ -147,17 +147,17 @@ Built artifacts (Release):
 
 | Module | Path | Size |
 |---|---|---|
-| MP client | `/tmp/opencode/m0.5/build-openjk/openjk.x86_64` | 2,002,432 B |
-| Renderer | `/tmp/opencode/m0.5/build-openjk/codemp/rd-vanilla/rd-vanilla_x86_64.so` | 815,200 B |
-| Client game | `/tmp/opencode/m0.5/build-openjk/codemp/cgame/cgamex86_64.so` | 1,250,616 B |
-| UI | `/tmp/opencode/m0.5/build-openjk/codemp/ui/uix86_64.so` | 689,256 B |
+| MP client | `/tmp/jka-demo-player/m0.5/build-openjk/openjk.x86_64` | 2,002,432 B |
+| Renderer | `/tmp/jka-demo-player/m0.5/build-openjk/codemp/rd-vanilla/rd-vanilla_x86_64.so` | 815,200 B |
+| Client game | `/tmp/jka-demo-player/m0.5/build-openjk/codemp/cgame/cgamex86_64.so` | 1,250,616 B |
+| UI | `/tmp/jka-demo-player/m0.5/build-openjk/codemp/ui/uix86_64.so` | 689,256 B |
 
 No `jampgame` was built (`BuildMPGame=OFF`); demo playback does not need it.
 
 Run layout used for the test (all under `/tmp`):
 
 ```text
-/tmp/opencode/m0.5/
+/tmp/jka-demo-player/m0.5/
 ├── bin/                      # openjk.x86_64 + the three .so modules (Release)
 ├── bin-dbg/                  # same, RelWithDebInfo (gdb introspection only)
 ├── home/                     # fs_homepath
@@ -166,14 +166,14 @@ Run layout used for the test (all under `/tmp`):
 │       ├── uix86_64.so
 │       ├── rd-vanilla_x86_64.so
 │       ├── qconsole.log
-│       └── demos/m05_base.dm_26
+│       └── demos/demo.dm_26
 ├── retail-base/              # test-only fs_basepath
 │   └── base/
 │       ├── assets0.pk3 -> user install (symlink)
 │       ├── assets1.pk3 -> user install (symlink)
 │       ├── assets2.pk3 -> user install (symlink)
 │       ├── assets3.pk3 -> user install (symlink)
-│       └── demos/m05_base.dm_26
+│       └── demos/demo.dm_26
 ├── logs/
 └── shots/
 ```
@@ -186,7 +186,7 @@ Run layout used for the test (all under `/tmp`):
 
 ### 6.1 Assets (user-supplied, never copied into the repo)
 
-`JKA_ROOT=/home/vincent/Games/JediAcademy`, containing a complete retail `base/`:
+`JKA_ROOT=/path/to/JediAcademy`, containing a complete retail `base/`:
 
 | File | Size |
 |---|---|
@@ -195,24 +195,23 @@ Run layout used for the test (all under `/tmp`):
 | `assets2.pk3` | 1,116,384 B |
 | `assets3.pk3` | 9,282,026 B |
 
-To prove the demo does not depend on the user's downloaded maps or any mod, the test `fs_basepath` was a separate directory containing **symlinks to the four retail PK3s only** (`/tmp/opencode/m0.5/retail-base/base`). The user's `GameData` was not written to and no file in it changed (verified with `find ... -newermt`).
+To prove the demo does not depend on the user's downloaded maps or any mod, the test `fs_basepath` was a separate directory containing **symlinks to the four retail PK3s only** (`/tmp/jka-demo-player/m0.5/retail-base/base`). The user's `GameData` was not written to and no file in it changed (verified with `find ... -newermt`).
 
 ### 6.2 Demo used for the baseline
 
 | Item | Value |
 |---|---|
 | Source | User's local demo collection (outside the repo) |
-| Staged name | `m05_base.dm_26` |
-| Original name | `demo2025-10-07_14-34-19.dm_26` |
-| Size | 1,238,572 B |
-| SHA-256 | `25a677505391b4cc0d422f0496aeabc60a19d6279a06b459332bc628cf3d9c3e` |
+| Staged name | `demo.dm_26` |
+| Original name | redacted |
+| Size / hash | redacted |
 | Server gamename | `basejka` (no mod) |
 | Gametype | `3` (duel) |
 | Map | `mp/duel1` (stock retail map, `maps/mp/ffa2` and `maps/mp/duel1` confirmed inside `assets0.pk3`) |
 | Protocol | `26` (`PROTOCOL_VERSION`) |
 | Client game | `vm_cgame 0` (base cgame) |
 
-A second demo from the user's collection was also played first (`stryx vs myriad r2.dm_26`, staged as `m05_dl.dm_26`). It is `basejka` on the community map `ffa_YavinPlaza`, and it renders correctly when the user's `base` folder is used as `fs_basepath`. It is retained as corroborating evidence but is not the primary baseline because its map is not a stock asset.
+A second demo from the user's collection was also played first (`community-map.dm_26`, staged as `community.dm_26`). It is `basejka` on the community map `ffa_YavinPlaza`, and it renders correctly when the user's `base` folder is used as `fs_basepath`. It is retained as corroborating evidence but is not the primary baseline because its map is not a stock asset.
 
 A metadata scan of 49 demos from the user's collection (engine-parsed gamestate only) found 38 pure `basejka`, 10 `basejka: vinR-Competitive Patch`, and 1 `japro`. The chosen demo is one of the pure `basejka` set on a stock map.
 
@@ -225,8 +224,8 @@ No demo or PK3 is in the repository.
 ## 7. Playback procedure
 
 ```bash
-export JKA_ROOT=/home/vincent/Games/JediAcademy
-export M05=/tmp/opencode/m0.5
+export JKA_ROOT=/path/to/JediAcademy
+export M05=/tmp/jka-demo-player/m0.5
 
 # One-time staging (test only):
 #   - copy the four .so modules into $M05/home/base
@@ -240,7 +239,7 @@ cd $M05/bin
   +set logfile 2 \
   +set r_fullscreen 0 \
   +set s_initsound 0 \
-  +demo m05_base
+  +demo demo
 ```
 
 The primary evidence run used the retail-only staging:
@@ -251,20 +250,20 @@ The primary evidence run used the retail-only staging:
   +set fs_homepath $M05/home \
   +set cl_allowDownload 0 +set logfile 2 \
   +set r_fullscreen 0 +set s_initsound 0 +set com_maxfps 60 \
-  +demo m05_base
+  +demo demo
 ```
 
 **Display workaround (documented, not Xvfb):** the machine has a real GNOME/Wayland session with Xwayland on `:0`, but the inherited `XAUTHORITY` variable pointed at a stale authorisation file, so SDL/GL initially failed with `Authorization required`. The working values were:
 
 ```bash
 export DISPLAY=:0
-export XAUTHORITY=/run/user/1000/.mutter-Xwaylandauth.YE6MY3   # actual cookie file
+export XAUTHORITY=/run/user/<uid>/.mutter-Xwaylandauth.<id>   # your cookie file
 export SDL_VIDEODRIVER=x11                                      # force X11 for capture
 ```
 
 With `SDL_VIDEODRIVER` unset, SDL preferred Wayland, which renders correctly but is not capturable by `import`/`xwininfo`. Xvfb was **not** installed and not needed; Mesa hardware rendering was used. A software-rasteriser fallback was therefore not exercised.
 
-For `cls.state`/`serverTime` introspection, the same run was repeated under `gdb` with the `RelWithDebInfo` binary using a watchpoint on `cls.state` and a breakpoint on `CL_SetCGameTime` (script: `/tmp/opencode/m0.5/gdb-base.cmds`). This is read-only instrumentation; no code was patched.
+For `cls.state`/`serverTime` introspection, the same run was repeated under `gdb` with the `RelWithDebInfo` binary using a watchpoint on `cls.state` and a breakpoint on `CL_SetCGameTime` (script: `/tmp/jka-demo-player/m0.5/gdb-base.cmds`). This is read-only instrumentation; no code was patched.
 
 ---
 
@@ -275,7 +274,7 @@ For `cls.state`/`serverTime` introspection, the same run was repeated under `gdb
 The client log shows the demo file being opened by the filesystem and the map/cgame loading:
 
 ```text
-handle 3: demos/m05_base.dm_26
+handle 3: demos/demo.dm_26
 VM_Create: cgamex86_64.so succeeded
 ...loaded 550 faces, 66 meshes, 46 trisurfs, 2 flares
 CL_InitCGame:  4.99 seconds
@@ -340,9 +339,9 @@ Screenshots (local evidence, not committed):
 
 | File | Content |
 |---|---|
-| `/tmp/opencode/m0.5/shots/base_01.png` | Duel on `mp/duel1`, world geometry, textured floor, both lightsabers, HUD, duel scoreboard, third-person camera |
-| `/tmp/opencode/m0.5/shots/base_02.png` | Same demo later: different camera position and scene, HUD/health/shield values changed |
-| `/tmp/opencode/m0.5/shots/native_01.png`, `native_02.png` | Second demo (`ffa_YavinPlaza`): HUD, chat overlay, multiple characters, map textures |
+| `/tmp/jka-demo-player/m0.5/shots/base_01.png` | Duel on `mp/duel1`, world geometry, textured floor, both lightsabers, HUD, duel scoreboard, third-person camera |
+| `/tmp/jka-demo-player/m0.5/shots/base_02.png` | Same demo later: different camera position and scene, HUD/health/shield values changed |
+| `/tmp/jka-demo-player/m0.5/shots/native_01.png`, `native_02.png` | Second demo (`ffa_YavinPlaza`): HUD, chat overlay, multiple characters, map textures |
 
 `import -window` captured real, non-blank content (41k–72k unique colours per frame); two frames from different times show camera movement and HUD changes, not a frozen image.
 
@@ -354,9 +353,9 @@ Screenshots (local evidence, not committed):
 - **no** `connect()`, `sendto()`, or `recvfrom()` to any non-loopback INET address;
 - all other socket activity is X11 (`/tmp/.X11-unix/X0`), D-Bus, nscd, and netlink.
 
-The engine's normal startup line `Opening IP socket: localhost:29070` therefore does not imply network use. The demo is read entirely from `demos/m05_base.dm_26` (handle 3). `cl_allowDownload` was verified as `0` at `CA_ACTIVE`.
+The engine's normal startup line `Opening IP socket: localhost:29070` therefore does not imply network use. The demo is read entirely from `demos/demo.dm_26` (handle 3). `cl_allowDownload` was verified as `0` at `CA_ACTIVE`.
 
-Logs: `/tmp/opencode/m0.5/logs/run-base-gdb.log`, `run-base.stdout`, `run-base.qconsole.log`, `strace-network.log`.
+Logs: `/tmp/jka-demo-player/m0.5/logs/run-base-gdb.log`, `run-base.stdout`, `run-base.qconsole.log`, `strace-network.log`.
 
 ---
 
@@ -369,7 +368,7 @@ Logs: `/tmp/opencode/m0.5/logs/run-base-gdb.log`, `run-base.stdout`, `run-base.q
 - **`cls.state`/`serverTime` evidence comes from a `RelWithDebInfo` build.** The Release build produced the screenshots and logs and ran the same demo; the state trace used the symbol build because the Release binary has no type info for `cls`.
 - **Renderer module location.** The test staged `rd-vanilla_x86_64.so`, `cgamex86_64.so`, and `uix86_64.so` in `fs_homepath/base`; a packaged layout should place them where OpenJK normally looks (next to `base/`, in `base/`, or in the install directory). This is packaging, not an engine defect.
 - **UI is required as built.** A missing `uix86_64.so` causes `VM_CreateLegacy on ui failed` and aborts startup; M3's "skip UI" plan still applies for the browser.
-- **No source patch was applied.** If a future fix is needed, it must be made in a worktree/copy under `/tmp/opencode/m0.5` and recorded there, never in `references/OpenJK`.
+- **No source patch was applied.** If a future fix is needed, it must be made in a worktree/copy under `/tmp/jka-demo-player/m0.5` and recorded there, never in `references/OpenJK`.
 
 ---
 

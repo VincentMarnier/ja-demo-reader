@@ -24,23 +24,23 @@ branch `rd-vanilla`.
 
 Evidence:
 
-- `/tmp/opencode/rend2/final-visual.png` — `mp/duel1`, normal WebGL2 frame.
-- `/tmp/opencode/rend2/final-map.png` — `ffa_YavinPlaza` after adding the map PK3.
-- `/tmp/opencode/rend2/final-play.log`, `/tmp/opencode/rend2/final-map.log` — CDP runs.
-- `/tmp/opencode/rend2/responsive-final.png` — normal frame from the responsive build.
-- `/tmp/opencode/rend2/responsive-probe.log` — map-check and Play responsiveness probes.
-- `/tmp/opencode/rend2/final-build.log` — clean build from the patch set.
+- `/tmp/jka-demo-player/rend2/final-visual.png` — `mp/duel1`, normal WebGL2 frame.
+- `/tmp/jka-demo-player/rend2/final-map.png` — `ffa_YavinPlaza` after adding the map PK3.
+- `/tmp/jka-demo-player/rend2/final-play.log`, `/tmp/jka-demo-player/rend2/final-map.log` — CDP runs.
+- `/tmp/jka-demo-player/rend2/responsive-final.png` — normal frame from the responsive build.
+- `/tmp/jka-demo-player/rend2/responsive-probe.log` — map-check and Play responsiveness probes.
+- `/tmp/jka-demo-player/rend2/final-build.log` — clean build from the patch set.
 
 ## Build
 
 ```bash
 BUILD_REND2=1 BUILD_CGAME=1 NO_PRELOAD=1 \
-  WORK=/tmp/opencode/rend2/final-work \
-  BUILD=/tmp/opencode/rend2/final-build \
-  OUT=/tmp/opencode/rend2/final-out \
+  WORK=/tmp/jka-demo-player/rend2/final-work \
+  BUILD=/tmp/jka-demo-player/rend2/final-build \
+  OUT=/tmp/jka-demo-player/rend2/final-out \
   engine/scripts/build-mp-wasm.sh
 
-scripts/stage-engine.sh /tmp/opencode/rend2/final-out
+scripts/stage-engine.sh /tmp/jka-demo-player/rend2/final-out
 
 cd app
 npm install
@@ -50,7 +50,7 @@ npm run build      # static output in app/dist
 
 Requirements:
 
-- Emscripten 6.0.1 (`EMSDK`, default `/tmp/opencode/emsdk`).
+- Emscripten 6.0.1 (`EMSDK`, default `/tmp/jka-demo-player/emsdk`).
 - A host C++ compiler (`HOST_CXX`, default `g++`) to build the
   `compact_glsl` shader-table generator.
 - `BUILD_REND2=1` and `BUILD_RENDERER=1` are mutually exclusive: both export

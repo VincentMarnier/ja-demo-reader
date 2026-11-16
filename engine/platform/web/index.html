@@ -44,7 +44,7 @@
       args.push('+set', 'r_dynamicglow', '0');
       args.push('+set', 'r_flares', '0');
       if (params.get('pause') === '1') { args.push('+set', 'r_m2_pause', '1'); }
-      args.push('+demo', 'm05_base');
+      args.push('+demo', 'demo');
     }
     var Module = {
       arguments: args,
@@ -64,7 +64,7 @@
             ['/assets1.pk3', '/jka/base/assets1.pk3'],
             ['/assets2.pk3', '/jka/base/assets2.pk3'],
             ['/assets3.pk3', '/jka/base/assets3.pk3'],
-            ['/demos/m05_base.dm_26', '/jka/base/demos/m05_base.dm_26']
+            ['/demos/demo.dm_26', '/jka/base/demos/demo.dm_26']
           ];
           files.forEach(function (pair) {
             var dep = 'stage:' + pair[1];

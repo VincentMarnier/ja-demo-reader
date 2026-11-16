@@ -9,7 +9,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-OUT="${OUT:-/tmp/opencode/m1/web}"
+OUT="${OUT:-${TMPDIR:-/tmp}/jka-demo-player/m1/web}"
 WAIT="${WAIT:-12}"
 
 if [ ! -f "$OUT/openjk.x86.js" ]; then

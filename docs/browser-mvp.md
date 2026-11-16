@@ -43,12 +43,12 @@
 
 ```bash
 BUILD_REND2=1 BUILD_CGAME=1 NO_PRELOAD=1 \
-  WORK=/tmp/opencode/rend2/final-work \
-  BUILD=/tmp/opencode/rend2/final-build \
-  OUT=/tmp/opencode/rend2/final-out \
+  WORK=/tmp/jka-demo-player/rend2/final-work \
+  BUILD=/tmp/jka-demo-player/rend2/final-build \
+  OUT=/tmp/jka-demo-player/rend2/final-out \
   engine/scripts/build-mp-wasm.sh
 
-scripts/stage-engine.sh /tmp/opencode/rend2/final-out
+scripts/stage-engine.sh /tmp/jka-demo-player/rend2/final-out
 cd app && npm run dev      # http://127.0.0.1:5173
 ```
 
@@ -66,12 +66,12 @@ deploys `app/dist` on pushes to `master`. See
 # 1. Build the engine for the app (no preloaded fixture; the app stages PK3s).
 cd /path/to/jka-demo-player
 BUILD_RENDERER=1 BUILD_CGAME=1 NO_PRELOAD=1 \
-  WORK=/tmp/opencode/m4/work-build BUILD=/tmp/opencode/m4/build \
-  OUT=/tmp/opencode/m4/engine-web \
+  WORK=/tmp/jka-demo-player/m4/work-build BUILD=/tmp/jka-demo-player/m4/build \
+  OUT=/tmp/jka-demo-player/m4/engine-web \
   engine/scripts/build-mp-wasm.sh
 
 # 2. Copy the engine artifacts into the app.
-scripts/stage-engine.sh /tmp/opencode/m4/engine-web
+scripts/stage-engine.sh /tmp/jka-demo-player/m4/engine-web
 
 # 3. Run the app.
 cd app
@@ -200,7 +200,7 @@ Automated flows (CDP, file-input fallback, `?norefresh=1` for capture):
 Base demo with a map inside the retail assets:
 
 ```text
-assets 4/4 · step 2 · demo m05_base.dm_26
+assets 4/4 · step 2 · demo demo.dm_26
 step 3: Map ready · mp/duel1 · FOUND
 Play demo → state Playing · demo time advancing
 ```
@@ -208,7 +208,7 @@ Play demo → state Playing · demo time advancing
 Custom-map demo, map absent from assets:
 
 ```text
-assets0..3 + "stryx vs myriad r2.dm_26"
+assets0..3 + "community-map.dm_26"
 step 3: Map missing · ffa_YavinPlaza · NOT IN SELECTED ASSETS
 add ffa_YavinPlaza.pk3 → JKA_RestartFS() → Map ready · FOUND
 Play demo → state Playing · demo time 0:03
@@ -217,13 +217,13 @@ Play demo → state Playing · demo time 0:03
 Selecting all 36 PK3s in the base folder still staged only `assets0..3` and
 reached Map ready, confirming the folder is not staged wholesale.
 
-- Launcher capture: `/tmp/opencode/m4-ui.png`.
-- Map-ready and playing captures: `/tmp/opencode/m4-wizard-final.png`,
-  `/tmp/opencode/m4-map-final.png` (captured in `?norefresh=1` mode, so the
+- Launcher capture: `/tmp/jka-demo-player/m4-ui.png`.
+- Map-ready and playing captures: `/tmp/jka-demo-player/m4-wizard-final.png`,
+  `/tmp/jka-demo-player/m4-map-final.png` (captured in `?norefresh=1` mode, so the
   HUD texture atlas is not representative — the normal frame is the M3 capture).
 - Runtime canvas (same engine/demo, captured by the M3 verifier):
-  `/tmp/opencode/m3/artifacts-shot/browser-demo.png`.
-- Native comparison: `/tmp/opencode/m2/shots/native-vs-browser-final.png`.
+  `/tmp/jka-demo-player/m3/artifacts-shot/browser-demo.png`.
+- Native comparison: `/tmp/jka-demo-player/m2/shots/native-vs-browser-final.png`.
 
 The headless test machine renders through SwiftShader, so full-motion capture
 and screenshots of the player surface are slow; the runtime frame is captured

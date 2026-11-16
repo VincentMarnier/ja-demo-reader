@@ -49,7 +49,7 @@ The M2 harness fetches the four retail PK3s and the native baseline demo from a 
 /jka/base/assets1.pk3   652,804,510 B
 /jka/base/assets2.pk3     1,116,384 B
 /jka/base/assets3.pk3     9,282,026 B
-/jka/base/demos/m05_base.dm_26
+/jka/base/demos/demo.dm_26
 ```
 
 `FS.createDataFile(..., canOwn=true)` avoids a second copy of each PK3. The files are served locally and are never committed or uploaded.
@@ -80,16 +80,16 @@ A test-only `r_m2_pause` cvar stops the RAF loop after the first active frame so
 
 Browser capture (engine paused on the first active frame):
 
-- `/tmp/opencode/m2/shots/browser-final.png` (640x480)
-- Native comparison: `/tmp/opencode/m2/shots/native-duel1-crop.png`
-- Side-by-side: `/tmp/opencode/m2/shots/native-vs-browser-final.png`
+- `/tmp/jka-demo-player/m2/shots/browser-final.png` (640x480)
+- Native comparison: `/tmp/jka-demo-player/m2/shots/native-duel1-crop.png`
+- Side-by-side: `/tmp/jka-demo-player/m2/shots/native-vs-browser-final.png`
 
 The browser frame shows:
 
 - `mp/duel1` floor slats, walls, ceiling and skybox textures;
 - the recorded player and a second duellist;
 - the sabers and saber glow;
-- HUD bars, `amda / Dueling / 0/0`, `Lightsaber`, `Score: 0/0`, health/shield.
+- HUD bars, `other player / Dueling / 0/0`, `Lightsaber`, `Score: 0/0`, health/shield.
 
 Console excerpt:
 

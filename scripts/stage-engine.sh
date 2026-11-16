@@ -10,7 +10,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SRC="${1:-/tmp/opencode/m4/engine-web}"
+if [ "$#" -lt 1 ]; then
+  echo "usage: scripts/stage-engine.sh <engine-build-dir>" >&2
+  exit 2
+fi
+SRC="$1"
 DEST="$ROOT/app/public/engine"
 
 if [ ! -f "$SRC/openjk.x86.js" ] || [ ! -f "$SRC/openjk.x86.wasm" ]; then

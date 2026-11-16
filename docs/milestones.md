@@ -1,6 +1,6 @@
 # Milestones: `jka-demo-player`
 
-**Status:** Planning. No implementation started.
+**Status:** Implemented through M7 as a shareable development release. See [m7.md](./m7.md).
 **Related:** [research.md](./research.md) · [architecture.md](./architecture.md)
 **Foundation:** upstream `JACoders/OpenJK` `codemp`, with a new Emscripten platform layer.
 
@@ -626,6 +626,10 @@ Out:
 ---
 
 ## 9. M7 — Hardening and release
+
+**Status:** Release audit documented in [m7.md](./m7.md). The repository is
+shareable as a development release; publishing and deployment remain manual
+steps.
 
 ### Goal
 

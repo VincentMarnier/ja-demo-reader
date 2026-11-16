@@ -1,9 +1,9 @@
 # engine/ — OpenJK MP Emscripten port
 
-**Status:** M1 boot, M2 renderer/cgame and M3 browser demo playback are verified.
-`rd-vanilla` and cgame are statically linked; a retail base demo on `mp/duel1`
-plays to `CA_ACTIVE`, advances, renders and ends cleanly in Chrome. No UI, input
-or audio yet.
+**Status:** Shareable development release. The `rd-rend2` renderer and cgame are
+statically linked into the engine; the browser app in `app/` plays, seeks,
+summarizes and inspects demos. Audio is disabled in this build. See the root
+[README](../README.md) for the product overview and licensing.
 
 This directory is the project-owned port layer around upstream OpenJK. Upstream
 source is not vendored here yet: `references/OpenJK` is the pinned, read-only
@@ -16,19 +16,22 @@ checkout and the build script creates a throwaway worktree under `/tmp` from it.
 | Upstream | `JACoders/OpenJK` |
 | Commit | `260c59c2907187af555a676fe0cc798893bf7757` |
 | Tree | `codemp/` (multiplayer), `shared/` |
-| License | GPLv2 |
+| License | GPLv2 only |
 
 ## Layout
 
 ```text
 engine/
 ├── patches/
-│   ├── 0001-emscripten-m1-boot.patch   # boot platform layer
-│   └── 0002-emscripten-m2-renderer.patch # static rd-vanilla + WebGL fixes
+│   ├── 0001-emscripten-m1-boot.patch    # boot platform layer
+│   ├── 0002-emscripten-m2-renderer.patch # static renderer + WebGL fixes
+│   ├── 0003-emscripten-m3-demo.patch    # demo playback + bridge
+│   ├── 0004-emscripten-rend2.patch      # static rd-rend2 + cgame + HUD/seek
+│   └── 0005-emscripten-demo-replay.patch # keep the last frame on demo end
 ├── platform/
 │   ├── ref_stub.cpp                    # M1 boot renderer stub
 │   ├── gl_stubs.cpp                    # display-list/array-element shims
-│   ├── jka_bridge.cpp                  # JKA_StatusJson / play / pause ABI
+│   ├── jka_bridge.cpp                  # status/play/seek/summary/keyframe ABI
 │   ├── web/demo.html                   # M3 demo harness
 │   ├── fixtures/base/mpdefault.cfg     # boot fixture, no game data
 │   └── web/index.html                  # boot harness (not a product UI)
@@ -53,7 +56,11 @@ scripts/verify-demo.mjs                 # M3 headless demo verification (CDP)
 | `codemp/qcommon/net_ip.cpp` | disable socket setup (demo playback is local) |
 | `shared/sys/con_tty.cpp` | disable stdin console input (it would call `window.prompt`) |
 
-`0002-emscripten-m2-renderer.patch` adds the static renderer link and WebGL fixes:
+`0002-emscripten-m2-renderer.patch` adds the static renderer link and WebGL fixes.
+`0003` adds demo playback/bridge, `0004` the statically linked rd-rend2 plus the
+cgame HUD/seek extensions, and `0005` keeps the final demo frame for replay.
+
+Detailed 0002 changes:
 
 | File | Change |
 |---|---|
@@ -77,7 +84,7 @@ script. No edit touches `references/OpenJK`.
 ## Build
 
 ```bash
-# Emscripten 6.0.1, e.g. /tmp/opencode/emsdk
+# Emscripten 6.0.1, e.g. /tmp/jka-demo-player/emsdk
 engine/scripts/build-mp-wasm.sh                 # M1 boot (no renderer)
 engine/scripts/verify-boot-node.sh
 
@@ -88,20 +95,20 @@ BUILD_RENDERER=1 engine/scripts/build-mp-wasm.sh
 BUILD_RENDERER=1 BUILD_CGAME=1 engine/scripts/build-mp-wasm.sh
 
 # M2 with a small asset fixture (extracted from user PK3s; not committed)
-BUILD_RENDERER=1 PRELOAD_DIR=/tmp/opencode/m2/testassets/base \
+BUILD_RENDERER=1 PRELOAD_DIR=/tmp/jka-demo-player/m2/testassets/base \
   engine/scripts/build-mp-wasm.sh
 
 # M3 headless demo verification (needs the M2+cgame build)
-WEB_DIR=/tmp/opencode/m3/web ASSETS_DIR=/path/to/base \
-  DEMO_FILE=/path/to/demos/m05_base.dm_26 \
+WEB_DIR=/tmp/jka-demo-player/m3/web ASSETS_DIR=/path/to/base \
+  DEMO_FILE=/path/to/demos/demo.dm_26 \
   NOREFRESH=1 node scripts/verify-demo.mjs
 
-WEB_DIR=/tmp/opencode/m3/web ASSETS_DIR=/path/to/base \
-  DEMO_FILE=/path/to/demos/m05_base.dm_26 \
+WEB_DIR=/tmp/jka-demo-player/m3/web ASSETS_DIR=/path/to/base \
+  DEMO_FILE=/path/to/demos/demo.dm_26 \
   PAUSE_FIRST=1 node scripts/verify-demo.mjs
 ```
 
-For the full-asset run, serve `assets0..3.pk3` and `demos/m05_base.dm_26`
+For the full-asset run, serve `assets0..3.pk3` and `demos/demo.dm_26`
 alongside the built page, then open:
 
 ```text
@@ -114,8 +121,8 @@ read the canvas; it is test-only.
 Open the page normally for the M1 stub, or `?renderer=rd-vanilla` for the
 statically linked renderer.
 
-Defaults: worktree `/tmp/opencode/m1/OpenJK-work`, build
-`/tmp/opencode/m1/build-wasm`, output `/tmp/opencode/m1/web`.
+Defaults: worktree `/tmp/jka-demo-player/m1/OpenJK-work`, build
+`/tmp/jka-demo-player/m1/build-wasm`, output `/tmp/jka-demo-player/m1/web`.
 
 `EMSDK`, `WORK`, `BUILD` and `OUT` can be overridden. The script verifies that
 `references/OpenJK` is at the pinned commit before doing anything.

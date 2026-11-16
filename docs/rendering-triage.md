@@ -59,7 +59,7 @@ The native OpenJK MP baseline (see [native-baseline.md](./native-baseline.md)) r
 | Assets | Retail `assets0..3.pk3` only; no mod, no community map |
 | State | `CA_CONNECTED` → `CA_LOADING` → `CA_PRIMED` → `CA_ACTIVE` |
 | Renderer | `rd-vanilla_x86_64.so`, OpenGL 4.6 compatibility, Mesa 26.0.8 |
-| Frames | `/tmp/opencode/m0.5/shots/base_01.png`, `base_02.png` |
+| Frames | `/tmp/jka-demo-player/m0.5/shots/base_01.png`, `base_02.png` |
 | Content | World geometry, textures, two lightsabers, HUD, duel scoreboard, animated camera |
 | Network | No remote socket traffic; demo file read locally |
 

@@ -33,7 +33,7 @@
 | Item | Value |
 |---|---|
 | OS | Ubuntu 26.04 LTS, kernel 7.0.0-43-generic |
-| Emscripten | 6.0.1, installed with `emsdk` under `/tmp/opencode/emsdk` |
+| Emscripten | 6.0.1, installed with `emsdk` under `/tmp/jka-demo-player/emsdk` |
 | CMake | 4.2.3 |
 | Node (smoke test) | v24.20.0 |
 | Chrome (boot test) | Chrome for Testing 156.0.8078.4, `chrome-headless-shell` |
@@ -55,7 +55,7 @@ engine/scripts/build-mp-wasm.sh
 Equivalent configure (engine only):
 
 ```bash
-emcmake cmake -S /tmp/opencode/m1/OpenJK-work -B /tmp/opencode/m1/build-wasm \
+emcmake cmake -S /tmp/jka-demo-player/m1/OpenJK-work -B /tmp/jka-demo-player/m1/build-wasm \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_EXE_LINKER_FLAGS="--preload-file=<repo>/engine/platform/fixtures/base/mpdefault.cfg@/jka/base/mpdefault.cfg -lidbfs.js" \
   -DBuildMPEngine=ON -DBuildMPRdVanilla=OFF -DBuildMPCGame=OFF -DBuildMPUI=OFF \
@@ -63,7 +63,7 @@ emcmake cmake -S /tmp/opencode/m1/OpenJK-work -B /tmp/opencode/m1/build-wasm \
   -DBuildSPEngine=OFF -DBuildSPGame=OFF -DBuildSPRdVanilla=OFF \
   -DBuildJK2SPEngine=OFF -DBuildJK2SPGame=OFF -DBuildJK2SPRdVanilla=OFF
 
-emmake cmake --build /tmp/opencode/m1/build-wasm -j"$(nproc)"
+emmake cmake --build /tmp/jka-demo-player/m1/build-wasm -j"$(nproc)"
 ```
 
 The worktree keeps `.git`, so `git describe` produces the real tag (`latest`)
@@ -96,10 +96,10 @@ Harness: `engine/platform/web/index.html`, served over local HTTP; the engine
 logs to the page and to the browser console. Command:
 
 ```bash
-(cd /tmp/opencode/m1/web && python3 -m http.server 8124)
+(cd /tmp/jka-demo-player/m1/web && python3 -m http.server 8124)
 CHROME=~/.cache/ms-playwright/chromium_headless_shell-1248/chrome-headless-shell-linux64/chrome-headless-shell
 timeout -s KILL 25 "$CHROME" --headless --no-sandbox --disable-gpu \
-  http://127.0.0.1:8124/ 2> /tmp/opencode/m1/logs/chrome-err-5.log
+  http://127.0.0.1:8124/ 2> /tmp/jka-demo-player/m1/logs/chrome-err-5.log
 ```
 
 Captured console (order preserved):
