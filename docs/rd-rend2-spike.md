@@ -1,9 +1,9 @@
 # rd-rend2 WebGL2 bring-up
 
-**Status:** Working. The app on branch `spike/rd-rend2` boots the statically
-linked `rd-rend2` renderer on a WebGL2/GLES3 context, loads a map, and plays
-demos.
-**Branch:** `spike/rd-rend2`
+**Status:** Working. `master` boots the statically linked `rd-rend2` renderer on
+a WebGL2/GLES3 context, loads a map, and plays demos.
+**Branch:** `master` (rd-rend2). The previous rd-vanilla path is preserved on
+branch `rd-vanilla`.
 **Base:** `5e03758 fix(m4): make Stop tear down the demo and return to the map step`
 
 ## Result
