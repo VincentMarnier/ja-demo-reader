@@ -1,0 +1,1090 @@
+diff --git a/codemp/rd-rend2/tr_backend.cpp b/codemp/rd-rend2/tr_backend.cpp
+index 65956a2e..a341af09 100644
+--- a/codemp/rd-rend2/tr_backend.cpp
++++ b/codemp/rd-rend2/tr_backend.cpp
+@@ -707,6 +707,10 @@ UniformDataWriter::UniformDataWriter()
+ 
+ void UniformDataWriter::Start( shaderProgram_t *sp )
+ {
++	// A lazily compiled program has no uniform table until it is built. The
++	// writer reads that table while collecting the draw item, before
++	// GLSL_BindProgram() runs, so build it here.
++	GLSL_EnsureProgram( sp );
+ 	shaderProgram = sp;
+ }
+ 
+diff --git a/codemp/rd-rend2/tr_glsl.cpp b/codemp/rd-rend2/tr_glsl.cpp
+index 009c99dd..03be04f4 100644
+--- a/codemp/rd-rend2/tr_glsl.cpp
++++ b/codemp/rd-rend2/tr_glsl.cpp
+@@ -26,6 +26,11 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+ #include <emscripten.h>
+ #endif
+ 
++// Eager compilation runs during engine boot/load and may yield to the browser.
++// A lazy compile happens inside a draw, so it must not Asyncify-sleep.
++static qboolean jka_glslCompileCanYield = qtrue;
++static int jka_lazyCompileCount;
++
+ #ifdef __EMSCRIPTEN__
+ // WebGL2 requires GLSL ES 3.00 and a default precision for fragment shaders.
+ // The shader bodies are already written in GLSL 1.50-style in/out syntax.
+@@ -820,9 +825,12 @@ bool ShaderProgramBuilder::Build( shaderProgram_t *shaderProgram )
+ 	program = 0;
+ 
+ #ifdef __EMSCRIPTEN__
+-	// Yield after each program so the browser can paint and handle input while
+-	// the renderer compiles its shader variants.
+-	emscripten_sleep( 0 );
++	if ( jka_glslCompileCanYield )
++	{
++		// Yield after each eager program so the browser can paint and handle
++		// input while the renderer compiles its shader variants.
++		emscripten_sleep( 0 );
++	}
+ #endif
+ 
+ 	return true;
+@@ -1031,8 +1039,32 @@ void GLSL_FinishGPUShader(shaderProgram_t *program)
+ #endif
+ }
+ 
++static qboolean GLSL_PrepareProgram( shaderProgram_t *program )
++{
++	if ( !program )
++	{
++		return qfalse;
++	}
++
++	GLSL_EnsureProgram( program );
++	if ( !program->compiled )
++	{
++		return qfalse;
++	}
++
++	if ( glState.currentProgram != program )
++	{
++		qglUseProgram( program->program );
++		glState.currentProgram = program;
++	}
++	return qtrue;
++}
++
+ void GLSL_SetUniforms( shaderProgram_t *program, UniformData *uniformData )
+ {
++	if ( !GLSL_PrepareProgram( program ) )
++		return;
++
+ 	if (uniformData == nullptr)
+ 		return;
+ 
+@@ -1114,6 +1146,9 @@ void GLSL_SetUniforms( shaderProgram_t *program, UniformData *uniformData )
+ 
+ void GLSL_SetUniformInt(shaderProgram_t *program, int uniformNum, GLint value)
+ {
++	if ( !GLSL_PrepareProgram( program ) )
++		return;
++
+ 	GLint *uniforms = program->uniforms;
+ 	GLint *compare = (GLint *)(program->uniformBuffer + program->uniformBufferOffsets[uniformNum]);
+ 
+@@ -1138,6 +1173,9 @@ void GLSL_SetUniformInt(shaderProgram_t *program, int uniformNum, GLint value)
+ 
+ void GLSL_SetUniformFloat(shaderProgram_t *program, int uniformNum, GLfloat value)
+ {
++	if ( !GLSL_PrepareProgram( program ) )
++		return;
++
+ 	GLint *uniforms = program->uniforms;
+ 	GLfloat *compare = (GLfloat *)(program->uniformBuffer + program->uniformBufferOffsets[uniformNum]);
+ 
+@@ -1162,6 +1200,9 @@ void GLSL_SetUniformFloat(shaderProgram_t *program, int uniformNum, GLfloat valu
+ 
+ void GLSL_SetUniformVec2(shaderProgram_t *program, int uniformNum, const vec2_t v)
+ {
++	if ( !GLSL_PrepareProgram( program ) )
++		return;
++
+ 	GLint *uniforms = program->uniforms;
+ 	float *compare = (float *)(program->uniformBuffer + program->uniformBufferOffsets[uniformNum]);
+ 
+@@ -1187,6 +1228,9 @@ void GLSL_SetUniformVec2(shaderProgram_t *program, int uniformNum, const vec2_t
+ 
+ void GLSL_SetUniformVec2N(shaderProgram_t *program, int uniformNum, const float *v, int numVec2s)
+ {
++	if ( !GLSL_PrepareProgram( program ) )
++		return;
++
+ 	GLint *uniforms = program->uniforms;
+ 	float *compare = (float *)(program->uniformBuffer + program->uniformBufferOffsets[uniformNum]);
+ 
+@@ -1220,6 +1264,9 @@ void GLSL_SetUniformVec2N(shaderProgram_t *program, int uniformNum, const float
+ 
+ void GLSL_SetUniformVec3(shaderProgram_t *program, int uniformNum, const vec3_t v)
+ {
++	if ( !GLSL_PrepareProgram( program ) )
++		return;
++
+ 	GLint *uniforms = program->uniforms;
+ 	float *compare = (float *)(program->uniformBuffer + program->uniformBufferOffsets[uniformNum]);
+ 
+@@ -1244,6 +1291,9 @@ void GLSL_SetUniformVec3(shaderProgram_t *program, int uniformNum, const vec3_t
+ 
+ void GLSL_SetUniformVec4(shaderProgram_t *program, int uniformNum, const vec4_t v)
+ {
++	if ( !GLSL_PrepareProgram( program ) )
++		return;
++
+ 	GLint *uniforms = program->uniforms;
+ 	float *compare = (float *)(program->uniformBuffer + program->uniformBufferOffsets[uniformNum]);
+ 
+@@ -1268,6 +1318,9 @@ void GLSL_SetUniformVec4(shaderProgram_t *program, int uniformNum, const vec4_t
+ 
+ void GLSL_SetUniformFloatN(shaderProgram_t *program, int uniformNum, const float *v, int numFloats)
+ {
++	if ( !GLSL_PrepareProgram( program ) )
++		return;
++
+ 	GLint *uniforms = program->uniforms;
+ 	float *compare = (float *)(program->uniformBuffer + program->uniformBufferOffsets[uniformNum]);
+ 
+@@ -1301,6 +1354,9 @@ void GLSL_SetUniformFloatN(shaderProgram_t *program, int uniformNum, const float
+ 
+ void GLSL_SetUniformMatrix4x3(shaderProgram_t *program, int uniformNum, const float *matrix, int numElements)
+ {
++	if ( !GLSL_PrepareProgram( program ) )
++		return;
++
+ 	GLint *uniforms = program->uniforms;
+ 	float *compare;
+ 
+@@ -1329,6 +1385,9 @@ void GLSL_SetUniformMatrix4x3(shaderProgram_t *program, int uniformNum, const fl
+ 
+ void GLSL_SetUniformMatrix4x4(shaderProgram_t *program, int uniformNum, const float *matrix, int numElements)
+ {
++	if ( !GLSL_PrepareProgram( program ) )
++		return;
++
+ 	GLint *uniforms = program->uniforms;
+ 	float *compare;
+ 
+@@ -1359,6 +1418,9 @@ void GLSL_DeleteGPUShader(shaderProgram_t *program)
+ {
+ 	if(program->program)
+ 	{
++		jkaShaderGroup_t group = program->group;
++		int index = program->index;
++
+ 		qglDeleteProgram(program->program);
+ 
+ 		Z_Free (program->name);
+@@ -1367,6 +1429,8 @@ void GLSL_DeleteGPUShader(shaderProgram_t *program)
+ 		Z_Free (program->uniforms);
+ 
+ 		Com_Memset(program, 0, sizeof(*program));
++		program->group = group;
++		program->index = index;
+ 	}
+ }
+ 
+@@ -1457,6 +1521,10 @@ void GLSL_InitSplashScreenShader()
+ 	tr.splashScreenShader.program = program;
+ 	tr.splashScreenShader.name = (char *)Z_Malloc(splashLen + 1, TAG_GENERAL);
+ 	Q_strncpyz(tr.splashScreenShader.name, "splash", splashLen + 1);
++	tr.splashScreenShader.compiled = qtrue;
++	tr.splashScreenShader.used = qfalse;
++	tr.splashScreenShader.group = JKA_SHADER_GROUP_SPLASH;
++	tr.splashScreenShader.index = 0;
+ }
+ 
+ static const GPUProgramDesc *LoadProgramSource(
+@@ -1483,233 +1551,213 @@ static const GPUProgramDesc *LoadProgramSource(
+ 	return result;
+ }
+ 
+-static int GLSL_LoadGPUProgramGeneric(
++static void GLSL_CompileGenericProgram(
+ 	ShaderProgramBuilder& builder,
+-	Allocator& scratchAlloc )
++	const GPUProgramDesc& programDesc,
++	int i )
+ {
+-	int numPrograms = 0;
+-	Allocator allocator(scratchAlloc.Base(), scratchAlloc.GetSize());
+-
+ 	char extradefines[1200];
+-	const GPUProgramDesc *programDesc =
+-		LoadProgramSource("generic", allocator, fallback_genericProgram);
+-	for ( int i = 0; i < GENERICDEF_COUNT; i++ )
+-	{
+-		if (!GLSL_IsValidPermutationForGeneric(i))
+-		{
+-			continue;
+-		}
+-
+-		uint32_t attribs = ATTR_POSITION | ATTR_TEXCOORD0 | ATTR_NORMAL | ATTR_COLOR;
+-		extradefines[0] = '\0';
++	uint32_t attribs = ATTR_POSITION | ATTR_TEXCOORD0 | ATTR_NORMAL | ATTR_COLOR;
++	extradefines[0] = '\0';
+ 
+-		if (i & GENERICDEF_USE_DEFORM_VERTEXES)
+-			Q_strcat(extradefines, sizeof(extradefines), "#define USE_DEFORM_VERTEXES\n");
++	if (i & GENERICDEF_USE_DEFORM_VERTEXES)
++		Q_strcat(extradefines, sizeof(extradefines), "#define USE_DEFORM_VERTEXES\n");
+ 
+-		if (i & GENERICDEF_USE_TCGEN_AND_TCMOD)
+-		{
+-			Q_strcat(extradefines, sizeof(extradefines), "#define USE_TCGEN\n");
+-			Q_strcat(extradefines, sizeof(extradefines), "#define USE_TCMOD\n");
+-		}
++	if (i & GENERICDEF_USE_TCGEN_AND_TCMOD)
++	{
++		Q_strcat(extradefines, sizeof(extradefines), "#define USE_TCGEN\n");
++		Q_strcat(extradefines, sizeof(extradefines), "#define USE_TCMOD\n");
++	}
+ #ifdef REND2_SP
+-		if (i & GENERICDEF_USE_VERTEX_ANIMATION)
+-		{
+-			Q_strcat(extradefines, sizeof(extradefines), "#define USE_VERTEX_ANIMATION\n");
+-			attribs |= ATTR_POSITION2 | ATTR_NORMAL2;
+-		}
++	if (i & GENERICDEF_USE_VERTEX_ANIMATION)
++	{
++		Q_strcat(extradefines, sizeof(extradefines), "#define USE_VERTEX_ANIMATION\n");
++		attribs |= ATTR_POSITION2 | ATTR_NORMAL2;
++	}
+ #endif // REND2_SP
+-		if (i & GENERICDEF_USE_SKELETAL_ANIMATION)
+-		{
+-			Q_strcat(extradefines, sizeof(extradefines), "#define USE_SKELETAL_ANIMATION\n");
+-			attribs |= ATTR_BONE_INDEXES | ATTR_BONE_WEIGHTS;
+-		}
+-
+-		if (i & GENERICDEF_USE_FOG)
+-			Q_strcat(extradefines, sizeof(extradefines), "#define USE_FOG\n");
++	if (i & GENERICDEF_USE_SKELETAL_ANIMATION)
++	{
++		Q_strcat(extradefines, sizeof(extradefines), "#define USE_SKELETAL_ANIMATION\n");
++		attribs |= ATTR_BONE_INDEXES | ATTR_BONE_WEIGHTS;
++	}
+ 
+-		if (i & GENERICDEF_USE_RGBAGEN)
+-			Q_strcat(extradefines, sizeof(extradefines), "#define USE_RGBAGEN\n");
++	if (i & GENERICDEF_USE_FOG)
++		Q_strcat(extradefines, sizeof(extradefines), "#define USE_FOG\n");
+ 
+-		if (i & GENERICDEF_USE_GLOW_BUFFER)
+-			Q_strcat(extradefines, sizeof(extradefines), "#define USE_GLOW_BUFFER\n");
++	if (i & GENERICDEF_USE_RGBAGEN)
++		Q_strcat(extradefines, sizeof(extradefines), "#define USE_RGBAGEN\n");
+ 
+-		if (i & GENERICDEF_USE_ALPHA_TEST)
+-			Q_strcat(extradefines, sizeof(extradefines), "#define USE_ALPHA_TEST\n");
++	if (i & GENERICDEF_USE_GLOW_BUFFER)
++		Q_strcat(extradefines, sizeof(extradefines), "#define USE_GLOW_BUFFER\n");
+ 
+-		if (!GLSL_LoadGPUShader(builder, &tr.genericShader[i], "generic", attribs, NO_XFB_VARS,
+-				extradefines, *programDesc))
+-		{
+-			ri.Error(ERR_FATAL, "Could not load generic shader!");
+-		}
++	if (i & GENERICDEF_USE_ALPHA_TEST)
++		Q_strcat(extradefines, sizeof(extradefines), "#define USE_ALPHA_TEST\n");
+ 
+-		GLSL_InitUniforms(&tr.genericShader[i]);
++	if (!GLSL_LoadGPUShader(builder, &tr.genericShader[i], "generic", attribs, NO_XFB_VARS,
++			extradefines, programDesc))
++	{
++		ri.Error(ERR_FATAL, "Could not load generic shader!");
++	}
+ 
+-		qglUseProgram(tr.genericShader[i].program);
+-		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_DIFFUSEMAP, TB_DIFFUSEMAP);
+-		GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_LIGHTMAP,   TB_LIGHTMAP);
+-		qglUseProgram(0);
++	GLSL_InitUniforms(&tr.genericShader[i]);
+ 
+-		GLSL_FinishGPUShader(&tr.genericShader[i]);
++	qglUseProgram(tr.genericShader[i].program);
++	GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_DIFFUSEMAP, TB_DIFFUSEMAP);
++	GLSL_SetUniformInt(&tr.genericShader[i], UNIFORM_LIGHTMAP,   TB_LIGHTMAP);
++	qglUseProgram(0);
+ 
+-		++numPrograms;
+-	}
++	GLSL_FinishGPUShader(&tr.genericShader[i]);
++}
+ 
+-	return numPrograms;
++static void GLSL_CompileGenericIndex( int i )
++{
++	Allocator allocator(512 * 1024);
++	ShaderProgramBuilder builder;
++	const GPUProgramDesc *programDesc =
++		LoadProgramSource("generic", allocator, fallback_genericProgram);
++	GLSL_CompileGenericProgram(builder, *programDesc, i);
+ }
+ 
+-static int GLSL_LoadGPUProgramFogPass(
++
++static void GLSL_CompileFogProgram(
+ 	ShaderProgramBuilder& builder,
+-	Allocator& scratchAlloc )
++	const GPUProgramDesc& programDesc,
++	int i )
+ {
+-	int numPrograms = 0;
+-	Allocator allocator(scratchAlloc.Base(), scratchAlloc.GetSize());
+-
+ 	char extradefines[1200];
+-	const GPUProgramDesc *programDesc =
+-		LoadProgramSource("fogpass", allocator, fallback_fogpassProgram);
+-	for (int i = 0; i < FOGDEF_COUNT; i++)
+-	{
+-		if (!GLSL_IsValidPermutationForFog(i))
+-		{
+-			continue;
+-		}
+-
+-		uint32_t attribs =
+-			(ATTR_POSITION | ATTR_NORMAL | ATTR_TEXCOORD0);
+-		extradefines[0] = '\0';
++	uint32_t attribs = ATTR_POSITION | ATTR_NORMAL | ATTR_TEXCOORD0;
++	extradefines[0] = '\0';
+ 
+-		if (i & FOGDEF_USE_DEFORM_VERTEXES)
+-			Q_strcat(extradefines, sizeof(extradefines), "#define USE_DEFORM_VERTEXES\n");
++	if (i & FOGDEF_USE_DEFORM_VERTEXES)
++		Q_strcat(extradefines, sizeof(extradefines), "#define USE_DEFORM_VERTEXES\n");
+ #ifdef REND2_SP
+-		if (i & FOGDEF_USE_VERTEX_ANIMATION)
+-		{
+-			Q_strcat(extradefines, sizeof(extradefines), "#define USE_VERTEX_ANIMATION\n");
+-			attribs |= ATTR_POSITION2 | ATTR_NORMAL2
+-		}
++	if (i & FOGDEF_USE_VERTEX_ANIMATION)
++	{
++		Q_strcat(extradefines, sizeof(extradefines), "#define USE_VERTEX_ANIMATION\n");
++		attribs |= ATTR_POSITION2 | ATTR_NORMAL2;
++	}
+ #endif // REND2_SP
+-		if (i & FOGDEF_USE_SKELETAL_ANIMATION)
+-		{
+-			Q_strcat(extradefines, sizeof(extradefines), "#define USE_SKELETAL_ANIMATION\n");
+-			attribs |= ATTR_BONE_INDEXES | ATTR_BONE_WEIGHTS;
+-		}
+-
+-		if (i & FOGDEF_USE_FALLBACK_GLOBAL_FOG)
+-			Q_strcat(extradefines, sizeof(extradefines), "#define USE_FALLBACK_GLOBAL_FOG\n");
++	if (i & FOGDEF_USE_SKELETAL_ANIMATION)
++	{
++		Q_strcat(extradefines, sizeof(extradefines), "#define USE_SKELETAL_ANIMATION\n");
++		attribs |= ATTR_BONE_INDEXES | ATTR_BONE_WEIGHTS;
++	}
+ 
+-		if (i & FOGDEF_USE_ALPHA_TEST)
+-			Q_strcat(extradefines, sizeof(extradefines), "#define USE_ALPHA_TEST\n");
++	if (i & FOGDEF_USE_FALLBACK_GLOBAL_FOG)
++		Q_strcat(extradefines, sizeof(extradefines), "#define USE_FALLBACK_GLOBAL_FOG\n");
+ 
+-		if (!GLSL_LoadGPUShader(builder, &tr.fogShader[i], "fogpass", attribs, NO_XFB_VARS,
+-				extradefines, *programDesc))
+-		{
+-			ri.Error(ERR_FATAL, "Could not load fogpass shader!");
+-		}
++	if (i & FOGDEF_USE_ALPHA_TEST)
++		Q_strcat(extradefines, sizeof(extradefines), "#define USE_ALPHA_TEST\n");
+ 
+-		GLSL_InitUniforms(&tr.fogShader[i]);
++	if (!GLSL_LoadGPUShader(builder, &tr.fogShader[i], "fogpass", attribs, NO_XFB_VARS,
++			extradefines, programDesc))
++	{
++		ri.Error(ERR_FATAL, "Could not load fogpass shader!");
++	}
+ 
+-		qglUseProgram(tr.fogShader[i].program);
+-		if (i & FOGDEF_USE_ALPHA_TEST)
+-			GLSL_SetUniformInt(&tr.fogShader[i], UNIFORM_DIFFUSEMAP, 0);
+-		qglUseProgram(0);
++	GLSL_InitUniforms(&tr.fogShader[i]);
+ 
+-		GLSL_FinishGPUShader(&tr.fogShader[i]);
++	qglUseProgram(tr.fogShader[i].program);
++	if (i & FOGDEF_USE_ALPHA_TEST)
++		GLSL_SetUniformInt(&tr.fogShader[i], UNIFORM_DIFFUSEMAP, 0);
++	qglUseProgram(0);
+ 
+-		++numPrograms;
+-	}
++	GLSL_FinishGPUShader(&tr.fogShader[i]);
++}
+ 
+-	return numPrograms;
++static void GLSL_CompileFogIndex( int i )
++{
++	Allocator allocator(512 * 1024);
++	ShaderProgramBuilder builder;
++	const GPUProgramDesc *programDesc =
++		LoadProgramSource("fogpass", allocator, fallback_fogpassProgram);
++	GLSL_CompileFogProgram(builder, *programDesc, i);
+ }
+ 
+-static int GLSL_LoadGPUProgramRefraction(
++
++static void GLSL_CompileRefractionProgram(
+ 	ShaderProgramBuilder& builder,
+-	Allocator& scratchAlloc)
++	const GPUProgramDesc& programDesc,
++	int i )
+ {
+-	int numPrograms = 0;
+-	Allocator allocator(scratchAlloc.Base(), scratchAlloc.GetSize());
+-
+ 	char extradefines[1200];
+-	const GPUProgramDesc *programDesc =
+-		LoadProgramSource("refraction", allocator, fallback_refractionProgram);
+-	for (int i = 0; i < REFRACTIONDEF_COUNT; i++)
+-	{
+-		uint32_t attribs = ATTR_POSITION | ATTR_TEXCOORD0 | ATTR_NORMAL | ATTR_COLOR;
+-		extradefines[0] = '\0';
++	uint32_t attribs = ATTR_POSITION | ATTR_TEXCOORD0 | ATTR_NORMAL | ATTR_COLOR;
++	extradefines[0] = '\0';
+ 
+-		if (i & REFRACTIONDEF_USE_DEFORM_VERTEXES)
+-			Q_strcat(extradefines, sizeof(extradefines), "#define USE_DEFORM_VERTEXES\n");
++	if (i & REFRACTIONDEF_USE_DEFORM_VERTEXES)
++		Q_strcat(extradefines, sizeof(extradefines), "#define USE_DEFORM_VERTEXES\n");
+ 
+-		if (i & REFRACTIONDEF_USE_TCGEN_AND_TCMOD)
+-		{
+-			Q_strcat(extradefines, sizeof(extradefines), "#define USE_TCGEN\n");
+-			Q_strcat(extradefines, sizeof(extradefines), "#define USE_TCMOD\n");
+-		}
++	if (i & REFRACTIONDEF_USE_TCGEN_AND_TCMOD)
++	{
++		Q_strcat(extradefines, sizeof(extradefines), "#define USE_TCGEN\n");
++		Q_strcat(extradefines, sizeof(extradefines), "#define USE_TCMOD\n");
++	}
+ #ifdef REND2_SP
+-		if (i & REFRACTIONDEF_USE_VERTEX_ANIMATION)
+-		{
+-			Q_strcat(extradefines, sizeof(extradefines), "#define USE_VERTEX_ANIMATION\n");
+-			attribs |= ATTR_POSITION2 | ATTR_NORMAL2;
+-		}
++	if (i & REFRACTIONDEF_USE_VERTEX_ANIMATION)
++	{
++		Q_strcat(extradefines, sizeof(extradefines), "#define USE_VERTEX_ANIMATION\n");
++		attribs |= ATTR_POSITION2 | ATTR_NORMAL2;
++	}
+ #endif // REND2_SP
+-		if (i & REFRACTIONDEF_USE_SKELETAL_ANIMATION)
+-		{
+-			Q_strcat(extradefines, sizeof(extradefines), "#define USE_SKELETAL_ANIMATION\n");
+-			attribs |= ATTR_BONE_INDEXES | ATTR_BONE_WEIGHTS;
+-		}
++	if (i & REFRACTIONDEF_USE_SKELETAL_ANIMATION)
++	{
++		Q_strcat(extradefines, sizeof(extradefines), "#define USE_SKELETAL_ANIMATION\n");
++		attribs |= ATTR_BONE_INDEXES | ATTR_BONE_WEIGHTS;
++	}
+ 
+-		if (i & REFRACTIONDEF_USE_RGBAGEN)
+-			Q_strcat(extradefines, sizeof(extradefines), "#define USE_RGBAGEN\n");
++	if (i & REFRACTIONDEF_USE_RGBAGEN)
++		Q_strcat(extradefines, sizeof(extradefines), "#define USE_RGBAGEN\n");
+ 
+-		if (i & REFRACTIONDEF_USE_ALPHA_TEST)
+-			Q_strcat(extradefines, sizeof(extradefines), "#define USE_ALPHA_TEST\n");
++	if (i & REFRACTIONDEF_USE_ALPHA_TEST)
++		Q_strcat(extradefines, sizeof(extradefines), "#define USE_ALPHA_TEST\n");
+ 
+-		if (i & REFRACTIONDEF_USE_SRGB_TRANSFORM)
+-			Q_strcat(extradefines, sizeof(extradefines), "#define USE_LINEAR_LIGHT\n");
++	if (i & REFRACTIONDEF_USE_SRGB_TRANSFORM)
++		Q_strcat(extradefines, sizeof(extradefines), "#define USE_LINEAR_LIGHT\n");
+ 
+-		if (!GLSL_LoadGPUShader(builder, &tr.refractionShader[i], "refraction", attribs, NO_XFB_VARS,
+-			extradefines, *programDesc))
+-		{
+-			ri.Error(ERR_FATAL, "Could not load refraction shader!");
+-		}
++	if (!GLSL_LoadGPUShader(builder, &tr.refractionShader[i], "refraction", attribs, NO_XFB_VARS,
++		extradefines, programDesc))
++	{
++		ri.Error(ERR_FATAL, "Could not load refraction shader!");
++	}
+ 
+-		GLSL_InitUniforms(&tr.refractionShader[i]);
++	GLSL_InitUniforms(&tr.refractionShader[i]);
+ 
+-		qglUseProgram(tr.refractionShader[i].program);
+-		GLSL_SetUniformInt(&tr.refractionShader[i], UNIFORM_TEXTUREMAP, TB_COLORMAP);
+-		GLSL_SetUniformInt(&tr.refractionShader[i], UNIFORM_LEVELSMAP, TB_LEVELSMAP);
+-		GLSL_SetUniformInt(&tr.refractionShader[i], UNIFORM_SCREENDEPTHMAP, TB_SHADOWMAP);
+-		qglUseProgram(0);
+-
+-		GLSL_FinishGPUShader(&tr.refractionShader[i]);
++	qglUseProgram(tr.refractionShader[i].program);
++	GLSL_SetUniformInt(&tr.refractionShader[i], UNIFORM_TEXTUREMAP, TB_COLORMAP);
++	GLSL_SetUniformInt(&tr.refractionShader[i], UNIFORM_LEVELSMAP, TB_LEVELSMAP);
++	GLSL_SetUniformInt(&tr.refractionShader[i], UNIFORM_SCREENDEPTHMAP, TB_SHADOWMAP);
++	qglUseProgram(0);
+ 
+-		++numPrograms;
+-	}
++	GLSL_FinishGPUShader(&tr.refractionShader[i]);
++}
+ 
+-	return numPrograms;
++static void GLSL_CompileRefractionIndex( int i )
++{
++	Allocator allocator(512 * 1024);
++	ShaderProgramBuilder builder;
++	const GPUProgramDesc *programDesc =
++		LoadProgramSource("refraction", allocator, fallback_refractionProgram);
++	GLSL_CompileRefractionProgram(builder, *programDesc, i);
+ }
+ 
+-static int GLSL_LoadGPUProgramLightAll(
++
++static void GLSL_CompileLightAllProgram(
+ 	ShaderProgramBuilder& builder,
+-	Allocator& scratchAlloc )
++	const GPUProgramDesc& programDesc,
++	int i )
+ {
+-	int numPrograms = 0;
+-	Allocator allocator(scratchAlloc.Base(), scratchAlloc.GetSize());
+-
+-	char extradefines[1200];
+-	const GPUProgramDesc *programDesc =
+-		LoadProgramSource("lightall", allocator, fallback_lightallProgram);
+ 	const bool useFastLight =
+ 		(!r_normalMapping->integer && !r_specularMapping->integer);
+-	for ( int i = 0; i < LIGHTDEF_COUNT; i++ )
+-	{
+-		int lightType = i & LIGHTDEF_LIGHTTYPE_MASK;
++	int lightType = i & LIGHTDEF_LIGHTTYPE_MASK;
++	char extradefines[1200];
+ 
+-		// skip impossible combos
+-		if (!GLSL_IsValidPermutationForLight (lightType, i))
+-			continue;
++	// impossible combos are never selected, but keep the guard for safety
++	if (!GLSL_IsValidPermutationForLight (lightType, i))
++		return;
+ 
+-		uint32_t attribs = ATTR_POSITION | ATTR_TEXCOORD0 | ATTR_COLOR | ATTR_NORMAL;
++	uint32_t attribs = ATTR_POSITION | ATTR_TEXCOORD0 | ATTR_COLOR | ATTR_NORMAL;
+ 
+-		extradefines[0] = '\0';
++	extradefines[0] = '\0';
+ 
+ 		if (r_hdr->integer && !glRefConfig.floatLightmap)
+ 			Q_strcat(extradefines, sizeof(extradefines), "#define RGBM_LIGHTMAP\n");
+@@ -1832,7 +1880,7 @@ static int GLSL_LoadGPUProgramLightAll(
+ 			Q_strcat(extradefines, sizeof(extradefines), "#define USE_GLOW_BUFFER\n");
+ 
+ 		if (!GLSL_LoadGPUShader(builder, &tr.lightallShader[i], "lightall", attribs, NO_XFB_VARS,
+-				extradefines, *programDesc))
++				extradefines, programDesc))
+ 		{
+ 			ri.Error(ERR_FATAL, "Could not load lightall shader!");
+ 		}
+@@ -1853,13 +1901,18 @@ static int GLSL_LoadGPUProgramLightAll(
+ 		qglUseProgram(0);
+ 
+ 		GLSL_FinishGPUShader(&tr.lightallShader[i]);
++}
+ 
+-		++numPrograms;
+-	}
+-
+-	return numPrograms;
++static void GLSL_CompileLightAllIndex( int i )
++{
++	Allocator allocator(512 * 1024);
++	ShaderProgramBuilder builder;
++	const GPUProgramDesc *programDesc =
++		LoadProgramSource("lightall", allocator, fallback_lightallProgram);
++	GLSL_CompileLightAllProgram(builder, *programDesc, i);
+ }
+ 
++
+ static int GLSL_LoadGPUProgramBasicWithDefinitions(
+ 	ShaderProgramBuilder& builder,
+ 	Allocator& scratchAlloc,
+@@ -2258,23 +2311,17 @@ static int GLSL_LoadGPUProgramDynamicGlowDownsample(
+ 	return 1;
+ }
+ 
+-static int GLSL_LoadGPUProgramSurfaceSprites(
++static void GLSL_CompileSurfaceSpriteProgram(
+ 	ShaderProgramBuilder& builder,
+-	Allocator& scratchAlloc )
++	const GPUProgramDesc& programDesc,
++	int i )
+ {
+-	int numPrograms = 0;
+-	Allocator allocator(scratchAlloc.Base(), scratchAlloc.GetSize());
+-
+ 	char extradefines[1200];
+-	const GPUProgramDesc *programDesc =
+-		LoadProgramSource("surface_sprites", allocator, fallback_surface_spritesProgram);
+ 	const uint32_t attribs = ATTR_POSITION | ATTR_POSITION2 | ATTR_NORMAL | ATTR_COLOR;
+-	for ( int i = 0; i < SSDEF_COUNT; ++i )
+-	{
+ 		extradefines[0] = '\0';
+ 
+ 		if ( (i & SSDEF_FACE_CAMERA) && (i & SSDEF_FACE_UP) )
+-			continue;
++			return;
+ 
+ 		if ( i & SSDEF_FACE_CAMERA )
+ 			Q_strcat(extradefines, sizeof(extradefines),
+@@ -2304,19 +2351,25 @@ static int GLSL_LoadGPUProgramSurfaceSprites(
+ 
+ 		shaderProgram_t *program = tr.spriteShader + i;
+ 		if (!GLSL_LoadGPUShader(builder, program, "surface_sprites", attribs, NO_XFB_VARS,
+-				extradefines, *programDesc))
++				extradefines, programDesc))
+ 		{
+ 			ri.Error(ERR_FATAL, "Could not load surface sprites shader!");
+ 		}
+ 
+ 		GLSL_InitUniforms(program);
+ 		GLSL_FinishGPUShader(program);
+-		++numPrograms;
+-	}
++}
+ 
+-	return numPrograms;
++static void GLSL_CompileSurfaceSpriteIndex( int i )
++{
++	Allocator allocator(512 * 1024);
++	ShaderProgramBuilder builder;
++	const GPUProgramDesc *programDesc =
++		LoadProgramSource("surface_sprites", allocator, fallback_surface_spritesProgram);
++	GLSL_CompileSurfaceSpriteProgram(builder, *programDesc, i);
+ }
+ 
++
+ static int GLSL_LoadGPUProgramWeather(
+ 	ShaderProgramBuilder& builder,
+ 	Allocator& scratchAlloc )
+@@ -2351,6 +2404,284 @@ static int GLSL_LoadGPUProgramWeather(
+ 	return 2;
+ }
+ 
++// M9 Phase 1: the eager set measured in Phase 0. Everything else is compiled
++// by GLSL_EnsureProgram() on first use.
++static const int jkaEagerGenericShaders[] = {
++	0, 4, 16, 20, 24, 36, 38, 48
++};
++static const int jkaEagerLightShaders[] = {
++	0, 1, 3, 4, 5, 16, 18, 32
++};
++static const int jkaEagerFogShaders[] = {
++	0, 2
++};
++static const int jkaEagerRefractionShaders[] = {
++	2
++};
++
++static void GLSL_InitProgramIdentities( void )
++{
++	tr.splashScreenShader.group = JKA_SHADER_GROUP_SPLASH;
++	tr.splashScreenShader.index = 0;
++	for ( int i = 0; i < GENERICDEF_COUNT; i++ )
++	{
++		tr.genericShader[i].group = JKA_SHADER_GROUP_GENERIC;
++		tr.genericShader[i].index = i;
++	}
++	for ( int i = 0; i < FOGDEF_COUNT; i++ )
++	{
++		tr.fogShader[i].group = JKA_SHADER_GROUP_FOG;
++		tr.fogShader[i].index = i;
++	}
++	for ( int i = 0; i < REFRACTIONDEF_COUNT; i++ )
++	{
++		tr.refractionShader[i].group = JKA_SHADER_GROUP_REFRACTION;
++		tr.refractionShader[i].index = i;
++	}
++	for ( int i = 0; i < LIGHTDEF_COUNT; i++ )
++	{
++		tr.lightallShader[i].group = JKA_SHADER_GROUP_LIGHTALL;
++		tr.lightallShader[i].index = i;
++	}
++	for ( int i = 0; i < SSDEF_COUNT; i++ )
++	{
++		tr.spriteShader[i].group = JKA_SHADER_GROUP_SPRITE;
++		tr.spriteShader[i].index = i;
++	}
++	tr.textureColorShader.group = JKA_SHADER_GROUP_TEXTURECOLOR;
++	tr.pshadowShader.group = JKA_SHADER_GROUP_PSHADOW;
++	tr.volumeShadowShader.group = JKA_SHADER_GROUP_VSHADOW;
++	tr.down4xShader.group = JKA_SHADER_GROUP_DOWNSCALE4X;
++	tr.bokehShader.group = JKA_SHADER_GROUP_BOKEH;
++	tr.ssaoShader.group = JKA_SHADER_GROUP_SSAO;
++	tr.prefilterEnvMapShader.group = JKA_SHADER_GROUP_PREFILTERENVMAP;
++	tr.dglowUpsample.group = JKA_SHADER_GROUP_DGLOWUPSAMPLE;
++	tr.dglowDownsample.group = JKA_SHADER_GROUP_DGLOWDOWNSAMPLE;
++	tr.weatherShader.group = JKA_SHADER_GROUP_WEATHER;
++	tr.weatherUpdateShader.group = JKA_SHADER_GROUP_WEATHERUPDATE;
++	for ( int i = 0; i < 2; i++ )
++	{
++		tr.tonemapShader[i].group = JKA_SHADER_GROUP_TONEMAP;
++		tr.tonemapShader[i].index = i;
++		tr.calclevels4xShader[i].group = JKA_SHADER_GROUP_CALCLEVELS4X;
++		tr.calclevels4xShader[i].index = i;
++		tr.depthBlurShader[i].group = JKA_SHADER_GROUP_DEPTHBLUR;
++		tr.depthBlurShader[i].index = i;
++		tr.gaussianBlurShader[i].group = JKA_SHADER_GROUP_GAUSSIANBLUR;
++		tr.gaussianBlurShader[i].index = i;
++	}
++}
++
++static void GLSL_CompileEagerPrograms( int *numGenShaders, int *numLightShaders, int *numEtcShaders )
++{
++	for ( size_t i = 0; i < ARRAY_LEN( jkaEagerGenericShaders ); i++ )
++	{
++		const int index = jkaEagerGenericShaders[i];
++		if ( !GLSL_IsValidPermutationForGeneric( index ) )
++		{
++			continue;
++		}
++		GLSL_CompileGenericIndex( index );
++		(*numGenShaders)++;
++	}
++
++	for ( size_t i = 0; i < ARRAY_LEN( jkaEagerLightShaders ); i++ )
++	{
++		const int index = jkaEagerLightShaders[i];
++		if ( !GLSL_IsValidPermutationForLight( index & LIGHTDEF_LIGHTTYPE_MASK, index ) )
++		{
++			continue;
++		}
++		GLSL_CompileLightAllIndex( index );
++		(*numLightShaders)++;
++	}
++
++	for ( size_t i = 0; i < ARRAY_LEN( jkaEagerFogShaders ); i++ )
++	{
++		const int index = jkaEagerFogShaders[i];
++		if ( !GLSL_IsValidPermutationForFog( index ) )
++		{
++			continue;
++		}
++		GLSL_CompileFogIndex( index );
++		(*numEtcShaders)++;
++	}
++
++	for ( size_t i = 0; i < ARRAY_LEN( jkaEagerRefractionShaders ); i++ )
++	{
++		GLSL_CompileRefractionIndex( jkaEagerRefractionShaders[i] );
++		(*numEtcShaders)++;
++	}
++
++	Allocator allocator(512 * 1024);
++	ShaderProgramBuilder builder;
++	GLSL_LoadGPUProgramTextureColor(builder, allocator);
++	(*numEtcShaders)++;
++}
++
++// Compile one program on first use. This runs inside a draw, so the builder
++// must not Asyncify-sleep; the eager compile path still yields.
++void GLSL_EnsureProgram( shaderProgram_t *program )
++{
++	const qboolean savedYield = jka_glslCompileCanYield;
++	const int startTime = ri.Milliseconds();
++
++	if ( !program || program->compiled )
++	{
++		return;
++	}
++	if ( program->program )
++	{
++		program->compiled = qtrue;
++		return;
++	}
++	if ( program->group == JKA_SHADER_GROUP_NONE )
++	{
++		return;
++	}
++
++	jka_glslCompileCanYield = qfalse;
++	switch ( program->group )
++	{
++		case JKA_SHADER_GROUP_SPLASH:
++			GLSL_InitSplashScreenShader();
++			break;
++		case JKA_SHADER_GROUP_GENERIC:
++			GLSL_CompileGenericIndex( program->index );
++			break;
++		case JKA_SHADER_GROUP_FOG:
++			GLSL_CompileFogIndex( program->index );
++			break;
++		case JKA_SHADER_GROUP_REFRACTION:
++			GLSL_CompileRefractionIndex( program->index );
++			break;
++		case JKA_SHADER_GROUP_LIGHTALL:
++			GLSL_CompileLightAllIndex( program->index );
++			break;
++		case JKA_SHADER_GROUP_TEXTURECOLOR:
++		{
++			Allocator allocator(512 * 1024);
++			ShaderProgramBuilder builder;
++			GLSL_LoadGPUProgramTextureColor(builder, allocator);
++			break;
++		}
++		case JKA_SHADER_GROUP_PSHADOW:
++		{
++			Allocator allocator(512 * 1024);
++			ShaderProgramBuilder builder;
++			GLSL_LoadGPUProgramPShadow(builder, allocator);
++			break;
++		}
++		case JKA_SHADER_GROUP_VSHADOW:
++		{
++			Allocator allocator(512 * 1024);
++			ShaderProgramBuilder builder;
++			GLSL_LoadGPUProgramVShadow(builder, allocator);
++			break;
++		}
++		case JKA_SHADER_GROUP_DOWNSCALE4X:
++		{
++			Allocator allocator(512 * 1024);
++			ShaderProgramBuilder builder;
++			GLSL_LoadGPUProgramDownscale4x(builder, allocator);
++			break;
++		}
++		case JKA_SHADER_GROUP_BOKEH:
++		{
++			Allocator allocator(512 * 1024);
++			ShaderProgramBuilder builder;
++			GLSL_LoadGPUProgramBokeh(builder, allocator);
++			break;
++		}
++		case JKA_SHADER_GROUP_TONEMAP:
++		{
++			Allocator allocator(512 * 1024);
++			ShaderProgramBuilder builder;
++			GLSL_LoadGPUProgramTonemap(builder, allocator);
++			break;
++		}
++		case JKA_SHADER_GROUP_CALCLEVELS4X:
++		{
++			Allocator allocator(512 * 1024);
++			ShaderProgramBuilder builder;
++			GLSL_LoadGPUProgramCalcLuminanceLevel(builder, allocator);
++			break;
++		}
++		case JKA_SHADER_GROUP_SSAO:
++		{
++			Allocator allocator(512 * 1024);
++			ShaderProgramBuilder builder;
++			GLSL_LoadGPUProgramSSAO(builder, allocator);
++			break;
++		}
++		case JKA_SHADER_GROUP_PREFILTERENVMAP:
++		{
++			Allocator allocator(512 * 1024);
++			ShaderProgramBuilder builder;
++			GLSL_LoadGPUProgramPrefilterEnvMap(builder, allocator);
++			break;
++		}
++		case JKA_SHADER_GROUP_DEPTHBLUR:
++		{
++			Allocator allocator(512 * 1024);
++			ShaderProgramBuilder builder;
++			GLSL_LoadGPUProgramDepthBlur(builder, allocator);
++			break;
++		}
++		case JKA_SHADER_GROUP_GAUSSIANBLUR:
++		{
++			Allocator allocator(512 * 1024);
++			ShaderProgramBuilder builder;
++			GLSL_LoadGPUProgramGaussianBlur(builder, allocator);
++			break;
++		}
++		case JKA_SHADER_GROUP_DGLOWUPSAMPLE:
++		{
++			Allocator allocator(512 * 1024);
++			ShaderProgramBuilder builder;
++			GLSL_LoadGPUProgramDynamicGlowUpsample(builder, allocator);
++			break;
++		}
++		case JKA_SHADER_GROUP_DGLOWDOWNSAMPLE:
++		{
++			Allocator allocator(512 * 1024);
++			ShaderProgramBuilder builder;
++			GLSL_LoadGPUProgramDynamicGlowDownsample(builder, allocator);
++			break;
++		}
++		case JKA_SHADER_GROUP_SPRITE:
++			GLSL_CompileSurfaceSpriteIndex( program->index );
++			break;
++		case JKA_SHADER_GROUP_WEATHER:
++		case JKA_SHADER_GROUP_WEATHERUPDATE:
++		{
++			Allocator allocator(512 * 1024);
++			ShaderProgramBuilder builder;
++			GLSL_LoadGPUProgramWeather(builder, allocator);
++			break;
++		}
++		default:
++			break;
++	}
++	jka_glslCompileCanYield = savedYield;
++
++	// The loaders bind/unbind programs directly; force the next bind to
++	// resynchronise the cached current program.
++	glState.currentProgram = NULL;
++
++	if ( !program->compiled )
++	{
++		ri.Printf( PRINT_WARNING, "GLSL_EnsureProgram: program %s (group %d index %d) did not compile\n",
++			program->name ? program->name : "?", (int)program->group, program->index );
++		return;
++	}
++
++	jka_lazyCompileCount++;
++	JKA_ProfileLog( "shaders lazy group=%d index=%d name=%s ms=%d total=%d",
++		(int)program->group, program->index, program->name ? program->name : "?",
++		ri.Milliseconds() - startTime, jka_lazyCompileCount );
++}
++
+ void GLSL_LoadGPUShaders()
+ {
+ #if 0
+@@ -2411,43 +2742,20 @@ void GLSL_LoadGPUShaders()
+ 
+ 	int startTime = ri.Milliseconds();
+ 
+-	Allocator allocator(512 * 1024);
+-	ShaderProgramBuilder builder;
++	GLSL_InitProgramIdentities();
+ 
+ 	int numGenShaders = 0;
+ 	int numLightShaders = 0;
+ 	int numEtcShaders = 0;
+-	numGenShaders += GLSL_LoadGPUProgramGeneric(builder, allocator);
+-	numLightShaders += GLSL_LoadGPUProgramLightAll(builder, allocator);
+-	numEtcShaders += GLSL_LoadGPUProgramFogPass(builder, allocator);
+-	numEtcShaders += GLSL_LoadGPUProgramRefraction(builder, allocator);
+-	numEtcShaders += GLSL_LoadGPUProgramTextureColor(builder, allocator);
+-	numEtcShaders += GLSL_LoadGPUProgramPShadow(builder, allocator);
+-#ifndef __EMSCRIPTEN__
+-	numEtcShaders += GLSL_LoadGPUProgramVShadow(builder, allocator);
+-#endif
+-	numEtcShaders += GLSL_LoadGPUProgramDownscale4x(builder, allocator);
+-	numEtcShaders += GLSL_LoadGPUProgramBokeh(builder, allocator);
+-	numEtcShaders += GLSL_LoadGPUProgramTonemap(builder, allocator);
+-	numEtcShaders += GLSL_LoadGPUProgramCalcLuminanceLevel(builder, allocator);
+-	numEtcShaders += GLSL_LoadGPUProgramSSAO(builder, allocator);
+-#ifndef __EMSCRIPTEN__
+-	if (r_cubeMapping->integer)
+-		numEtcShaders += GLSL_LoadGPUProgramPrefilterEnvMap(builder, allocator);
+-#endif
+-	numEtcShaders += GLSL_LoadGPUProgramDepthBlur(builder, allocator);
+-	numEtcShaders += GLSL_LoadGPUProgramGaussianBlur(builder, allocator);
+-	numEtcShaders += GLSL_LoadGPUProgramDynamicGlowUpsample(builder, allocator);
+-	numEtcShaders += GLSL_LoadGPUProgramDynamicGlowDownsample(builder, allocator);
+-	numEtcShaders += GLSL_LoadGPUProgramSurfaceSprites(builder, allocator);
+-#ifndef __EMSCRIPTEN__
+-	numEtcShaders += GLSL_LoadGPUProgramWeather(builder, allocator);
+-#endif
+-
+-	ri.Printf(PRINT_ALL, "loaded %i GLSL shaders (%i gen %i light %i etc) in %5.2f seconds\n",
+-		numGenShaders + numLightShaders + numEtcShaders, numGenShaders, numLightShaders,
+-		numEtcShaders, (ri.Milliseconds() - startTime) / 1000.0);
+-	JKA_ProfileLog( "shaders stage=compile total=%i gen=%i light=%i etc=%i ms=%d",
++	GLSL_CompileEagerPrograms( &numGenShaders, &numLightShaders, &numEtcShaders );
++	// The loaders end with qglUseProgram(0); keep the cached state in sync.
++	glState.currentProgram = NULL;
++
++	ri.Printf(PRINT_ALL, "loaded %i eager GLSL shaders (%i gen %i light %i etc); "
++		"remaining programs compile on first use in %5.2f seconds\n",
++		numGenShaders + numLightShaders + numEtcShaders, numGenShaders,
++		numLightShaders, numEtcShaders, (ri.Milliseconds() - startTime) / 1000.0);
++	JKA_ProfileLog( "shaders stage=compile eager=%i gen=%i light=%i etc=%i ms=%d lazy=0",
+ 		numGenShaders + numLightShaders + numEtcShaders, numGenShaders, numLightShaders,
+ 		numEtcShaders, ri.Milliseconds() - startTime );
+ }
+@@ -2603,6 +2911,14 @@ void GLSL_BindProgram(shaderProgram_t * program)
+ 		return;
+ 	}
+ 
++	// M9 Phase 1: compile the variant on first use. GLSL_EnsureProgram()
++	// clears glState.currentProgram, so the bind below is resynchronised.
++	GLSL_EnsureProgram( program );
++	if ( !program->compiled )
++	{
++		return;
++	}
++
+ 	// M9 diagnostics: this is the single runtime bind entry point.
+ 	program->used = qtrue;
+ 
+diff --git a/codemp/rd-rend2/tr_local.h b/codemp/rd-rend2/tr_local.h
+index 7f7d9a8d..801dad01 100644
+--- a/codemp/rd-rend2/tr_local.h
++++ b/codemp/rd-rend2/tr_local.h
+@@ -1436,6 +1436,33 @@ struct UniformData
+ 	//char data[1];
+ };
+ 
++// M9 Phase 1: identifies the loader needed to compile a program on first use.
++typedef enum
++{
++	JKA_SHADER_GROUP_NONE = 0,
++	JKA_SHADER_GROUP_SPLASH,
++	JKA_SHADER_GROUP_GENERIC,
++	JKA_SHADER_GROUP_FOG,
++	JKA_SHADER_GROUP_REFRACTION,
++	JKA_SHADER_GROUP_LIGHTALL,
++	JKA_SHADER_GROUP_TEXTURECOLOR,
++	JKA_SHADER_GROUP_PSHADOW,
++	JKA_SHADER_GROUP_VSHADOW,
++	JKA_SHADER_GROUP_DOWNSCALE4X,
++	JKA_SHADER_GROUP_BOKEH,
++	JKA_SHADER_GROUP_TONEMAP,
++	JKA_SHADER_GROUP_CALCLEVELS4X,
++	JKA_SHADER_GROUP_SSAO,
++	JKA_SHADER_GROUP_PREFILTERENVMAP,
++	JKA_SHADER_GROUP_DEPTHBLUR,
++	JKA_SHADER_GROUP_GAUSSIANBLUR,
++	JKA_SHADER_GROUP_DGLOWUPSAMPLE,
++	JKA_SHADER_GROUP_DGLOWDOWNSAMPLE,
++	JKA_SHADER_GROUP_SPRITE,
++	JKA_SHADER_GROUP_WEATHER,
++	JKA_SHADER_GROUP_WEATHERUPDATE
++} jkaShaderGroup_t;
++
+ // shaderProgram_t represents a collection of GLSL shaders which form a
+ // GLSL shader program
+ typedef struct shaderProgram_s
+@@ -1454,10 +1481,13 @@ typedef struct shaderProgram_s
+ 	// uniform blocks
+ 	uint32_t uniformBlocks;
+ 
+-	// JKA diagnostics: track which programs this renderer actually binds.
+-	// Both flags are cleared by GLSL_DeleteGPUShader().
++	// M9 Phase 1: lazy compilation. compiled/used are reset by
++	// GLSL_DeleteGPUShader(); group/index identify the loader for an
++	// uncompiled program.
+ 	qboolean compiled;
+ 	qboolean used;
++	jkaShaderGroup_t group;
++	int index;
+ } shaderProgram_t;
+ 
+ // trRefdef_t holds everything that comes in refdef_t,
+@@ -3269,6 +3299,7 @@ void GL_VertexArraysToAttribs( vertexAttribute_t *attribs,
+ 	size_t attribsCount, const VertexArraysProperties *vertexArrays );
+ void GLSL_BindProgram(shaderProgram_t * program);
+ void GLSL_BindNullProgram(void);
++void GLSL_EnsureProgram(shaderProgram_t * program);
+ 
+ void GLSL_SetUniformInt(shaderProgram_t *program, int uniformNum, GLint value);
+ void GLSL_SetUniformFloat(shaderProgram_t *program, int uniformNum, GLfloat value);

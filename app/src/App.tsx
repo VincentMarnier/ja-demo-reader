@@ -367,7 +367,13 @@ export default function App() {
     bootedAssetKeyRef.current = assetCacheKey(files.filter(file => /^assets[0-3]\.pk3$/i.test(file.name)));
 
     const promise = created
-      .boot({ canvas, files, signal: controller.signal })
+      .boot({
+        canvas,
+        files,
+        signal: controller.signal,
+        texturePicmip: settings.texturePicmip,
+        textureMipmaps: settings.textureMipmaps
+      })
       .then(() => {
         bootGammaRef.current = settings.rGamma;
         created.setCvar('cg_fov', String(settings.cgFov));
@@ -382,7 +388,13 @@ export default function App() {
       });
     bootPromiseRef.current = promise;
     return promise;
-  }, [settings.cgFov, settings.rGamma, settings.playbackSpeed]);
+  }, [
+    settings.cgFov,
+    settings.rGamma,
+    settings.playbackSpeed,
+    settings.texturePicmip,
+    settings.textureMipmaps
+  ]);
 
   const applyAssets = useCallback(async (next: AssetSelection, persistHandle?: FileSystemDirectoryHandle) => {
     setChecking(true);
@@ -557,6 +569,7 @@ export default function App() {
       }
     }
 
+    engine.markStage('check-map:start');
     try {
       await engine.addDemoFile(demoFile);
     } catch (err) {
@@ -583,6 +596,7 @@ export default function App() {
     setStep('map');
     setDemoInfo(null);
     setDemoSummary(null);
+    engine.markStage('check-map:demo-staged');
 
     // Scanning an eight-minute demo takes a few seconds. Cache the parsed
     // summary per file so the map step and the resume are instant next time.
@@ -599,6 +613,7 @@ export default function App() {
         totalSnapshots: summary.totalSnapshots
       };
     } else {
+      engine.markStage('check-map:scan-start');
       info = await engine.demoInfo(name);
       if (info) {
         summary = engine.demoSummary();
@@ -606,10 +621,12 @@ export default function App() {
           await saveDemoSummary(cacheKey, summary);
         }
       }
+      engine.markStage('check-map:scan-done');
     }
     setDemoInfo(info);
     setDemoSummary(summary);
     demoSummaryRef.current = summary;
+    engine.markStage('check-map:done');
     setChecking(false);
     void cacheAssets(assetValidation?.assets ?? [], 'Retail assets');
 
@@ -632,8 +649,10 @@ export default function App() {
     playbackRequestedRef.current = true;
     setPaused(false);
     setPhase('loading');
+    engine.markStage('play:start');
     try {
       await engine.playDemo(demoBase(demoFile.name));
+      engine.markStage('play:command-done');
       setPhase('playing');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -697,8 +716,10 @@ export default function App() {
     setScoreboard(null);
     setPaused(false);
     setPhase('loading');
+    engine.markStage('restart:start');
     try {
       await engine.playDemo(demoBase(demoFile.name));
+      engine.markStage('restart:done');
       setPhase('playing');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -723,11 +744,13 @@ export default function App() {
     setPaused(false);
     playbackRequestedRef.current = true;
     setPhase('seeking');
+    engine.markStage(`seek:start target=${target}`);
 
     try {
       // Seeking from a paused player should resume the engine first.
       await engine.setPaused(false);
       await engine.seekDemo(demoBase(demoFile.name), target);
+      engine.markStage('seek:done');
       setPhase('playing');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -743,8 +766,10 @@ export default function App() {
     setFollowClient(null);
     setScoreboard(null);
     setPhase('stopping');
+    engine?.markStage('stop:start');
     try {
       await engine?.stopDemo();
+      engine?.markStage('stop:done');
     } catch (error) {
       // The UI should still return to the map step even if the engine call
       // misbehaves; the next Play reuses or reloads the engine.

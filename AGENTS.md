@@ -3,7 +3,10 @@
 ## Start here
 
 - `README.md` is the product/build overview; `docs/m7.md` is the release audit;
-  `docs/m8.md` describes the demo summary, cache and seek internals.
+  `docs/m8.md` describes the demo summary, cache and seek internals;
+  `docs/m9-phase0.md` is the diagnostics build and baseline checklist,
+  `docs/m9-phase0-results.md` records the measured baseline, and
+  `docs/m9-phase1.md` describes the hybrid shader compile and texture profile.
 - The app is a single Vite/React app in `app/`. `App.tsx` owns the wizard and
   player state, `engine/EngineHost.ts` owns the wasm bridge, and `src/fs/` owns
   file validation/staging/caching.
@@ -33,6 +36,14 @@ BUILD=/tmp/jka-demo-player/build \
 OUT=/tmp/jka-demo-player/out \
 engine/scripts/build-mp-wasm.sh
 
+# M9 diagnostics: same build with jka_profile defaulting to on
+EMSDK=$HOME/emsdk PROFILE=1 \
+BUILD_REND2=1 BUILD_CGAME=1 NO_PRELOAD=1 \
+WORK=/tmp/jka-demo-player/work \
+BUILD=/tmp/jka-demo-player/build \
+OUT=/tmp/jka-demo-player/out \
+engine/scripts/build-mp-wasm.sh
+
 # Copy the built engine into the app. An explicit OUT is required.
 scripts/stage-engine.sh /tmp/jka-demo-player/out
 ```
@@ -53,10 +64,20 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
 - `engine/platform/jka_bridge.cpp` is copied into `codemp/client/` by the build
   script; editing it needs no patch change.
 - Changes to upstream/cgame/client source belong in a patch. The current patch
-  set is `0001`–`0005`; `0004` contains the linked cgame/rend2 changes and
-  `0005` keeps the last frame when a demo ends. Prefer a new patch over editing
-  a large existing one. Verify every patch with a clean worktree:
-  apply all patches from the pin and compare the affected files.
+  set is `0001`–`0007`; `0004` contains the linked cgame/rend2 changes,
+  `0005` keeps the last frame when a demo ends, `0006` adds M9 `jka_profile`
+  diagnostics (timings, image counters, shader usage), and `0007` adds the
+  hybrid eager/lazy shader compile. Prefer a new patch over editing a large
+  existing one. Verify every patch with a clean worktree: apply all patches
+  from the pin and compare the affected files.
+- `jka_profile` is diagnostic only. The renderer creates it lazily, the
+  `PROFILE=1` build defaults it on, and `?diagnostics=1` enables it on a normal
+  build. Do not make rendering or cgame behaviour depend on it.
+- `0007` compiles a small eager shader set (splash, textureColor, the measured
+  generic/lightall/fog/refraction variants) and lazily compiles the rest from
+  `GLSL_EnsureProgram`. Add new programs with a `jkaShaderGroup_t` identity and
+  a per-index loader; keep `GLSL_EnsureProgram` calls in every uniform writer
+  and bind path. Lazy compiles must not call `emscripten_sleep`.
 - `engine/patches/0004-emscripten-rend2.patch` is regenerated from a worktree
   that already has `0001`–`0003`; do not regenerate it from a cumulative
   `git diff` against the unpatched pin.

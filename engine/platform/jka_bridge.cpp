@@ -14,6 +14,7 @@ published by the Free Software Foundation.
 // status and a demo command, no raw pointers or engine internals.
 
 #include <emscripten.h>
+#include <emscripten/heap.h>
 #include <cstdio>
 #include <cstdarg>
 
@@ -22,6 +23,53 @@ published by the Free Software Foundation.
 
 qboolean jka_demoEnded = qfalse;
 qboolean jka_engineReady = qfalse;
+
+// M9 diagnostics ------------------------------------------------------------
+// The bridge registers nothing at boot (the renderer creates jka_profile
+// first), so just read the cvar. PROFILE=1 builds default it to 1.
+static qboolean jka_workerMode = qfalse;
+static int jka_scanMessages;
+static int jka_scanMs;
+
+static qboolean JKA_BridgeProfileEnabled( void )
+{
+	return Cvar_VariableIntegerValue( "jka_profile" ) ? qtrue : qfalse;
+}
+
+static void JKA_BridgeProfileLog( const char *fmt, ... )
+{
+	va_list args;
+	char text[512];
+
+	if ( !JKA_BridgeProfileEnabled() ) {
+		return;
+	}
+	va_start( args, fmt );
+	Q_vsnprintf( text, sizeof( text ), fmt, args );
+	va_end( args );
+	Com_Printf( "JKA_PROFILE %s\n", text );
+}
+
+// Time-based yields keep the page responsive while a scan/replay runs on the
+// main thread. A future worker host disables them: the worker may block.
+static void JKA_MaybeYield( int *lastYield )
+{
+#ifdef __EMSCRIPTEN__
+	int now;
+
+	if ( jka_workerMode ) {
+		return;
+	}
+	now = Sys_Milliseconds();
+	if ( now - *lastYield < 8 ) {
+		return;
+	}
+	*lastYield = now;
+	emscripten_sleep( 0 );
+#else
+	(void)lastYield;
+#endif
+}
 
 extern "C" {
 
@@ -55,6 +103,7 @@ EMSCRIPTEN_KEEPALIVE const char *JKA_StatusJson( void )
 EMSCRIPTEN_KEEPALIVE void JKA_PlayDemo( const char *name )
 {
 	const char *p;
+	int profileStart = Sys_Milliseconds();
 
 	if ( !name || !name[0] ) {
 		return;
@@ -70,11 +119,13 @@ EMSCRIPTEN_KEEPALIVE void JKA_PlayDemo( const char *name )
 	Cvar_Set( "cl_allowDownload", "0" );
 	Cbuf_AddText( va( "demo \"%s\"\n", name ) );
 	Cbuf_Execute();
+	JKA_BridgeProfileLog( "play name=%s ms=%d", name, Sys_Milliseconds() - profileStart );
 }
 
 EMSCRIPTEN_KEEPALIVE void JKA_StopDemo( void )
 {
 	char message[] = "Server disconnected";
+	int profileStart = Sys_Milliseconds();
 
 	// The console "disconnect" command routes through Com_Error(), which
 	// throws an int on ERR_DISCONNECT. That throw has no C++ catch frame when
@@ -87,6 +138,7 @@ EMSCRIPTEN_KEEPALIVE void JKA_StopDemo( void )
 	CL_Disconnect( qtrue );
 	CL_FlushMemory();
 	FS_PureServerSetLoadedPaks( "", "" );
+	JKA_BridgeProfileLog( "stop ms=%d", Sys_Milliseconds() - profileStart );
 }
 
 EMSCRIPTEN_KEEPALIVE void JKA_SetPaused( int paused )
@@ -98,6 +150,27 @@ EMSCRIPTEN_KEEPALIVE void JKA_SetPaused( int paused )
 EMSCRIPTEN_KEEPALIVE void JKA_Resume( void )
 {
 	emscripten_resume_main_loop();
+}
+
+// Phase 3 host switch: a worker must not Asyncify-yield in the scan/seek
+// loops, because its JS event loop does not drive the page.
+EMSCRIPTEN_KEEPALIVE void JKA_SetWorkerMode( int worker )
+{
+	jka_workerMode = worker ? qtrue : qfalse;
+}
+
+// Heap numbers the JS side cannot see from Module. MEMFS/OPFS/JS-heap numbers
+// are added by EngineHost's memory line.
+EMSCRIPTEN_KEEPALIVE const char *JKA_MemoryJson( void )
+{
+	static char buffer[256];
+
+	Com_sprintf( buffer, sizeof( buffer ),
+		"{\"heap\":%u,\"heapMax\":%u,\"hunkFree\":%d}",
+		(unsigned int)emscripten_get_heap_size(),
+		(unsigned int)emscripten_get_heap_max(),
+		Hunk_MemoryRemaining() );
+	return buffer;
 }
 
 // ---------------------------------------------------------------------------
@@ -659,11 +732,15 @@ static int JKA_ScanDemo( const char *name, int targetTime, qboolean stopAtTarget
 	int first = 0;
 	int last = 0;
 	int count = 0;
+	int lastYield = Sys_Milliseconds();
+	int profileStart = lastYield;
 
 	*firstTime = 0;
 	*lastTime = 0;
 	JKA_ResetSummary();
 	jka_demoGamestates = 0;
+	jka_scanMessages = 0;
+	jka_scanMs = 0;
 
 	if ( !name || !name[0] ) {
 		return 0;
@@ -750,9 +827,8 @@ static int JKA_ScanDemo( const char *name, int targetTime, qboolean stopAtTarget
 				break;
 			}
 
-			if ( ( ++count & 127 ) == 0 ) {
-				emscripten_sleep( 0 );
-			}
+			count++;
+			JKA_MaybeYield( &lastYield );
 		}
 	} catch ( int ) {
 		// Malformed demo or a demo command that raised Com_Error; return what
@@ -760,6 +836,8 @@ static int JKA_ScanDemo( const char *name, int targetTime, qboolean stopAtTarget
 	}
 
 	FS_FCloseFile( file );
+	jka_scanMessages = count;
+	jka_scanMs = Sys_Milliseconds() - profileStart;
 	*firstTime = first;
 	*lastTime = last;
 	return last;
@@ -862,6 +940,7 @@ EMSCRIPTEN_KEEPALIVE const char *JKA_DemoInfo( const char *name )
 	static char buffer[192];
 	int first = 0;
 	int last = 0;
+	int profileStart = Sys_Milliseconds();
 
 	emscripten_pause_main_loop();
 	CL_Disconnect( qtrue );
@@ -870,9 +949,15 @@ EMSCRIPTEN_KEEPALIVE const char *JKA_DemoInfo( const char *name )
 	JKA_BuildSummary();
 	emscripten_resume_main_loop();
 
+	JKA_BridgeProfileLog( "demo_scan name=%s scanMs=%d totalMs=%d messages=%d snapshots=%d keyframes=%d fullSnapshots=%d gamestates=%d",
+		name, jka_scanMs, Sys_Milliseconds() - profileStart, jka_scanMessages, jka_totalSnapshots,
+		jka_keyframeCount, jka_fullSnapshots, jka_demoGamestates );
+
 	Com_sprintf( buffer, sizeof( buffer ),
-		"{\"first\":%d,\"duration\":%d,\"fullSnapshots\":%d,\"totalSnapshots\":%d}",
-		first, last > first ? last - first : 0, jka_fullSnapshots, jka_totalSnapshots );
+		"{\"first\":%d,\"duration\":%d,\"fullSnapshots\":%d,\"totalSnapshots\":%d,"
+		"\"scanMs\":%d,\"messages\":%d,\"keyframes\":%d}",
+		first, last > first ? last - first : 0, jka_fullSnapshots, jka_totalSnapshots,
+		jka_scanMs, jka_scanMessages, jka_keyframeCount );
 	return buffer;
 }
 
@@ -896,7 +981,7 @@ static int JKA_SeekKeyframeExisting( int targetTime )
 {
 	jkaKeyframe_t *keyframe = JKA_FindKeyframe( targetTime );
 	jkaGame_t *game;
-	int count = 0;
+	int lastYield = Sys_Milliseconds();
 
 	if ( !keyframe || targetTime < keyframe->time ) {
 		return 0;
@@ -937,9 +1022,7 @@ static int JKA_SeekKeyframeExisting( int targetTime )
 			if ( !clc.demofile ) {
 				break;
 			}
-			if ( ( ++count & 127 ) == 0 ) {
-				emscripten_sleep( 0 );
-			}
+			JKA_MaybeYield( &lastYield );
 		}
 	} catch ( int ) {
 		return -1;
@@ -965,7 +1048,7 @@ static int JKA_SeekKeyframe( const char *name, int targetTime )
 	jkaKeyframe_t *keyframe = JKA_FindKeyframe( targetTime );
 	jkaGame_t *game;
 	clSnapshot_t targetSnap;
-	int count = 0;
+	int lastYield = Sys_Milliseconds();
 
 	if ( !keyframe || targetTime < keyframe->time ) {
 		return 0;
@@ -1026,9 +1109,7 @@ static int JKA_SeekKeyframe( const char *name, int targetTime )
 			if ( !clc.demofile ) {
 				break;
 			}
-			if ( ( ++count & 127 ) == 0 ) {
-				emscripten_sleep( 0 );
-			}
+			JKA_MaybeYield( &lastYield );
 		}
 	} catch ( int ) {
 		return -1;
@@ -1054,6 +1135,8 @@ static int JKA_SeekKeyframe( const char *name, int targetTime )
 
 EMSCRIPTEN_KEEPALIVE void JKA_SeekDemo( const char *name, int targetTime )
 {
+	int profileStart = Sys_Milliseconds();
+
 	if ( !name || !name[0] ) {
 		return;
 	}
@@ -1063,6 +1146,7 @@ EMSCRIPTEN_KEEPALIVE void JKA_SeekDemo( const char *name, int targetTime )
 	// The warm path avoids a map reload, but cgame tolerates a forward time
 	// jump only; a backward seek goes through the restart path below.
 	if ( targetTime >= cl.snap.serverTime && JKA_SeekKeyframeExisting( targetTime ) == 1 ) {
+		JKA_BridgeProfileLog( "seek target=%d path=warm ms=%d", targetTime, Sys_Milliseconds() - profileStart );
 		emscripten_resume_main_loop();
 		return;
 	}
@@ -1070,6 +1154,7 @@ EMSCRIPTEN_KEEPALIVE void JKA_SeekDemo( const char *name, int targetTime )
 	CL_Disconnect( qtrue );
 
 	if ( JKA_SeekKeyframe( name, targetTime ) == 1 ) {
+		JKA_BridgeProfileLog( "seek target=%d path=keyframe ms=%d", targetTime, Sys_Milliseconds() - profileStart );
 		emscripten_resume_main_loop();
 		return;
 	}
@@ -1087,16 +1172,14 @@ EMSCRIPTEN_KEEPALIVE void JKA_SeekDemo( const char *name, int targetTime )
 	}
 
 	if ( clc.demofile ) {
-		int count = 0;
+		int lastYield = Sys_Milliseconds();
 		try {
 			while ( clc.demofile && cl.snap.serverTime < targetTime ) {
 				CL_ReadDemoMessage();
 				if ( !clc.demofile ) {
 					break;
 				}
-				if ( ( ++count & 127 ) == 0 ) {
-					emscripten_sleep( 0 );
-				}
+				JKA_MaybeYield( &lastYield );
 			}
 		} catch ( int ) {
 			// The target was at or past the end; leave the ended state to the
@@ -1104,6 +1187,7 @@ EMSCRIPTEN_KEEPALIVE void JKA_SeekDemo( const char *name, int targetTime )
 		}
 	}
 
+	JKA_BridgeProfileLog( "seek target=%d path=replay ms=%d", targetTime, Sys_Milliseconds() - profileStart );
 	emscripten_resume_main_loop();
 }
 

@@ -30,6 +30,7 @@ BUILD_REND2="${BUILD_REND2:-0}"
 BUILD_CGAME="${BUILD_CGAME:-0}"
 NODE_RAWF="${NODE_RAWF:-0}"
 DEBUG_WASM="${DEBUG_WASM:-0}"
+PROFILE="${PROFILE:-0}"
 
 REF="$ROOT/references/OpenJK"
 
@@ -88,6 +89,12 @@ fi
 RENDERER=OFF
 REND2=OFF
 CGAME=OFF
+PROFILE_FLAGS=""
+if [ "$PROFILE" = "1" ]; then
+  # M9 Phase 0: jka_profile defaults to on and the client/renderer/cgame log
+  # JKA_PROFILE timing and shader-usage lines.
+  PROFILE_FLAGS="-DJKA_PROFILE_BUILD=1"
+fi
 GL_FLAGS="-sALLOW_MEMORY_GROWTH=1 -sASSERTIONS=1 -sSTACK_SIZE=8388608 -sSTACK_OVERFLOW_CHECK=1 -sDISABLE_EXCEPTION_CATCHING=0 -sEXPORTED_RUNTIME_METHODS=ccall,cwrap"
 if [ "$BUILD_RENDERER" = "1" ]; then
   RENDERER=ON
@@ -139,11 +146,11 @@ if [ "$REND2" = "ON" ]; then
     "$WORK"/codemp/rd-rend2/glsl/*.glsl
 fi
 
-echo "==> configuring (renderer=$RENDERER, rend2=$REND2, cgame=$CGAME)"
+echo "==> configuring (renderer=$RENDERER, rend2=$REND2, cgame=$CGAME, profile=$PROFILE)"
 emcmake cmake -S "$WORK" -B "$BUILD" \
   -DCMAKE_BUILD_TYPE=${BUILD_TYPE:-Release} \
-  -DCMAKE_C_FLAGS="-fno-strict-aliasing" \
-  -DCMAKE_CXX_FLAGS="-fexceptions -fno-strict-aliasing" \
+  -DCMAKE_C_FLAGS="-fno-strict-aliasing $PROFILE_FLAGS" \
+  -DCMAKE_CXX_FLAGS="-fexceptions -fno-strict-aliasing $PROFILE_FLAGS" \
   -DCMAKE_EXE_LINKER_FLAGS="$PRELOAD_ARGS -lidbfs.js $GL_FLAGS" \
   -DBuildMPEngine=ON -DBuildMPRdVanilla=$RENDERER -DBuildMPCGame=$CGAME -DBuildMPUI=OFF \
   -DBuildMPGame=OFF -DBuildMPDed=OFF -DBuildMPRend2=$REND2 \

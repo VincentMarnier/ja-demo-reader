@@ -12,9 +12,13 @@ export type FreeCamAction =
 
 export type FreeCamKeys = Record<FreeCamAction, string>;
 
+export type TextureMipmapMode = 'off' | 'bilinear' | 'trilinear';
+
 export interface AppSettings {
   cgFov: number;
   rGamma: number;
+  texturePicmip: number;
+  textureMipmaps: TextureMipmapMode;
   showScoreboard: boolean;
   showScores: boolean;
   showTimer: boolean;
@@ -51,6 +55,8 @@ export const DEFAULT_FREE_CAM_KEYS: FreeCamKeys = {
 export const DEFAULT_SETTINGS: AppSettings = {
   cgFov: 97,
   rGamma: 1,
+  texturePicmip: 2,
+  textureMipmaps: 'off',
   showScoreboard: true,
   showScores: true,
   showTimer: true,
@@ -63,6 +69,8 @@ const MIN_FOV = 60;
 const MAX_FOV = 130;
 const MIN_GAMMA = 0.5;
 const MAX_GAMMA = 3;
+const MIN_PICMIP = 0;
+const MAX_PICMIP = 6;
 const MIN_SPEED = 0.25;
 const MAX_SPEED = 2.5;
 const SPEED_STEP = 0.25;
@@ -79,6 +87,12 @@ function clampGamma(value: unknown): number {
   return Math.min(MAX_GAMMA, Math.max(MIN_GAMMA, Math.round(n * 100) / 100));
 }
 
+export function clampPicmip(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n)) return DEFAULT_SETTINGS.texturePicmip;
+  return Math.min(MAX_PICMIP, Math.max(MIN_PICMIP, Math.round(n)));
+}
+
 export function clampSpeed(value: unknown): number {
   const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n)) return DEFAULT_SETTINGS.playbackSpeed;
@@ -90,16 +104,31 @@ export function loadSettings(): AppSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { ...DEFAULT_SETTINGS, freeCamKeys: { ...DEFAULT_FREE_CAM_KEYS } };
-    const parsed = JSON.parse(raw) as Partial<AppSettings>;
+    const parsed = JSON.parse(raw) as Partial<AppSettings> & { textureQuality?: string };
     const keys = (parsed.freeCamKeys ?? {}) as Partial<FreeCamKeys>;
     const freeCamKeys = { ...DEFAULT_FREE_CAM_KEYS };
     for (const { action } of FREE_CAM_ACTIONS) {
       const value = keys[action];
       if (typeof value === 'string' && value.length > 0) freeCamKeys[action] = value;
     }
+    // Migrate the short-lived preset field to the granular controls.
+    const legacyQuality = parsed.textureQuality;
+    const texturePicmip = clampPicmip(
+      parsed.texturePicmip ?? (legacyQuality === 'high' ? 0 : legacyQuality === 'balanced' ? 1 : 2)
+    );
+    const textureMipmaps: TextureMipmapMode =
+      parsed.textureMipmaps === 'bilinear' || parsed.textureMipmaps === 'trilinear'
+        ? parsed.textureMipmaps
+        : legacyQuality === 'high'
+          ? 'trilinear'
+          : legacyQuality === 'balanced'
+            ? 'bilinear'
+            : 'off';
     return {
       cgFov: clampFov(parsed.cgFov),
       rGamma: clampGamma(parsed.rGamma),
+      texturePicmip,
+      textureMipmaps,
       showScoreboard: parsed.showScoreboard !== false,
       showScores: parsed.showScores !== false,
       showTimer: parsed.showTimer !== false,

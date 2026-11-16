@@ -1,5 +1,10 @@
 import type { DemoInfo, DemoStatus, DemoSummary, FreeCamPose, LocalFile, ScoreboardData, StageProgress } from '../types';
+import type { TextureMipmapMode } from '../settings';
 import { prepareAndStage } from '../fs/stage';
+
+interface FsNode {
+  contents?: Uint8Array | Record<string, FsNode>;
+}
 
 interface ModuleLike {
   ccall?(name: string, returnType: string | null, argTypes: string[], args: unknown[], opts?: { async?: boolean }): unknown;
@@ -25,9 +30,14 @@ export interface BootOptions {
   canvas: HTMLCanvasElement;
   files: LocalFile[];
   signal: AbortSignal;
+  texturePicmip?: number;
+  textureMipmaps?: TextureMipmapMode;
 }
 
 const ENGINE_BASE = `${import.meta.env.BASE_URL}engine/`;
+// Keep the whole diagnostic build log; the old 5000-line cap could drop boot
+// timing lines before the user presses Download log.
+const LOG_LIMIT = 20000;
 
 export class EngineHost {
   private module: ModuleLike | null = null;
@@ -40,6 +50,9 @@ export class EngineHost {
   private asyncInFlight = false;
   private queue: Promise<unknown> = Promise.resolve();
   private playInFlight: Promise<void> | null = null;
+  private runtimeReady = false;
+  private stagedBytes = 0;
+  private lastMarkAt = 0;
 
   constructor(callbacks: EngineCallbacks) {
     this.callbacks = callbacks;
@@ -50,7 +63,8 @@ export class EngineHost {
   }
 
   async boot(options: BootOptions): Promise<void> {
-    const { canvas, files, signal } = options;
+    const { canvas, files, signal, texturePicmip = 2, textureMipmaps = 'off' } = options;
+    this.markStage('boot-start');
 
     return new Promise<void>((resolve, reject) => {
       const addDependency = (name: string) => {
@@ -93,7 +107,21 @@ export class EngineHost {
           '+set', 'com_maxfps', '60',
           '+set', 'logfile', '0'
       ];
+
+      // Texture cvars are latched: they must be set before the renderer
+      // starts, so a texture change applies on the next engine boot/reload.
+      const picmip = Math.min(16, Math.max(0, Math.round(texturePicmip)));
+      const textureMode =
+        textureMipmaps === 'trilinear'
+          ? 'GL_LINEAR_MIPMAP_LINEAR'
+          : textureMipmaps === 'bilinear'
+            ? 'GL_LINEAR_MIPMAP_NEAREST'
+            : 'GL_LINEAR';
+      args.push('+set', 'r_picmip', String(picmip), '+set', 'r_textureMode', textureMode);
+
       const params = new URLSearchParams(window.location.search);
+      const diagnostics = params.get('diagnostics') === '1';
+      const fastProfile = params.get('profile') === 'fast';
       if (params.get('norefresh') === '1') {
         args.push('+set', 'r_norefresh', '1');
       }
@@ -107,6 +135,17 @@ export class EngineHost {
           '+set', 'r_swapInterval', '0'
         );
       }
+      if (fastProfile) {
+        // M9 baseline session 2: no picmip mip pyramid, linear filtering.
+        args.push('+set', 'r_picmip', '2', '+set', 'r_textureMode', 'GL_LINEAR');
+      }
+      if (diagnostics) {
+        // A release engine build keeps jka_profile off; ?diagnostics=1 turns
+        // the same M9 timing/usage lines on without a PROFILE=1 build.
+        args.push('+set', 'jka_profile', '1');
+      }
+
+      this.logBrowserProfile(fastProfile, diagnostics, picmip, textureMipmaps);
 
       const module: ModuleLike = {
         arguments: args,
@@ -114,13 +153,13 @@ export class EngineHost {
         locateFile: (path: string) => `${ENGINE_BASE}${path}`,
         print: (text: string) => {
           this.logs.push(text);
-          if (this.logs.length > 5000) this.logs.splice(0, this.logs.length - 5000);
+          if (this.logs.length > LOG_LIMIT) this.logs.splice(0, this.logs.length - LOG_LIMIT);
           this.callbacks.onLog(text);
         },
         printErr: (text: string) => {
           const line = `ERR ${text}`;
           this.logs.push(line);
-          if (this.logs.length > 5000) this.logs.splice(0, this.logs.length - 5000);
+          if (this.logs.length > LOG_LIMIT) this.logs.splice(0, this.logs.length - LOG_LIMIT);
           this.callbacks.onLog(line);
         },
         onAbort: (what: unknown) => {
@@ -128,10 +167,13 @@ export class EngineHost {
         },
         onRuntimeInitialized: () => {
           this.module = module;
+          this.runtimeReady = true;
+          this.markStage('runtime-init');
           this.startPolling();
         },
         preRun: [
           () => {
+            this.markStage('stage-start');
             const FS = (window as unknown as { FS: unknown }).FS;
             if (!FS) {
               fail(new Error('Emscripten filesystem unavailable.'));
@@ -143,9 +185,15 @@ export class EngineHost {
               signal,
               addDependency,
               removeDependency,
-              onProgress: progress => this.callbacks.onProgress(progress)
+              onProgress: progress => {
+                if (progress.total > 0) this.stagedBytes = progress.loaded;
+                this.callbacks.onProgress(progress);
+              }
             })
-              .then(() => removeDependency('jka-stage'))
+              .then(() => {
+                this.markStage('stage-done');
+                removeDependency('jka-stage');
+              })
               .catch(error => {
                 console.error('staging failed', error);
                 // Keep the dependency so the engine does not boot with a
@@ -162,12 +210,14 @@ export class EngineHost {
       const script = document.createElement('script');
       script.src = `${ENGINE_BASE}openjk.x86.js`;
       script.async = true;
+      script.onload = () => this.markStage('script-loaded');
       script.onerror = () => fail(new Error('Could not load the engine script. Did you stage the engine build?'));
       document.body.appendChild(script);
 
       const readyPoll = window.setInterval(() => {
         if (this.ready) {
           window.clearInterval(readyPoll);
+          this.markStage('engine-ready');
           resolve();
         }
         if (this.fatal) {
@@ -175,6 +225,132 @@ export class EngineHost {
         }
       }, 100);
     });
+  }
+
+  /**
+   * M9 diagnostics marker: a log line with the elapsed time since the last
+   * stage plus a memory sample. App.tsx calls this around check map, Play,
+   * Restart, seek and Stop; boot marks are added here.
+   */
+  markStage(stage: string): void {
+    const now = performance.now();
+    const since = this.lastMarkAt > 0 ? now - this.lastMarkAt : 0;
+    this.lastMarkAt = now;
+    this.profile(`stage=${stage} sinceMs=${since.toFixed(1)} uptimeMs=${now.toFixed(1)}`);
+    void this.sampleMemory(stage);
+  }
+
+  private profile(line: string): void {
+    const text = line.startsWith('JKA_PROFILE ') ? line : `JKA_PROFILE ${line}`;
+    this.logs.push(text);
+    if (this.logs.length > LOG_LIMIT) this.logs.splice(0, this.logs.length - LOG_LIMIT);
+    this.callbacks.onLog(text);
+  }
+
+  private logBrowserProfile(
+    fastProfile: boolean,
+    diagnostics: boolean,
+    picmip: number,
+    textureMipmaps: TextureMipmapMode
+  ): void {
+    let webgl2 = false;
+    try {
+      const probe = document.createElement('canvas');
+      const gl = probe.getContext('webgl2');
+      webgl2 = !!gl;
+      gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    } catch {
+      webgl2 = false;
+    }
+    const hasWorker = typeof Worker !== 'undefined';
+    const hasOffscreen = typeof OffscreenCanvas !== 'undefined';
+    const hasTransfer =
+      typeof HTMLCanvasElement !== 'undefined' && 'transferControlToOffscreen' in HTMLCanvasElement.prototype;
+    const deviceMemory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+    this.profile(
+      `browser worker=${hasWorker ? 1 : 0} offscreen=${hasOffscreen ? 1 : 0} transfer=${hasTransfer ? 1 : 0} ` +
+        `webgl2=${webgl2 ? 1 : 0} cores=${navigator.hardwareConcurrency ?? 'n/a'} deviceMemory=${deviceMemory ?? 'n/a'} ` +
+        `ua=${navigator.userAgent}`
+    );
+    this.profile(
+      `session texture=${fastProfile ? 'fast (url)' : `picmip${picmip}/${textureMipmaps}`} ` +
+        `diagnostics=${diagnostics ? 1 : 0}`
+    );
+  }
+
+  private async sampleMemory(stage: string): Promise<void> {
+    let engine = '';
+    if (this.runtimeReady && this.module?.ccall && !this.asyncInFlight) {
+      try {
+        const raw = this.module.ccall('JKA_MemoryJson', 'string', [], []) as string;
+        if (raw) {
+          const memory = JSON.parse(raw) as { heap?: number; heapMax?: number; hunkFree?: number };
+          engine = ` heap=${memory.heap ?? 'n/a'} heapMax=${memory.heapMax ?? 'n/a'} hunkFree=${memory.hunkFree ?? 'n/a'}`;
+        }
+      } catch {
+        engine = ' heap=n/a';
+      }
+    }
+
+    const memfs = this.fsBytes();
+    const perfMemory = (
+      performance as unknown as {
+        memory?: { usedJSHeapSize: number; totalJSHeapSize: number };
+      }
+    ).memory;
+    const jsHeap = perfMemory
+      ? ` jsHeapUsed=${perfMemory.usedJSHeapSize} jsHeapTotal=${perfMemory.totalJSHeapSize}`
+      : '';
+    const staged = this.stagedBytes > 0 ? ` staged=${this.stagedBytes}` : '';
+
+    let storage = '';
+    try {
+      const estimate = await navigator.storage?.estimate?.();
+      if (estimate) {
+        storage = ` storageUsage=${estimate.usage ?? 'n/a'} quota=${estimate.quota ?? 'n/a'}`;
+      }
+    } catch {
+      storage = ' storage=n/a';
+    }
+
+    this.profile(`memory stage=${stage}${engine} memfs=${memfs ?? 'n/a'}${staged}${jsHeap}${storage}`);
+  }
+
+  // Sums regular-file bytes in the Emscripten filesystem. MEMFS keeps file
+  // contents as Uint8Array and directories as name->node objects.
+  private fsBytes(): number | null {
+    const FS = (
+      window as unknown as {
+        FS?: { root?: FsNode; lookupPath?: (path: string) => { node?: FsNode } };
+      }
+    ).FS;
+    if (!FS) return null;
+
+    let root: FsNode | undefined;
+    try {
+      root = FS.lookupPath ? FS.lookupPath('/').node : FS.root;
+    } catch {
+      return null;
+    }
+    if (!root) return null;
+
+    let total = 0;
+    const seen = new Set<object>();
+    const walk = (node: FsNode | undefined): void => {
+      if (!node) return;
+      const contents = node.contents;
+      if (contents instanceof Uint8Array) {
+        total += contents.byteLength;
+        return;
+      }
+      if (!contents || typeof contents !== 'object' || seen.has(contents)) return;
+      seen.add(contents);
+      for (const child of Object.values(contents)) {
+        if (child && typeof child === 'object') walk(child);
+      }
+    };
+    walk(root);
+    return total;
   }
 
   private startPolling(): void {

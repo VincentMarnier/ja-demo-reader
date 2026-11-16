@@ -95,6 +95,47 @@ export function SettingsPanel({ settings, onChange, onClose, onClearCache }: Set
               <output>{settings.rGamma.toFixed(2)}</output>
             </span>
           </label>
+          <label className="setting-row">
+            <span>
+              Texture picmip
+              <small>
+                Shrinks textures before upload. 2 is the fast default; 0 is the
+                sharpest and uses the most texture memory.
+              </small>
+            </span>
+            <span className="setting-value">
+              <input
+                type="range"
+                min={0}
+                max={6}
+                step={1}
+                value={settings.texturePicmip}
+                onChange={event => onChange({ texturePicmip: Number(event.target.value) })}
+              />
+              <output>{settings.texturePicmip}</output>
+            </span>
+          </label>
+          <label className="setting-row">
+            <span>
+              Texture mipmaps
+              <small>
+                Off uses GL_LINEAR (fast default). Bilinear and Trilinear restore
+                mipmaps for distance quality. Applies after the engine is reloaded.
+              </small>
+            </span>
+            <span className="setting-value">
+              <select
+                value={settings.textureMipmaps}
+                onChange={event =>
+                  onChange({ textureMipmaps: event.target.value as AppSettings['textureMipmaps'] })
+                }
+              >
+                <option value="off">Off</option>
+                <option value="bilinear">Bilinear</option>
+                <option value="trilinear">Trilinear</option>
+              </select>
+            </span>
+          </label>
         </section>
 
         <section className="settings-section">

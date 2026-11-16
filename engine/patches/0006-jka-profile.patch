@@ -1,0 +1,607 @@
+diff --git a/codemp/cgame/cg_main.c b/codemp/cgame/cg_main.c
+index 1a9c38c9..5588f581 100644
+--- a/codemp/cgame/cg_main.c
++++ b/codemp/cgame/cg_main.c
+@@ -70,6 +70,30 @@ extern vec3_t cg_autoMapAngle;
+ void CG_MiscEnt(void);
+ void CG_DoCameraShake( vec3_t origin, float intensity, int radius, int time );
+ 
++// M9 diagnostics: cgame load stages. The client and renderer log their own
++// CL_InitCGame/R_Init/R_LoadWorld stages; this splits CG_Init in between.
++static qboolean JKA_ProfileEnabled( void )
++{
++	char value[8];
++
++	value[0] = 0;
++	trap->Cvar_VariableStringBuffer( "jka_profile", value, sizeof( value ) );
++	return value[0] && atoi( value ) ? qtrue : qfalse;
++}
++
++static void JKA_ProfileMark( const char *stage, int *last )
++{
++	int now;
++
++	if ( !JKA_ProfileEnabled() )
++	{
++		return;
++	}
++	now = trap->Milliseconds();
++	trap->Print( "JKA_PROFILE cgame stage=%s ms=%d\n", stage, now - *last );
++	*last = now;
++}
++
+ //do we have any force powers that we would normally need to cycle to?
+ qboolean CG_NoUseableForce(void)
+ {
+@@ -2405,6 +2429,8 @@ void CG_Init( int serverMessageNum, int serverCommandSequence, int clientNum )
+ 	char buf[64];
+ 	const char	*s;
+ 	int i = 0;
++	int jkaProfileStart = trap->Milliseconds();
++	int jkaProfileSection = jkaProfileStart;
+ 
+ 	Rand_Init( trap->Milliseconds() );
+ 
+@@ -2575,11 +2601,13 @@ Ghoul2 Insert End
+ 	cgs.levelStartTime = atoi( s );
+ 
+ 	CG_ParseServerinfo();
++	JKA_ProfileMark( "setup", &jkaProfileSection );
+ 
+ 	// load the new map
+ //	CG_LoadingString( "collision map" );
+ 
+ 	trap->CM_LoadMap( cgs.mapname, qfalse );
++	JKA_ProfileMark( "cm_loadmap", &jkaProfileSection );
+ 
+ 	String_Init();
+ 
+@@ -2587,19 +2615,26 @@ Ghoul2 Insert End
+ 
+ 	//make sure saber data is loaded before this! (so we can precache the appropriate hilts)
+ 	CG_InitSiegeMode();
++	JKA_ProfileMark( "siege", &jkaProfileSection );
+ 
+ 	CG_RegisterSounds();
++	JKA_ProfileMark( "sounds", &jkaProfileSection );
+ 
+ //	CG_LoadingString( "graphics" );
+ 
+ 	CG_RegisterGraphics();
++	JKA_ProfileMark( "graphics", &jkaProfileSection );
+ 
+ //	CG_LoadingString( "clients" );
+ 
+ 	CG_RegisterClients();		// if low on memory, some clients will be deferred
++	JKA_ProfileMark( "clients", &jkaProfileSection );
+ 
+ 	CG_AssetCache();
++	JKA_ProfileMark( "assetcache", &jkaProfileSection );
++
+ 	CG_LoadHudMenu();      // load new hud stuff
++	JKA_ProfileMark( "hud", &jkaProfileSection );
+ 
+ 	cg.loading = qfalse;	// future players will be deferred
+ 
+@@ -2625,6 +2660,7 @@ Ghoul2 Insert End
+ 	CG_LoadingString( "" );
+ 
+ 	CG_ShaderStateChanged();
++	JKA_ProfileMark( "shader_state", &jkaProfileSection );
+ 
+ 	trap->S_ClearLoopingSounds();
+ 
+@@ -2634,6 +2670,11 @@ Ghoul2 Insert End
+ 
+ 	BG_FixSaberMoveData();
+ 	BG_FixWeaponAttackAnim();
++
++	if ( JKA_ProfileEnabled() )
++	{
++		trap->Print( "JKA_PROFILE cgame total ms=%d\n", trap->Milliseconds() - jkaProfileStart );
++	}
+ }
+ 
+ //makes sure returned string is in localized format
+diff --git a/codemp/client/cl_cgame.cpp b/codemp/client/cl_cgame.cpp
+index 8d228f19..42919ebc 100644
+--- a/codemp/client/cl_cgame.cpp
++++ b/codemp/client/cl_cgame.cpp
+@@ -514,8 +514,10 @@ void CL_InitCGame( void ) {
+ 	const char			*info;
+ 	const char			*mapname;
+ 	int					t1, t2;
++	int					jkaProfileSection;
+ 
+ 	t1 = Sys_Milliseconds();
++	jkaProfileSection = t1;
+ 
+ 	// put away the console
+ 	Con_Close();
+@@ -528,6 +530,11 @@ void CL_InitCGame( void ) {
+ 	// load the dll
+ 	CL_BindCGame();
+ 
++	if ( Cvar_VariableIntegerValue( "jka_profile" ) ) {
++		Com_Printf( "JKA_PROFILE cl_init stage=bind_cgame ms=%d\n", Sys_Milliseconds() - jkaProfileSection );
++	}
++	jkaProfileSection = Sys_Milliseconds();
++
+ 	cls.state = CA_LOADING;
+ 
+ 	// init for this gamestate
+@@ -535,6 +542,11 @@ void CL_InitCGame( void ) {
+ 	// otherwise server commands sent just before a gamestate are dropped
+ 	CGVM_Init( clc.serverMessageSequence, clc.lastExecutedServerCommand, clc.clientNum );
+ 
++	if ( Cvar_VariableIntegerValue( "jka_profile" ) ) {
++		Com_Printf( "JKA_PROFILE cl_init stage=cgame ms=%d\n", Sys_Milliseconds() - jkaProfileSection );
++	}
++	jkaProfileSection = Sys_Milliseconds();
++
+ 	int clRate = Cvar_VariableIntegerValue( "rate" );
+ 	if ( clRate == 4000 ) {
+ 		Com_Printf( S_COLOR_YELLOW "WARNING: Old default /rate value detected (4000). Suggest typing /rate 25000 into console for a smoother connection!\n" );
+@@ -556,12 +568,22 @@ void CL_InitCGame( void ) {
+ 	// on the card even if the driver does deferred loading
+ 	re->EndRegistration();
+ 
++	if ( Cvar_VariableIntegerValue( "jka_profile" ) ) {
++		Com_Printf( "JKA_PROFILE cl_init stage=end_registration ms=%d\n", Sys_Milliseconds() - jkaProfileSection );
++	}
++	jkaProfileSection = Sys_Milliseconds();
++
+ 	// make sure everything is paged in
+ //	if (!Sys_LowPhysicalMemory())
+ 	{
+ 		Com_TouchMemory();
+ 	}
+ 
++	if ( Cvar_VariableIntegerValue( "jka_profile" ) ) {
++		Com_Printf( "JKA_PROFILE cl_init stage=touch_memory ms=%d\n", Sys_Milliseconds() - jkaProfileSection );
++		Com_Printf( "JKA_PROFILE cl_init total ms=%d\n", Sys_Milliseconds() - t1 );
++	}
++
+ 	// clear anything that got printed
+ 	Con_ClearNotify ();
+ }
+diff --git a/codemp/rd-rend2/tr_bsp.cpp b/codemp/rd-rend2/tr_bsp.cpp
+index 172174d3..5d0eb2ef 100644
+--- a/codemp/rd-rend2/tr_bsp.cpp
++++ b/codemp/rd-rend2/tr_bsp.cpp
+@@ -4356,11 +4356,15 @@ Called directly from cgame
+ =================
+ */
+ void RE_LoadWorldMap( const char *name ) {
++	int jkaProfileStart = ri.Milliseconds();
++
+ 	if (tr.worldMapLoaded)
+ 	{
+ 		ri.Error(ERR_DROP, "ERROR: attempted to redundantly load world map");
+ 	}
+ 
++	R_ProfileResetImageStats();
++
+ 	// set default map light scale
+ 	tr.mapLightScale  = 1.0f;
+ 	tr.sunShadowScale = 0.5f;
+@@ -4390,6 +4394,7 @@ void RE_LoadWorldMap( const char *name ) {
+ 	tr.explicitToneMap = false;
+ 
+ 	world_t *world = R_LoadBSP(name);
++	JKA_ProfileLog( "world_load stage=bsp ms=%d", ri.Milliseconds() - jkaProfileStart );
+ 	if (world == nullptr)
+ 	{
+ 		// clear tr.world so the next/ try will not look at the partially
+@@ -4415,4 +4420,7 @@ void RE_LoadWorldMap( const char *name ) {
+ 	{
+ 		R_RenderAllCubemaps();
+ 	}
++
++	JKA_ProfileLog( "world_load total ms=%d", ri.Milliseconds() - jkaProfileStart );
++	R_ProfileLogImageStats( "world_load" );
+ }
+diff --git a/codemp/rd-rend2/tr_glsl.cpp b/codemp/rd-rend2/tr_glsl.cpp
+index 0711f374..009c99dd 100644
+--- a/codemp/rd-rend2/tr_glsl.cpp
++++ b/codemp/rd-rend2/tr_glsl.cpp
+@@ -810,6 +810,8 @@ bool ShaderProgramBuilder::Build( shaderProgram_t *shaderProgram )
+ 	shaderProgram->program = program;
+ 	shaderProgram->attribs = attribs;
+ 	shaderProgram->xfbVariables = xfbVariables;
++	shaderProgram->compiled = qtrue;
++	shaderProgram->used = qfalse;
+ 
+ 	GLSL_BindShaderInterface(shaderProgram);
+ 	GLSL_LinkProgram(shaderProgram->program);
+@@ -2445,6 +2447,59 @@ void GLSL_LoadGPUShaders()
+ 	ri.Printf(PRINT_ALL, "loaded %i GLSL shaders (%i gen %i light %i etc) in %5.2f seconds\n",
+ 		numGenShaders + numLightShaders + numEtcShaders, numGenShaders, numLightShaders,
+ 		numEtcShaders, (ri.Milliseconds() - startTime) / 1000.0);
++	JKA_ProfileLog( "shaders stage=compile total=%i gen=%i light=%i etc=%i ms=%d",
++		numGenShaders + numLightShaders + numEtcShaders, numGenShaders, numLightShaders,
++		numEtcShaders, ri.Milliseconds() - startTime );
++}
++
++// M9 diagnostics: a compact per-group used/compiled/total line. A program is
++// "used" when GLSL_BindProgram() selects it at least once after compiling.
++static int jkaShaderUsed;
++static int jkaShaderCompiled;
++static int jkaShaderTotal;
++
++static void GLSL_LogProgramUsage( const char *group, shaderProgram_t *programs, int count )
++{
++	char indices[384];
++	int length = 0;
++	int used = 0;
++	int compiled = 0;
++
++	if ( !JKA_ProfileEnabled() || !programs )
++	{
++		return;
++	}
++
++	indices[0] = 0;
++	for ( int i = 0; i < count; i++ )
++	{
++		if ( programs[i].compiled )
++		{
++			compiled++;
++		}
++		if ( programs[i].used )
++		{
++			int written;
++			used++;
++			written = snprintf( indices + length, sizeof( indices ) - (size_t)length,
++				"%s%d", length ? "," : "", i );
++			if ( written > 0 )
++			{
++				length += written;
++			}
++			if ( length >= (int)sizeof( indices ) - 1 )
++			{
++				length = (int)sizeof( indices ) - 1;
++				break;
++			}
++		}
++	}
++	indices[Q_min( length, (int)sizeof( indices ) - 1 )] = 0;
++	jkaShaderUsed += used;
++	jkaShaderCompiled += compiled;
++	jkaShaderTotal += count;
++	JKA_ProfileLog( "shaders group=%s used=%d compiled=%d total=%d indices=%s",
++		group, used, compiled, count, indices );
+ }
+ 
+ void GLSL_ShutdownGPUShaders(void)
+@@ -2453,6 +2508,36 @@ void GLSL_ShutdownGPUShaders(void)
+ 
+ 	ri.Printf(PRINT_ALL, "------- GLSL_ShutdownGPUShaders -------\n");
+ 
++	// Log before GLSL_DeleteGPUShader() clears the structs.
++	jkaShaderUsed = 0;
++	jkaShaderCompiled = 0;
++	jkaShaderTotal = 0;
++	GLSL_LogProgramUsage( "splash", &tr.splashScreenShader, 1 );
++	GLSL_LogProgramUsage( "generic", tr.genericShader, GENERICDEF_COUNT );
++	GLSL_LogProgramUsage( "lightall", tr.lightallShader, LIGHTDEF_COUNT );
++	GLSL_LogProgramUsage( "fog", tr.fogShader, FOGDEF_COUNT );
++	GLSL_LogProgramUsage( "refraction", tr.refractionShader, REFRACTIONDEF_COUNT );
++	GLSL_LogProgramUsage( "textureColor", &tr.textureColorShader, 1 );
++	GLSL_LogProgramUsage( "pshadow", &tr.pshadowShader, 1 );
++	GLSL_LogProgramUsage( "vshadow", &tr.volumeShadowShader, 1 );
++	GLSL_LogProgramUsage( "downscale4x", &tr.down4xShader, 1 );
++	GLSL_LogProgramUsage( "bokeh", &tr.bokehShader, 1 );
++	GLSL_LogProgramUsage( "tonemap", tr.tonemapShader, 2 );
++	GLSL_LogProgramUsage( "calclevels4x", tr.calclevels4xShader, 2 );
++	GLSL_LogProgramUsage( "ssao", &tr.ssaoShader, 1 );
++	GLSL_LogProgramUsage( "depthblur", tr.depthBlurShader, 2 );
++	GLSL_LogProgramUsage( "testcube", &tr.testcubeShader, 1 );
++	GLSL_LogProgramUsage( "prefilterEnvMap", &tr.prefilterEnvMapShader, 1 );
++	GLSL_LogProgramUsage( "gaussianblur", tr.gaussianBlurShader, 2 );
++	GLSL_LogProgramUsage( "glowComposite", &tr.glowCompositeShader, 1 );
++	GLSL_LogProgramUsage( "dglowDownsample", &tr.dglowDownsample, 1 );
++	GLSL_LogProgramUsage( "dglowUpsample", &tr.dglowUpsample, 1 );
++	GLSL_LogProgramUsage( "sprite", tr.spriteShader, SSDEF_COUNT );
++	GLSL_LogProgramUsage( "weatherUpdate", &tr.weatherUpdateShader, 1 );
++	GLSL_LogProgramUsage( "weather", &tr.weatherShader, 1 );
++	JKA_ProfileLog( "shaders usage frames=%d used=%d compiled=%d total=%d",
++		tr.frameCount, jkaShaderUsed, jkaShaderCompiled, jkaShaderTotal );
++
+ 	for ( int i = 0; i < ATTR_INDEX_MAX; i++ )
+ 		qglDisableVertexAttribArray(i);
+ 
+@@ -2518,6 +2603,9 @@ void GLSL_BindProgram(shaderProgram_t * program)
+ 		return;
+ 	}
+ 
++	// M9 diagnostics: this is the single runtime bind entry point.
++	program->used = qtrue;
++
+ 	if(r_logFile->integer)
+ 	{
+ 		// don't just call LogComment, or we will get a call to va() every frame!
+diff --git a/codemp/rd-rend2/tr_image.cpp b/codemp/rd-rend2/tr_image.cpp
+index 0efe191f..b3751b6a 100644
+--- a/codemp/rd-rend2/tr_image.cpp
++++ b/codemp/rd-rend2/tr_image.cpp
+@@ -40,6 +40,78 @@ static struct ImagesPool
+ 
+ static image_t *hashTable[FILE_HASH_SIZE];
+ 
++// M9 diagnostics: cumulative image decode/upload counters. R_Init and
++// RE_LoadWorldMap reset them; RE_EndRegistration logs the map/game total.
++static int jkaProfileImageCount;
++static int jkaProfileImageBytes;
++static int jkaProfileDecodeMs;
++static int jkaProfileUploadMs;
++
++static int R_ProfileImageBytes( const image_t *image )
++{
++	int bytesPerPixel = 4;
++	int layers;
++
++	switch ( image->internalFormat )
++	{
++	case GL_RGBA32F:
++		bytesPerPixel = 16;
++		break;
++	case GL_RGBA16F:
++		bytesPerPixel = 8;
++		break;
++	case GL_RGB16F:
++		bytesPerPixel = 6;
++		break;
++	case GL_RGB:
++	case GL_RGB8:
++		bytesPerPixel = 3;
++		break;
++	case GL_RG:
++	case GL_RG8:
++		bytesPerPixel = 2;
++		break;
++	case GL_RED:
++	case GL_R8:
++		bytesPerPixel = 1;
++		break;
++	case GL_DEPTH_COMPONENT16:
++		bytesPerPixel = 2;
++		break;
++	case GL_DEPTH_COMPONENT24:
++		bytesPerPixel = 3;
++		break;
++	default:
++		break;
++	}
++
++	layers = ( image->flags & IMGFLAG_CUBEMAP ) ? 6 : 1;
++	if ( image->flags & IMGFLAG_2D_ARRAY )
++	{
++		layers = image->layers > 0 ? image->layers : 1;
++	}
++	return image->uploadWidth * image->uploadHeight * bytesPerPixel * layers;
++}
++
++void R_ProfileResetImageStats( void )
++{
++	jkaProfileImageCount = 0;
++	jkaProfileImageBytes = 0;
++	jkaProfileDecodeMs = 0;
++	jkaProfileUploadMs = 0;
++}
++
++void R_ProfileLogImageStats( const char *stage )
++{
++	if ( !JKA_ProfileEnabled() )
++	{
++		return;
++	}
++	JKA_ProfileLog( "images stage=%s count=%d bytes=%d mb=%.1f decodeMs=%d uploadMs=%d",
++		stage, jkaProfileImageCount, jkaProfileImageBytes,
++		jkaProfileImageBytes / ( 1024.0 * 1024.0 ), jkaProfileDecodeMs, jkaProfileUploadMs );
++}
++
+ /*
+ Extends the size of the images pool allocator
+ */
+@@ -2412,6 +2484,7 @@ image_t *R_CreateImage( const char *name, byte *pic, int width, int height, imgT
+ 	qboolean	isLightmap = qfalse;
+ 	long		hash;
+ 	int         glWrapClampMode;
++	int			jkaProfileStart = ri.Milliseconds();
+ 
+ 	if (strlen(name) >= MAX_QPATH ) {
+ 		ri.Error (ERR_DROP, "R_CreateImage: \"%s\" is too long", name);
+@@ -2548,6 +2621,10 @@ image_t *R_CreateImage( const char *name, byte *pic, int width, int height, imgT
+ 	image->next = hashTable[hash];
+ 	hashTable[hash] = image;
+ 
++	jkaProfileImageCount++;
++	jkaProfileImageBytes += R_ProfileImageBytes( image );
++	jkaProfileUploadMs += ri.Milliseconds() - jkaProfileStart;
++
+ 	return image;
+ }
+ 
+@@ -3055,6 +3132,7 @@ image_t	*R_FindImageFile( const char *name, imgType_t type, int flags )
+ 	//
+ 	// load the pic from disk
+ 	//
++	int jkaProfileDecodeStart = ri.Milliseconds();
+ 	if (r_hdr->integer && (flags & IMGFLAG_HDR || flags & IMGFLAG_HDR_LIGHTMAP))
+ 	{
+ 		char filename[MAX_QPATH];
+@@ -3094,6 +3172,7 @@ image_t	*R_FindImageFile( const char *name, imgType_t type, int flags )
+ 	{
+ 		R_LoadImage(name, &pic, &width, &height);
+ 	}
++	jkaProfileDecodeMs += ri.Milliseconds() - jkaProfileDecodeStart;
+ 
+ 	if ( pic == NULL ) {
+ 		return NULL;
+diff --git a/codemp/rd-rend2/tr_init.cpp b/codemp/rd-rend2/tr_init.cpp
+index 5a8c7ac2..10169093 100644
+--- a/codemp/rd-rend2/tr_init.cpp
++++ b/codemp/rd-rend2/tr_init.cpp
+@@ -37,6 +37,35 @@ static size_t FRAME_UNIFORM_BUFFER_SIZE = 8*1024*1024;
+ static size_t FRAME_VERTEX_BUFFER_SIZE = 12*1024*1024;
+ static size_t FRAME_INDEX_BUFFER_SIZE = 4*1024*1024;
+ 
++// M9 diagnostics. PROFILE=1 build-mp-wasm.sh sets JKA_PROFILE_BUILD=1 and the
++// cvar then defaults to on; release builds can opt in with ?diagnostics=1.
++qboolean JKA_ProfileEnabled( void )
++{
++	static int enabled = -1;
++
++	if ( enabled < 0 )
++	{
++		enabled = ri.Cvar_Get( "jka_profile", JKA_PROFILE_BUILD ? "1" : "0", CVAR_ARCHIVE, "" )->integer ? 1 : 0;
++	}
++	return enabled ? qtrue : qfalse;
++}
++
++void JKA_ProfileLog( const char *fmt, ... )
++{
++	char text[512];
++	va_list args;
++
++	if ( !JKA_ProfileEnabled() )
++	{
++		return;
++	}
++
++	va_start( args, fmt );
++	Q_vsnprintf( text, sizeof( text ), fmt, args );
++	va_end( args );
++	ri.Printf( PRINT_ALL, "JKA_PROFILE %s\n", text );
++}
++
+ #if defined(_WIN32)
+ extern "C" {
+ 	__declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
+@@ -1916,8 +1945,11 @@ R_Init
+ void R_Init( void ) {
+ 	byte *ptr;
+ 	int i;
++	int jkaProfileStart = ri.Milliseconds();
++	int jkaProfileSection = jkaProfileStart;
+ 
+ 	ri.Printf( PRINT_ALL, "----- R_Init -----\n" );
++	R_ProfileResetImageStats();
+ 
+ 	// clear all our internal state
+ 	Com_Memset( &tr, 0, sizeof( tr ) );
+@@ -1957,6 +1989,8 @@ void R_Init( void ) {
+ 	R_ImageLoader_Init();
+ 	R_NoiseInit();
+ 	R_Register();
++	JKA_ProfileLog( "r_init stage=register ms=%d", ri.Milliseconds() - jkaProfileSection );
++	jkaProfileSection = ri.Milliseconds();
+ 
+ 	max_polys = Q_min( r_maxpolys->integer, DEFAULT_MAX_POLYS );
+ 	max_polyverts = Q_min( r_maxpolyverts->integer, DEFAULT_MAX_POLYVERTS );
+@@ -1990,20 +2024,28 @@ void R_Init( void ) {
+ 	R_InitImagesPool();
+ 
+ 	InitOpenGL();
++	JKA_ProfileLog( "r_init stage=opengl ms=%d", ri.Milliseconds() - jkaProfileSection );
++	jkaProfileSection = ri.Milliseconds();
+ 
+ 	R_InitGPUBuffers();
+ 
+ 	R_InitStaticConstants();
+ 	R_InitBackEndFrameData();
+ 	R_InitImages();
++	JKA_ProfileLog( "r_init stage=images ms=%d", ri.Milliseconds() - jkaProfileSection );
++	jkaProfileSection = ri.Milliseconds();
+ 
+ #ifdef _G2_GORE
+ 	R_InitGoreVao();
+ #endif
+ 
+ 	FBO_Init();
++	JKA_ProfileLog( "r_init stage=fbo ms=%d", ri.Milliseconds() - jkaProfileSection );
++	jkaProfileSection = ri.Milliseconds();
+ 
+ 	GLSL_LoadGPUShaders();
++	JKA_ProfileLog( "r_init stage=glsl ms=%d", ri.Milliseconds() - jkaProfileSection );
++	jkaProfileSection = ri.Milliseconds();
+ 
+ 	R_InitShaders (qfalse);
+ 
+@@ -2012,6 +2054,8 @@ void R_Init( void ) {
+ 	R_InitFonts();
+ 
+ 	R_ModelInit();
++	JKA_ProfileLog( "r_init stage=shaders_skins_fonts_models ms=%d", ri.Milliseconds() - jkaProfileSection );
++	jkaProfileSection = ri.Milliseconds();
+ 
+ 	R_InitDecals();
+ 
+@@ -2029,6 +2073,8 @@ void R_Init( void ) {
+ 
+ 	// print info
+ 	GfxInfo_f();
++	JKA_ProfileLog( "r_init total ms=%d", ri.Milliseconds() - jkaProfileStart );
++	R_ProfileLogImageStats( "r_init" );
+ 	ri.Printf( PRINT_ALL, "----- finished R_Init -----\n" );
+ }
+ 
+@@ -2088,10 +2134,14 @@ Touch all images to make sure they are resident
+ =============
+ */
+ void RE_EndRegistration( void ) {
++	int jkaProfileStart = ri.Milliseconds();
++
+ 	R_IssuePendingRenderCommands();
+ 	if (!ri.Sys_LowPhysicalMemory()) {
+ 		RB_ShowImages();
+ 	}
++	JKA_ProfileLog( "end_registration stage=show_images ms=%d", ri.Milliseconds() - jkaProfileStart );
++	R_ProfileLogImageStats( "end_registration" );
+ }
+ 
+ // HACK
+diff --git a/codemp/rd-rend2/tr_local.h b/codemp/rd-rend2/tr_local.h
+index e14e15a0..7f7d9a8d 100644
+--- a/codemp/rd-rend2/tr_local.h
++++ b/codemp/rd-rend2/tr_local.h
+@@ -41,6 +41,12 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+ #include <unordered_map>
+ #include <string>
+ 
++// Diagnostics build marker. build-mp-wasm.sh sets JKA_PROFILE_BUILD=1 with
++// PROFILE=1; the jka_profile cvar then defaults to on.
++#ifndef JKA_PROFILE_BUILD
++#define JKA_PROFILE_BUILD 0
++#endif
++
+ #define GL_INDEX_TYPE		GL_UNSIGNED_INT
+ typedef unsigned int glIndex_t;
+ 
+@@ -1447,6 +1453,11 @@ typedef struct shaderProgram_s
+ 
+ 	// uniform blocks
+ 	uint32_t uniformBlocks;
++
++	// JKA diagnostics: track which programs this renderer actually binds.
++	// Both flags are cleared by GLSL_DeleteGPUShader().
++	qboolean compiled;
++	qboolean used;
+ } shaderProgram_t;
+ 
+ // trRefdef_t holds everything that comes in refdef_t,
+@@ -3272,6 +3283,13 @@ void GLSL_SetUniforms( shaderProgram_t *program, UniformData *uniformData );
+ 
+ shaderProgram_t *GLSL_GetGenericShaderProgram(int stage);
+ 
++// M9 diagnostics (engine/patches/0006-jka-profile.patch). Enable with the
++// jka_profile cvar (default on for PROFILE=1 builds).
++qboolean JKA_ProfileEnabled( void );
++void JKA_ProfileLog( const char *fmt, ... );
++void R_ProfileResetImageStats( void );
++void R_ProfileLogImageStats( const char *stage );
++
+ /*
+ ============================================================
+ 
