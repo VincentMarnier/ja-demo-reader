@@ -1,4 +1,37 @@
+# JavaScript / React app
 app/node_modules/
 app/dist/
+app/.vite/
+app/*.tsbuildinfo
+app/coverage/
+
+# Built engine artifacts: the app stages the engine at build time.
+# Keep the directory itself in git so the Vite public folder exists.
 app/public/engine/*
 !app/public/engine/.gitkeep
+
+# Local engine/CMake outputs (the reproducible build uses /tmp worktrees,
+# but keep stray in-tree builds out of commits).
+build/
+cmake-build-*/
+engine/build/
+emsdk/
+emsdk-cache/
+
+# Game data must never be committed. The app reads it from the user's machine.
+*.pk3
+*.dm_26
+*.dm_25
+*.dm_27
+*.dm_68
+
+# Logs, OS files and local environment overrides
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.DS_Store
+.env
+.env.local
+.env.*.local

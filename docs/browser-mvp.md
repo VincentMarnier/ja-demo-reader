@@ -52,7 +52,13 @@ cd app && npm run dev      # http://127.0.0.1:5173
 
 Add `?quality=low` for software rasterisers (800×600, `r_picmip 3`, 10 fps).
 
-### 2.2 rd-vanilla baseline
+### 2.2 GitHub Pages
+
+`.github/workflows/deploy-pages.yml` builds the rd-rend2 engine and the app and
+deploys `app/dist` on pushes to `master`. See
+[github-pages.md](./github-pages.md) for the one-time Pages setup.
+
+### 2.3 rd-vanilla baseline
 
 ```bash
 # 1. Build the engine for the app (no preloaded fixture; the app stages PK3s).
