@@ -209,25 +209,6 @@ summary { cursor: pointer; color: var(--muted); }
   flex-direction: column;
   justify-content: space-between;
 }
-.hud-top {
-  display: flex;
-  gap: 8px;
-  padding: 12px;
-  background: linear-gradient(180deg, rgba(0,0,0,0.62), transparent);
-}
-.hud-block {
-  pointer-events: auto;
-  background: rgba(8, 12, 17, 0.72);
-  border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 9px;
-  padding: 6px 10px;
-  min-width: 90px;
-  backdrop-filter: blur(6px);
-}
-.hud-block.right { margin-left: auto; text-align: right; }
-.hud-label { display: block; color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 2px; }
-.hud-block strong { font-size: 13px; }
-.hud-block strong.ok { color: var(--ok); }
 .mono { font-variant-numeric: tabular-nums; font-family: ui-monospace, "SF Mono", Menlo, consolas, monospace; }
 
 .player-controls {
@@ -287,7 +268,6 @@ summary { cursor: pointer; color: var(--muted); }
   .main { padding: 10px; }
   .panel { padding: 20px; }
   .launcher-layer, .overlay { padding: 12px; }
-  .hud-block { min-width: 70px; }
   .player-controls { gap: 6px; }
   .inline-field { margin-left: 0; width: 100%; }
 }
@@ -628,4 +608,30 @@ summary { cursor: pointer; color: var(--muted); }
   color: var(--muted);
   font-size: 9px;
   font-weight: 400;
+}
+
+.overlay-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.spinner {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.24);
+  border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+}
+.scan-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }

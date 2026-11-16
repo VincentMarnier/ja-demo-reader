@@ -1,13 +1,10 @@
-import type { DemoStatus, Phase, ScoreboardData, ViewStats } from '../types';
+import type { Phase, ScoreboardData, ViewStats } from '../types';
 import { ScoreStrip } from './ScoreStrip';
 import { SeekBar } from './SeekBar';
 import { VitalsHud } from './VitalsHud';
-import { stateLabel } from '../types';
 
 interface PlayerProps {
-  status: DemoStatus | null;
-  mapName: string;
-  elapsed: string;
+  matchTime: string;
   paused: boolean;
   phase: Phase;
   scores: ScoreboardData | null;
@@ -35,7 +32,6 @@ interface PlayerProps {
 
 export function Player(props: PlayerProps) {
   const ended = props.phase === 'ended';
-  const active = props.status?.state === 8;
   // A demo chosen from a file input may not be in the folder list.
   const demos = props.demos.some(d => d.name === props.demoName)
     ? props.demos
@@ -45,25 +41,10 @@ export function Player(props: PlayerProps) {
     <div className="player-ui">
       <ScoreStrip
         data={props.scores}
-        elapsed={props.elapsed}
+        matchTime={props.matchTime}
         showScores={props.showScores}
         showTimer={props.showTimer}
       />
-
-      <div className="hud-top">
-        <div className="hud-block">
-          <span className="hud-label">Map</span>
-          <strong>{props.mapName || '—'}</strong>
-        </div>
-        <div className="hud-block">
-          <span className="hud-label">State</span>
-          <strong className={active ? 'ok' : ''}>{stateLabel(props.status?.state ?? 0)}</strong>
-        </div>
-        <div className="hud-block right">
-          <span className="hud-label">Demo time</span>
-          <strong className="mono">{props.elapsed}</strong>
-        </div>
-      </div>
 
       <div className="player-bottom">
         <VitalsHud view={props.view} />

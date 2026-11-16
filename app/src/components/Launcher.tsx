@@ -158,6 +158,13 @@ export function Launcher(props: LauncherProps) {
               </div>
             ) : null}
 
+            {props.busy ? (
+              <p className="scan-status">
+                <span className="spinner" aria-hidden="true" />
+                <span>Scanning the demo timeline… this can take a moment.</span>
+              </p>
+            ) : null}
+
             {props.mapError ? <ul className="alerts error"><li>{props.mapError}</li></ul> : null}
 
             {!mapName && !mapMissing ? (
@@ -177,7 +184,7 @@ export function Launcher(props: LauncherProps) {
             ) : (
               <div className="row">
                 <button className="primary" onClick={props.onPlay} disabled={!mapName || props.busy}>
-                  Play demo
+                  {props.busy ? 'Preparing timeline…' : 'Play demo'}
                 </button>
                 <button className="ghost" onClick={() => props.onStep('demo')}>Choose another demo</button>
               </div>

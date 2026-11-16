@@ -50,7 +50,6 @@ export default function App() {
   const [status, setStatus] = useState<DemoStatus | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [showLogs, setShowLogs] = useState(false);
-  const [demoStart, setDemoStart] = useState<number | null>(null);
   const [paused, setPaused] = useState(false);
   const [savedHandle, setSavedHandle] = useState<FileSystemDirectoryHandle | null>(null);
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
@@ -118,7 +117,7 @@ export default function App() {
       if (data) setScoreboard(data);
     };
     tick();
-    const timer = window.setInterval(tick, 1000);
+    const timer = window.setInterval(tick, 500);
     return () => window.clearInterval(timer);
   }, [phase]);
 
@@ -383,7 +382,6 @@ export default function App() {
         await engineRef.current.stopDemo();
         playbackRequestedRef.current = false;
         setPaused(false);
-        setDemoStart(null);
         setPhase('launcher');
         setStep('demo');
       }
@@ -423,7 +421,6 @@ export default function App() {
         onStatus: next => {
           setStatus(next);
           if (playbackRequestedRef.current && next.state === CA_ACTIVE && next.demo === 1) {
-            setDemoStart(prev => prev ?? next.serverTime);
             setPhase(current => (current === 'paused' ? current : 'playing'));
           }
           if (next.ended === 1) {
@@ -472,7 +469,32 @@ export default function App() {
     setMapMissing(!present);
     setStep('map');
     setDemoInfo(null);
-    const info = await engine.demoInfo(name);
+
+    // Scanning an eight-minute demo takes a few seconds. Remember the result
+    // for the same file so switching back to the map step is instant.
+    const infoKey = `jka-demo-player.demo-info.v1:${demoFile.name}:${demoFile.file.size}:${demoFile.file.lastModified}`;
+    let info: DemoInfo | null = null;
+    try {
+      const cached = localStorage.getItem(infoKey);
+      if (cached) {
+        const parsed = JSON.parse(cached) as DemoInfo;
+        if (Number.isFinite(parsed.first) && Number.isFinite(parsed.duration) && parsed.duration > 0) {
+          info = parsed;
+        }
+      }
+    } catch {
+      // Ignore storage failures and scan again.
+    }
+    if (!info) {
+      info = await engine.demoInfo(name);
+      if (info) {
+        try {
+          localStorage.setItem(infoKey, JSON.stringify(info));
+        } catch {
+          // Storage full or disabled; the scan still works.
+        }
+      }
+    }
     setDemoInfo(info);
     setChecking(false);
 
@@ -491,7 +513,6 @@ export default function App() {
     setFollowClient(null);
     setScoreboard(null);
     playbackRequestedRef.current = true;
-    setDemoStart(null);
     setPaused(false);
     setPhase('loading');
     try {
@@ -553,7 +574,6 @@ export default function App() {
     setFollowClient(null);
     setScoreboard(null);
     setPaused(false);
-    setDemoStart(null);
     setPhase('loading');
     try {
       await engine.playDemo(demoBase(demoFile.name));
@@ -582,7 +602,6 @@ export default function App() {
 
     try {
       await engine.seekDemo(demoBase(demoFile.name), target);
-      setDemoStart(demoInfo.first);
       setPhase('playing');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -607,7 +626,6 @@ export default function App() {
     }
     playbackRequestedRef.current = false;
     setPaused(false);
-    setDemoStart(null);
     setPhase('launcher');
     setStep('map');
   }, []);
@@ -618,8 +636,7 @@ export default function App() {
 
   const reload = useCallback(() => window.location.reload(), []);
 
-  const mapLabel = mapName || (status?.map ? status.map.replace(/^maps\//, '').replace(/\.bsp$/i, '') : '');
-  const elapsed = status && demoStart !== null ? formatTime(status.serverTime - demoStart) : '0:00';
+  const matchTime = formatTime(scoreboard?.levelTime ?? 0);
   const demoPosition = demoInfo && status ? Math.max(0, status.serverTime - demoInfo.first) : 0;
   const showWizard = phase === 'launcher' || phase === 'validating';
   const showPlayer = phase === 'playing' || phase === 'paused' || phase === 'ended';
@@ -694,9 +711,7 @@ export default function App() {
 
           {showPlayer ? (
             <Player
-              status={status}
-              mapName={mapLabel}
-              elapsed={elapsed}
+              matchTime={matchTime}
               paused={paused}
               phase={phase}
               scores={scoreboard}

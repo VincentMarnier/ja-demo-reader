@@ -174,12 +174,15 @@ overlay so the tab stays responsive.
 ### 3.5.1 M6 player additions
 
 Beyond the M4 controls, the player has a seek timeline, a Follow camera anchored
-to the followed player model's eye position, Pointer Lock mouse look in free
-cam, an event-backed `kills/deaths` scoreboard, and a custom Health/Armor/saber
-vitals strip. The in-game status HUD, HUD files, crosshair, scores, timer and
+to the followed player model (first-person for the POV client, 100 units behind
+for other players), Pointer Lock mouse look in free cam, an event-backed
+`kills/deaths` scoreboard, and a custom Health/Armor/saber vitals strip. The
+score strip's clock is the map/game time (`cg.time - cgs.levelStartTime`), not
+the demo clock. The in-game status HUD, HUD files, crosshair, scores, timer and
 radar are disabled with `cg_drawStatus 0`, `cg_hudFiles 0`,
 `cg_drawCrosshair 0`, `cg_drawScores 0`, `cg_drawTimer 0` and `cg_drawRadar 0`.
-See [m6.md](./m6.md) for the bridge calls and known limits.
+The map step shows a spinner while the demo timeline is scanned and caches the
+result per file. See [m6.md](./m6.md) for the bridge calls and known limits.
 
 ### 3.6 Error handling
 

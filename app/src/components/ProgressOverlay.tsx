@@ -22,8 +22,11 @@ export function ProgressOverlay({ progress, phase, onCancel }: ProgressOverlayPr
         <div className="eyebrow">
           {seeking ? 'Seeking demo' : stopping ? 'Stopping demo' : loading ? 'Loading demo' : booting ? 'Starting engine' : 'Staging assets'}
         </div>
-        <h2>
-          {seeking ? 'Jumping to the selected time' : stopping ? 'Returning to the map' : loading ? 'Preparing the map' : booting ? 'Preparing the player' : 'Reading local files'}
+        <h2 className="overlay-title">
+          {booting || loading || seeking || stopping ? <span className="spinner" aria-hidden="true" /> : null}
+          <span>
+            {seeking ? 'Jumping to the selected time' : stopping ? 'Returning to the map' : loading ? 'Preparing the map' : booting ? 'Preparing the player' : 'Reading local files'}
+          </span>
         </h2>
         <p className="muted">
           {seeking

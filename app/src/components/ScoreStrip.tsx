@@ -2,7 +2,7 @@ import type { ScoreboardData } from '../types';
 
 interface ScoreStripProps {
   data: ScoreboardData | null;
-  elapsed: string;
+  matchTime: string;
   showScores: boolean;
   showTimer: boolean;
 }
@@ -15,7 +15,7 @@ function scoreText(value: number): string {
   return value === -9999 || value < -1000 ? '—' : String(value);
 }
 
-export function ScoreStrip({ data, elapsed, showScores, showTimer }: ScoreStripProps) {
+export function ScoreStrip({ data, matchTime, showScores, showTimer }: ScoreStripProps) {
   if (!showScores && !showTimer) return null;
 
   const teamGame = !!data && data.gametype >= 6;
@@ -56,11 +56,11 @@ export function ScoreStrip({ data, elapsed, showScores, showTimer }: ScoreStripP
           <strong>{left}</strong>
         </div>
       ) : null}
-      {showTimer ? <div className="score-timer">{elapsed}</div> : null}
+      {showTimer ? <div className="score-timer">{matchTime}</div> : null}
       {showScores && rightLabel ? (
         <div className={`score-side ${rightClass}`}>
-          <span className="score-name">{rightLabel}</span>
           <strong>{right}</strong>
+          <span className="score-name">{rightLabel}</span>
         </div>
       ) : null}
     </div>

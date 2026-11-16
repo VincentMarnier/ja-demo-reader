@@ -53,6 +53,7 @@ export interface ScoreboardData {
   gametype: number;
   scores1: number;
   scores2: number;
+  levelTime?: number;
   players: ScoreboardPlayer[];
   view?: ViewStats;
 }

@@ -101,10 +101,10 @@ index 12bbd470..1a9c38c9 100644
  
  	trap->RegisterSharedMemory( cg.sharedBuffer.raw );
 diff --git a/codemp/cgame/cg_view.c b/codemp/cgame/cg_view.c
-index 02297602..48e06bfc 100644
+index 02297602..13f62b4c 100644
 --- a/codemp/cgame/cg_view.c
 +++ b/codemp/cgame/cg_view.c
-@@ -26,9 +26,93 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
+@@ -26,9 +26,108 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
  #include "cg_local.h"
  #include "game/bg_saga.h"
  
@@ -113,6 +113,10 @@ index 02297602..48e06bfc 100644
  #define MASK_CAMERACLIP (MASK_SOLID|CONTENTS_PLAYERCLIP)
  #define CAMERA_SIZE	4
  
++// Third-person distance used when following a player whose recorded view
++// angles are not present in the demo (everyone except the POV client).
++#define CG_EXTERNAL_FOLLOW_RANGE	100.0f
++
 +// External demo-player camera controls. These are driven by the browser
 +// bridge, not by the game input system.
 +static qboolean cg_freeCamActive = qfalse;
@@ -160,20 +164,31 @@ index 02297602..48e06bfc 100644
 +		}
 +
 +		{
-+			// Put the camera at the followed player model's eye position and use
-+			// that player's view angles when the client exposes them.
-+			VectorCopy( cent->lerpOrigin, cg.refdef.vieworg );
-+			cg.refdef.vieworg[2] += DEFAULT_VIEWHEIGHT;
-+
 +			if ( cg_followClient == cg.snap->ps.clientNum ) {
++				// The recorded POV client has real view angles; put the camera at
++				// its model's eye position.
++				VectorCopy( cent->lerpOrigin, cg.refdef.vieworg );
++				cg.refdef.vieworg[2] += DEFAULT_VIEWHEIGHT;
 +				VectorCopy( cg.predictedPlayerState.viewangles, cg.refdef.viewangles );
++				cg.renderingThirdPerson = qfalse;
 +			} else {
-+				// Remote demo entities do not carry the recorded player's view
-+				// angles, so use the model's facing direction.
-+				VectorCopy( cent->lerpAngles, cg.refdef.viewangles );
++				// Remote demo entities have no recorded view angles. Keep the
++				// eye height but pull the camera behind the model, like the
++				// third-person demo POV.
++				vec3_t yawAngles = { 0.0f, cent->lerpAngles[YAW], 0.0f };
++				vec3_t fwd, right, up;
++
++				AngleVectors( yawAngles, fwd, right, up );
++				VectorMA( cent->lerpOrigin, -CG_EXTERNAL_FOLLOW_RANGE, fwd,
++					cg.refdef.vieworg );
++				cg.refdef.vieworg[2] += DEFAULT_VIEWHEIGHT;
++				// A level view behind the model is steadier than copying the
++				// entity's pitch, which can include death/lean angles.
++				cg.refdef.viewangles[PITCH] = 0.0f;
++				cg.refdef.viewangles[YAW] = cent->lerpAngles[YAW];
++				cg.renderingThirdPerson = qtrue;
 +			}
 +			cg.refdef.viewangles[ROLL] = 0.0f;
-+			cg.renderingThirdPerson = qfalse;
 +		}
 +	}
 +}
@@ -198,7 +213,7 @@ index 02297602..48e06bfc 100644
  
  /*
  =============================================================================
-@@ -1641,6 +1725,9 @@ static int CG_CalcViewValues( void ) {
+@@ -1641,6 +1740,9 @@ static int CG_CalcViewValues( void ) {
  		}
  	}
  
@@ -208,7 +223,7 @@ index 02297602..48e06bfc 100644
  	// position eye relative to origin
  	AnglesToAxis( cg.refdef.viewangles, cg.refdef.viewaxis );
  
-@@ -2649,7 +2736,9 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
+@@ -2649,7 +2751,9 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
  		CG_AddPacketEntities(qfalse);			// adter calcViewValues, so predicted player state is correct
  		CG_AddMarks();
  	}
@@ -219,7 +234,7 @@ index 02297602..48e06bfc 100644
  
  	if ( !cg.hyperspace)
  	{
-@@ -2735,3 +2824,165 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
+@@ -2735,3 +2839,174 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
  	}
  }
  
@@ -239,12 +254,18 @@ index 02297602..48e06bfc 100644
 +	qboolean first = qtrue;
 +
 +	if ( !cg.snap ) {
-+		return "{\"gametype\":0,\"scores1\":-9999,\"scores2\":-9999,\"players\":[]}";
++		return "{\"gametype\":0,\"scores1\":-9999,\"scores2\":-9999,\"levelTime\":0,\"players\":[]}";
 +	}
 +
-+	len = snprintf( buffer, sizeof( buffer ),
-+		"{\"gametype\":%d,\"scores1\":%d,\"scores2\":%d,\"players\":[",
-+		cgs.gametype, cgs.scores1, cgs.scores2 );
++	{
++		int levelTime = cg.time - cgs.levelStartTime;
++		if ( levelTime < 0 ) {
++			levelTime = 0;
++		}
++		len = snprintf( buffer, sizeof( buffer ),
++			"{\"gametype\":%d,\"scores1\":%d,\"scores2\":%d,\"levelTime\":%d,\"players\":[",
++			cgs.gametype, cgs.scores1, cgs.scores2, levelTime );
++	}
 +
 +	for ( i = 0; i < MAX_CLIENTS && len < (int)sizeof( buffer ) - 512; i++ ) {
 +		clientInfo_t *ci = &cgs.clientinfo[i];
@@ -302,11 +323,14 @@ index 02297602..48e06bfc 100644
 +			// style. Duel health arrives separately in the duel configstring.
 +			centity_t *cent = &cg_entities[viewClient];
 +			weapon = cent->currentState.weapon;
-+			if ( cgs.duelist1 == viewClient ) {
++			// A zero here usually means the duel health configstring has not
++			// arrived, not that the player is at zero health. Keep it unknown
++			// instead of drawing a false empty bar.
++			if ( cgs.duelist1 == viewClient && cgs.duelist1health > 0 ) {
 +				health = cgs.duelist1health;
-+			} else if ( cgs.duelist2 == viewClient ) {
++			} else if ( cgs.duelist2 == viewClient && cgs.duelist2health > 0 ) {
 +				health = cgs.duelist2health;
-+			} else if ( cgs.duelist3 == viewClient ) {
++			} else if ( cgs.duelist3 == viewClient && cgs.duelist3health > 0 ) {
 +				health = cgs.duelist3health;
 +			}
 +		}
