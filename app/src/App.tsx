@@ -76,6 +76,7 @@ export default function App() {
   const demoSummaryRef = useRef<DemoSummary | null>(null);
   const statusRef = useRef<DemoStatus | null>(null);
   const cacheInFlightRef = useRef(false);
+  const playbackActionRef = useRef(false);
   const bootPromiseRef = useRef<Promise<EngineHost> | null>(null);
   const bootForegroundRef = useRef(false);
   const bootedAssetKeyRef = useRef<string | null>(null);
@@ -621,6 +622,8 @@ export default function App() {
   const startPlay = useCallback(async () => {
     const engine = engineRef.current;
     if (!engine || !demoFile || mapMissing) return;
+    if (playbackActionRef.current) return;
+    playbackActionRef.current = true;
     engine.disableFreeCam();
     engine.followClient(-1);
     setFreeCam(false);
@@ -635,6 +638,8 @@ export default function App() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setPhase('error');
+    } finally {
+      playbackActionRef.current = false;
     }
   }, [demoFile, mapMissing]);
 
@@ -682,6 +687,9 @@ export default function App() {
   const restart = useCallback(async () => {
     const engine = engineRef.current;
     if (!engine || !demoFile) return;
+    if (playbackActionRef.current) return;
+    playbackActionRef.current = true;
+    playbackRequestedRef.current = true;
     engine.disableFreeCam();
     engine.followClient(-1);
     setFreeCam(false);
@@ -695,6 +703,8 @@ export default function App() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setPhase('error');
+    } finally {
+      playbackActionRef.current = false;
     }
   }, [demoFile]);
 

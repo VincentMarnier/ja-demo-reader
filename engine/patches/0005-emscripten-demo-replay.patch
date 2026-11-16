@@ -1,0 +1,16 @@
+--- a/codemp/client/cl_main.cpp
++++ b/codemp/client/cl_main.cpp
+@@ -432,10 +432,10 @@
+ 	//I'm not sure why it ever worked in TA, but whatever. This code will bring us back to the main menu
+ 	//after a demo is finished playing instead.
+ #ifdef __EMSCRIPTEN__
+-	// No UI VM in the browser build; disconnect and report completion through
+-	// the bridge instead of entering the menu path.
++	// No UI VM in the browser build.  Leave the last demo frame in place and
++	// report completion through the bridge; disconnecting here runs a renderer
++	// and map teardown that can still be in flight when the UI starts Replay.
+ 	jka_demoEnded = qtrue;
+-	CL_Disconnect_f();
+ 	S_StopAllSounds();
+ 	return;
+ #else

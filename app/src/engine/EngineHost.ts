@@ -39,6 +39,7 @@ export class EngineHost {
   private currentDemo: string | null = null;
   private asyncInFlight = false;
   private queue: Promise<unknown> = Promise.resolve();
+  private playInFlight: Promise<void> | null = null;
 
   constructor(callbacks: EngineCallbacks) {
     this.callbacks = callbacks;
@@ -216,13 +217,19 @@ export class EngineHost {
 
   async playDemo(name: string): Promise<void> {
     if (!this.module?.ccall) throw new Error('Engine is not ready.');
+    // Coalesce a second click while the map is still loading.  A queued second
+    // JKA_PlayDemo would start another map load after the first async call
+    // returns, which is what produced the Asyncify "already in flight" abort.
+    if (this.playInFlight) return this.playInFlight;
     this.currentDemo = name;
-    await this.runExclusive(async () => {
+    this.playInFlight = this.runExclusive(async () => {
+      await this.module?.ccall?.('JKA_SetPaused', null, ['number'], [0], { async: true });
       await this.module?.ccall?.('JKA_Resume', null, [], [], { async: true });
-      // JKA_PlayDemo can yield while the renderer compiles shaders and loads
-      // the map; ccall must therefore be asked for its async result.
       await this.module?.ccall?.('JKA_PlayDemo', null, ['string'], [name], { async: true });
+    }).finally(() => {
+      this.playInFlight = null;
     });
+    return this.playInFlight;
   }
 
   async setPaused(paused: boolean): Promise<void> {
