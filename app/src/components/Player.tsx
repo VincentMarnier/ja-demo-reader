@@ -20,6 +20,10 @@ interface PlayerProps {
 export function Player(props: PlayerProps) {
   const ended = props.phase === 'ended';
   const active = props.status?.state === 8;
+  // A demo chosen from a file input may not be in the folder list.
+  const demos = props.demos.some(d => d.name === props.demoName)
+    ? props.demos
+    : [{ name: props.demoName }, ...props.demos];
 
   return (
     <div className="player-ui">
@@ -47,11 +51,11 @@ export function Player(props: PlayerProps) {
         <button className="ghost" onClick={props.onFullscreen}>Fullscreen</button>
         <button className="ghost" onClick={props.onShowLogs}>Log</button>
 
-        {props.demos.length > 1 ? (
+        {demos.length > 1 ? (
           <label className="inline-field">
             <span>Demo</span>
             <select value={props.demoName} onChange={e => props.onSelectDemo(e.target.value)}>
-              {props.demos.map(demo => <option key={demo.name} value={demo.name}>{demo.name}</option>)}
+              {demos.map(demo => <option key={demo.name} value={demo.name}>{demo.name}</option>)}
             </select>
           </label>
         ) : null}

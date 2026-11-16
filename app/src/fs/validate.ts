@@ -38,7 +38,7 @@ async function checkDemoFraming(file: File): Promise<string | null> {
   return null;
 }
 
-export async function validateSelection(selection: AssetSelection): Promise<ValidationResult> {
+export async function validateSelection(selection: AssetSelection, requireDemo = true): Promise<ValidationResult> {
   const errors: string[] = [];
   const warnings: string[] = [];
   const assets: LocalFile[] = [];
@@ -76,7 +76,7 @@ export async function validateSelection(selection: AssetSelection): Promise<Vali
     }
   }
 
-  if (demos.length === 0) {
+  if (requireDemo && demos.length === 0) {
     errors.push('No .dm_26 demo found. Select a Jedi Academy multiplayer demo.');
   }
 
@@ -88,6 +88,13 @@ export async function validateSelection(selection: AssetSelection): Promise<Vali
   }
 
   return { assets, demos, warnings, errors };
+}
+
+export async function validateDemoFile(file: File): Promise<string | null> {
+  if (!file.name.toLowerCase().endsWith('.dm_26')) {
+    return 'This is not a protocol-26 demo (.dm_26).';
+  }
+  return checkDemoFraming(file);
 }
 
 export { ASSET_NAMES, baseName };

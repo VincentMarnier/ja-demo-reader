@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
-import type { AssetSelection, DemoStatus, Phase, StageProgress, ValidationResult } from './types';
+import type { AssetSelection, DemoStatus, LocalFile, Phase, StageProgress, ValidationResult } from './types';
 import { CA_ACTIVE } from './types';
-import { validateSelection } from './fs/validate';
+import { validateDemoFile, validateSelection } from './fs/validate';
 import {
   pickGameData,
   requestHandlePermission,
@@ -16,6 +16,8 @@ import { Player } from './components/Player';
 import { ProgressOverlay } from './components/ProgressOverlay';
 import { ErrorPanel } from './components/ErrorPanel';
 
+type WizardStep = 'assets' | 'demo' | 'map';
+
 function formatTime(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000));
   const m = Math.floor(total / 60);
@@ -23,10 +25,21 @@ function formatTime(ms: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+function demoBase(name: string): string {
+  return name.replace(/\.dm_26$/i, '');
+}
+
 export default function App() {
-  const [selection, setSelection] = useState<AssetSelection | null>(null);
-  const [validation, setValidation] = useState<ValidationResult | null>(null);
-  const [selectedDemo, setSelectedDemo] = useState('');
+  const [step, setStep] = useState<WizardStep>('assets');
+  const [assetSelection, setAssetSelection] = useState<AssetSelection | null>(null);
+  const [assetValidation, setAssetValidation] = useState<ValidationResult | null>(null);
+  const [demoFile, setDemoFile] = useState<LocalFile | null>(null);
+  const [demoWarning, setDemoWarning] = useState<string | null>(null);
+  const [mapName, setMapName] = useState('');
+  const [mapMissing, setMapMissing] = useState(false);
+  const [mapError, setMapError] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+
   const [phase, setPhase] = useState<Phase>('launcher');
   const [progress, setProgress] = useState<StageProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -41,8 +54,11 @@ export default function App() {
   const stageRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<EngineHost | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const assetInputRef = useRef<HTMLInputElement>(null);
+  const demoInputRef = useRef<HTMLInputElement>(null);
+  const mapInputRef = useRef<HTMLInputElement>(null);
   const logCursorRef = useRef(0);
+  const playbackRequestedRef = useRef(false);
 
   useEffect(() => {
     loadDirectoryHandle().then(handle => setSavedHandle(handle));
@@ -61,19 +77,22 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, []);
 
-  const applySelection = useCallback(async (next: AssetSelection, persistHandle?: FileSystemDirectoryHandle) => {
-    setPhase('validating');
+  const applyAssets = useCallback(async (next: AssetSelection, persistHandle?: FileSystemDirectoryHandle) => {
+    setChecking(true);
     setError(null);
     try {
-      const result = await validateSelection(next);
-      setSelection(next);
-      setValidation(result);
-      setSelectedDemo(result.demos[0]?.name ?? '');
-      if (result.errors.length > 0) {
-        setError(result.errors.join('\n'));
-        setPhase('error');
+      const result = await validateSelection(next, false);
+      setAssetSelection(next);
+      setAssetValidation(result);
+      setDemoFile(result.demos[0] ?? null);
+      setDemoWarning(null);
+      setMapName('');
+      setMapMissing(false);
+      setMapError(null);
+      if (result.errors.length === 0) {
+        setStep('demo');
       } else {
-        setPhase('launcher');
+        setStep('assets');
       }
       if (persistHandle) {
         setSavedHandle(persistHandle);
@@ -82,19 +101,21 @@ export default function App() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setPhase('error');
+    } finally {
+      setChecking(false);
     }
   }, []);
 
-  const handlePick = useCallback(async () => {
+  const handlePickAssets = useCallback(async () => {
     try {
       const picked = await pickGameData();
-      if (picked) await applySelection(picked.selection, picked.directory);
+      if (picked) await applyAssets(picked.selection, picked.directory);
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       setError(err instanceof Error ? err.message : String(err));
       setPhase('error');
     }
-  }, [applySelection]);
+  }, [applyAssets]);
 
   const handleSaved = useCallback(async () => {
     if (!savedHandle) return;
@@ -104,96 +125,178 @@ export default function App() {
         setPhase('error');
         return;
       }
-      const next = await selectionFromDirectory(savedHandle);
-      await applySelection(next, savedHandle);
+      await applyAssets(await selectionFromDirectory(savedHandle), savedHandle);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setPhase('error');
     }
-  }, [savedHandle, applySelection]);
+  }, [savedHandle, applyAssets]);
 
-  const handleFileInput = useCallback(
+  const handleAssetsFileInput = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
       const files = event.target.files;
       if (!files || files.length === 0) return;
-      const next = selectionFromFileList(files);
-      void applySelection(next);
+      void applyAssets(selectionFromFileList(files));
       event.target.value = '';
     },
-    [applySelection]
+    [applyAssets]
   );
 
-  const startEngine = useCallback(async () => {
-    if (!selection || !selectedDemo || !canvasRef.current) return;
-    if (engineRef.current) {
-      engineRef.current.playDemo(selectedDemo.replace(/\.dm_26$/i, ''));
-      setDemoStart(null);
-      setPaused(false);
-      setPhase('playing');
-      return;
-    }
-
-    const controller = new AbortController();
-    abortRef.current = controller;
-    setProgress({ loaded: 0, total: 0, current: '' });
-    setError(null);
-    setPhase('staging');
-
-    const engine = new EngineHost({
-      onLog: () => undefined,
-      onProgress: next => {
-        setProgress(next);
-        setPhase(next.total > 0 && next.loaded >= next.total ? 'booting' : 'staging');
-      },
-      onStatus: next => {
-        setStatus(next);
-        if (next.state === CA_ACTIVE && next.demo === 1) {
-          setDemoStart(prev => prev ?? next.serverTime);
-          setPhase(current => (current === 'paused' ? current : 'playing'));
-        }
-        if (next.ended === 1) {
-          setPhase('ended');
-          setPaused(false);
-        }
-      },
-      onFatal: message => {
-        setError(message);
-        setPhase('error');
-      }
-    });
-    engineRef.current = engine;
-
-    try {
-      await engine.boot({
-        canvas: canvasRef.current,
-        files: selection.files,
-        signal: controller.signal
-      });
-      engine.playDemo(selectedDemo.replace(/\.dm_26$/i, ''));
-      setDemoStart(null);
-      setPaused(false);
-      setPhase('playing');
-    } catch (err) {
-      if (controller.signal.aborted) {
-        setError('Staging cancelled.');
-      } else {
-        setError(err instanceof Error ? err.message : String(err));
-      }
-      setPhase('error');
-    }
-  }, [selection, selectedDemo]);
-
-  const handleSelectDemo = useCallback(
-    (name: string) => {
-      setSelectedDemo(name);
-      if (engineRef.current && (phase === 'playing' || phase === 'paused' || phase === 'ended')) {
-        engineRef.current.playDemo(name.replace(/\.dm_26$/i, ''));
-        setDemoStart(null);
-        setPaused(false);
-        setPhase('playing');
+  const selectDemo = useCallback(
+    async (file: LocalFile | null) => {
+      setDemoFile(file);
+      setDemoWarning(null);
+      setMapName('');
+      setMapMissing(false);
+      setMapError(null);
+      if (file) {
+        const warning = await validateDemoFile(file.file);
+        setDemoWarning(warning);
       }
     },
-    [phase]
+    []
+  );
+
+  const handleDemoSelect = useCallback(
+    (name: string) => {
+      const file = assetSelection?.demos.find(d => d.name === name) ?? null;
+      void selectDemo(file);
+      // Switching demos while the player is open must go back through the
+      // map check: the new demo may need a different map PK3.
+      if (engineRef.current && (phase === 'playing' || phase === 'paused' || phase === 'ended')) {
+        engineRef.current.stopDemo();
+        playbackRequestedRef.current = false;
+        setPaused(false);
+        setDemoStart(null);
+        setPhase('launcher');
+        setStep('demo');
+      }
+    },
+    [assetSelection, selectDemo, phase]
+  );
+
+  const handleDemoFileInput = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      void selectDemo({ name: file.name, file });
+      event.target.value = '';
+    },
+    [selectDemo]
+  );
+
+  const checkMap = useCallback(async () => {
+    if (!assetSelection || !demoFile || !canvasRef.current) return;
+    setChecking(true);
+    setMapError(null);
+    setError(null);
+
+    let engine = engineRef.current;
+    if (!engine) {
+      const controller = new AbortController();
+      abortRef.current = controller;
+      setProgress({ loaded: 0, total: 0, current: '' });
+      setPhase('staging');
+
+      const created = new EngineHost({
+        onLog: () => undefined,
+        onProgress: next => {
+          setProgress(next);
+          setPhase(next.total > 0 && next.loaded >= next.total ? 'booting' : 'staging');
+        },
+        onStatus: next => {
+          setStatus(next);
+          if (playbackRequestedRef.current && next.state === CA_ACTIVE && next.demo === 1) {
+            setDemoStart(prev => prev ?? next.serverTime);
+            setPhase(current => (current === 'paused' ? current : 'playing'));
+          }
+          if (next.ended === 1) {
+            setPhase('ended');
+            setPaused(false);
+          }
+        },
+        onFatal: message => {
+          setError(message);
+          setPhase('error');
+        }
+      });
+      engineRef.current = created;
+      engine = created;
+
+      // Stage only the four validated retail PK3s plus the chosen demo.
+      // Extra PK3s in the folder (custom maps and mods) are not loaded unless
+      // the map step asks for them.
+      const baseAssets = assetValidation?.assets ?? [];
+      const files: LocalFile[] = [...baseAssets, demoFile];
+
+      try {
+        await created.boot({ canvas: canvasRef.current, files, signal: controller.signal });
+      } catch (err) {
+        if (controller.signal.aborted) setError('Staging cancelled.');
+        else setError(err instanceof Error ? err.message : String(err));
+        setPhase('error');
+        setChecking(false);
+        return;
+      }
+    }
+
+    setPhase('launcher');
+    const name = demoBase(demoFile.name);
+    const map = engine.parseDemoMap(name);
+    if (!map) {
+      setMapError('The demo did not expose a mapname in its first gamestate. The file may be truncated or not protocol 26.');
+      setMapName('');
+      setMapMissing(false);
+      setStep('map');
+      setChecking(false);
+      return;
+    }
+    const present = engine.hasMap(map);
+    setMapName(map);
+    setMapMissing(!present);
+    setStep('map');
+    setChecking(false);
+
+    if (present) {
+      // Keep the engine warm; Play starts the actual demo.
+      setPhase('launcher');
+    }
+  }, [assetSelection, assetValidation, demoFile]);
+
+  const startPlay = useCallback(() => {
+    if (!engineRef.current || !demoFile || mapMissing) return;
+    playbackRequestedRef.current = true;
+    engineRef.current.playDemo(demoBase(demoFile.name));
+    setDemoStart(null);
+    setPaused(false);
+    setPhase('playing');
+  }, [demoFile, mapMissing]);
+
+  const handleMapFileInput = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      event.target.value = '';
+      if (!file || !engineRef.current || !demoFile) return;
+      if (!file.name.toLowerCase().endsWith('.pk3')) {
+        setMapError('The map must be supplied as a .pk3 file.');
+        return;
+      }
+      try {
+        await engineRef.current.addMapFile(file);
+        const map = engineRef.current.parseDemoMap(demoBase(demoFile.name));
+        if (!map) {
+          setMapError('Could not re-read the demo map after adding the PK3.');
+          return;
+        }
+        setMapName(map);
+        const present = engineRef.current.hasMap(map);
+        setMapMissing(!present);
+        setMapError(present ? null : `maps/${map}.bsp is still missing. Add the map PK3 that contains it.`);
+      } catch (err) {
+        setMapError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [demoFile]
   );
 
   const togglePause = useCallback(() => {
@@ -210,18 +313,20 @@ export default function App() {
   }, [paused]);
 
   const restart = useCallback(() => {
-    if (!engineRef.current || !selectedDemo) return;
-    engineRef.current.playDemo(selectedDemo.replace(/\.dm_26$/i, ''));
+    if (!engineRef.current || !demoFile) return;
+    engineRef.current.playDemo(demoBase(demoFile.name));
     setPaused(false);
     setDemoStart(null);
     setPhase('playing');
-  }, [selectedDemo]);
+  }, [demoFile]);
 
   const stop = useCallback(() => {
     engineRef.current?.stopDemo();
+    playbackRequestedRef.current = false;
     setPaused(false);
     setDemoStart(null);
-    setPhase('ready');
+    setPhase('launcher');
+    setStep('map');
   }, []);
 
   const fullscreen = useCallback(() => {
@@ -230,9 +335,9 @@ export default function App() {
 
   const reload = useCallback(() => window.location.reload(), []);
 
-  const mapName = status?.map ? status.map.replace(/^maps\//, '').replace(/\.bsp$/i, '') : '';
+  const mapLabel = mapName || (status?.map ? status.map.replace(/^maps\//, '').replace(/\.bsp$/i, '') : '');
   const elapsed = status && demoStart !== null ? formatTime(status.serverTime - demoStart) : '0:00';
-  const showLauncher = phase === 'launcher' || phase === 'validating';
+  const showWizard = phase === 'launcher' || phase === 'validating';
   const showPlayer = phase === 'playing' || phase === 'paused' || phase === 'ended';
 
   return (
@@ -259,19 +364,30 @@ export default function App() {
         <div className="stage" ref={stageRef}>
           <canvas ref={canvasRef} width={800} height={600} className="screen" />
 
-          {showLauncher ? (
+          {showWizard ? (
             <Launcher
-              selection={selection}
-              validation={validation}
-              selectedDemo={selectedDemo}
+              step={step}
+              assetSelection={assetSelection}
+              assetValidation={assetValidation}
+              demoFile={demoFile}
+              demoWarning={demoWarning}
+              mapName={mapName}
+              mapMissing={mapMissing}
+              mapError={mapError}
               savedHandle={savedHandle}
-              busy={phase === 'validating'}
-              onPick={handlePick}
+              busy={checking}
+              onPickAssets={handlePickAssets}
               onSaved={handleSaved}
-              onFileInput={handleFileInput}
-              fileInputRef={fileInputRef}
-              onDemoChange={handleSelectDemo}
-              onPlay={startEngine}
+              onAssetsFileInput={handleAssetsFileInput}
+              assetInputRef={assetInputRef}
+              demoInputRef={demoInputRef}
+              mapInputRef={mapInputRef}
+              onDemoSelect={handleDemoSelect}
+              onDemoFileInput={handleDemoFileInput}
+              onCheckMap={checkMap}
+              onMapFileInput={handleMapFileInput}
+              onPlay={startPlay}
+              onStep={setStep}
             />
           ) : null}
 
@@ -293,29 +409,19 @@ export default function App() {
           {showPlayer ? (
             <Player
               status={status}
-              mapName={mapName}
+              mapName={mapLabel}
               elapsed={elapsed}
               paused={paused}
               phase={phase}
-              demoName={selectedDemo}
-              demos={selection?.demos ?? []}
+              demoName={demoFile?.name ?? ''}
+              demos={assetSelection?.demos ?? []}
               onPause={togglePause}
               onRestart={restart}
               onStop={stop}
               onFullscreen={fullscreen}
-              onSelectDemo={handleSelectDemo}
+              onSelectDemo={handleDemoSelect}
               onShowLogs={() => setShowLogs(true)}
             />
-          ) : null}
-
-          {phase === 'ready' ? (
-            <div className="ready-layer">
-              <div className="panel compact">
-                <h2>Engine ready</h2>
-                <p className="muted">Assets are staged. Start the demo when you are ready.</p>
-                <button className="primary" onClick={startEngine}>Play {selectedDemo}</button>
-              </div>
-            </div>
           ) : null}
         </div>
       </main>
@@ -332,4 +438,3 @@ export default function App() {
     </div>
   );
 }
-

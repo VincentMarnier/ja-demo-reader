@@ -291,3 +291,31 @@ summary { cursor: pointer; color: var(--muted); }
   .player-controls { gap: 6px; }
   .inline-field { margin-left: 0; width: 100%; }
 }
+
+.steps { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
+.step {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+.step.active { color: #1a1206; background: var(--accent); border-color: var(--accent); font-weight: 700; }
+.selected-file {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 12px; padding: 10px 12px; margin: 12px 0;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--panel-2);
+  font-size: 13px;
+}
+.selected-file .muted { font-size: 12px; }
+.map-check {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 14px; margin: 12px 0;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--panel-2);
+}
+.map-check strong { font-size: 18px; }
+.status { margin-left: auto; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; padding: 4px 8px; border-radius: 999px; }
+.status.good { color: var(--ok); background: rgba(123, 220, 154, 0.1); border: 1px solid rgba(123, 220, 154, 0.3); }
+.status.bad { color: var(--danger); background: rgba(255, 107, 107, 0.1); border: 1px solid rgba(255, 107, 107, 0.3); }

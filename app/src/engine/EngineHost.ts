@@ -195,6 +195,39 @@ export class EngineHost {
     return this.currentDemo;
   }
 
+  parseDemoMap(name: string): string | null {
+    if (!this.module?.ccall) return null;
+    const map = this.module.ccall('JKA_ParseDemoMap', 'string', ['string'], [name]) as string;
+    return map && map.length ? map : null;
+  }
+
+  hasMap(map: string): boolean {
+    if (!this.module?.ccall) return false;
+    return !!this.module.ccall('JKA_HasMap', 'number', ['string'], [map]);
+  }
+
+  async addMapFile(file: File): Promise<void> {
+    if (!file.name.toLowerCase().endsWith('.pk3')) {
+      throw new Error('The map must be supplied as a .pk3 file.');
+    }
+    const FS = (window as unknown as {
+      FS?: {
+        createDataFile(parent: string, name: string, data: Uint8Array, read: boolean, write: boolean, own: boolean): void;
+        unlink?(path: string): void;
+      };
+    }).FS;
+    if (!FS) throw new Error('Engine filesystem unavailable.');
+    const buffer = await file.arrayBuffer();
+    // Re-adding the same map should replace it rather than fail with EEXIST.
+    try {
+      FS.unlink?.(`/jka/base/${file.name}`);
+    } catch {
+      // not staged yet
+    }
+    FS.createDataFile('/jka/base', file.name, new Uint8Array(buffer), true, false, true);
+    this.module?.ccall?.('JKA_RestartFS', null, [], []);
+  }
+
   downloadLogs(): void {
     const blob = new Blob([this.logText], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);

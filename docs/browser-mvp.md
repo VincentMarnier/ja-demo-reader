@@ -1,8 +1,8 @@
 # Browser MVP (M4)
 
-**Status:** Complete for the offline base-demo target. A React + Vite + TypeScript shell selects a local `GameData` folder (or files), validates and stages the retail assets, boots the wasm engine, and provides play/pause/restart, fullscreen, status, logs and error handling.
+**Status:** Complete for the offline base-demo target. A React + Vite + TypeScript shell runs a three-phase wizard (assets → demo → map), validates and stages the retail assets, boots the wasm engine, parses the demo's map name, requests a map `.pk3` when the map is absent, and provides play/pause/restart, fullscreen, status, logs and error handling.
 **Date:** 2026-11-16
-**Scope:** Local picker, validation, staging progress, engine host, player controls, static build. No inspector, seek or camera controls (M5/M6).
+**Scope:** Local picker, three-phase wizard, demo map resolution, map PK3 injection, staging progress, engine host, player controls, static build. No inspector, seek or camera controls (M5/M6).
 
 ---
 
@@ -15,9 +15,12 @@
 | File-input fallback | **Pass** — automated with CDP file injection |
 | Asset validation (`assets0..3`, `productid.txt`) | **Pass** — 4/4, productid found |
 | Demo discovery + `.dm_26` framing check | **Pass** — 1 demo, framing accepted |
-| Staging with progress | **Pass** — 1.14 GB, 100% |
+| Demo map parsing (`JKA_ParseDemoMap`) | **Pass** — `mp/duel1` and `ffa_YavinPlaza` read from the first gamestate |
+| Map present in assets (`JKA_HasMap`) | **Pass** — `mp/duel1` found in `assets0.pk3` |
+| Missing-map prompt + map `.pk3` | **Pass** — `ffa_YavinPlaza` reported missing, PK3 added, `JKA_RestartFS()` reloaded |
+| Staging with progress | **Pass** — 1.14 GB (assets0..3 + demo), 100% |
 | Engine boot + cgame | **Pass** |
-| Playback | **Pass** — map `mp/duel1`, state `Playing`, demo time advanced 0:15 → 0:25 |
+| Playback | **Pass** — `mp/duel1` and `ffa_YavinPlaza`; state `Playing`, demo time advancing |
 | Pause/restart/stop | Wired to the M3 bridge; pause acknowledged in interactive use |
 | Fullscreen | Wired to the stage element |
 | Log download | Implemented |
@@ -69,24 +72,35 @@ app/
 └── dist/                          static build
 ```
 
-### 3.1 Selection
+### 3.1 Selection wizard
 
-- `showDirectoryPicker()` is the primary path. The user selects `GameData` or
-  `base`; the app finds `base/` and enumerates `assets*.pk3` and `demos/*.dm_26`.
-- The fallback `<input type=file multiple accept=".pk3,.dm_26">` supports
-  browsers without FSA. The directory handle is persisted in IndexedDB and
-  re-permissioned on demand.
+The launcher has three steps:
+
+1. **Assets** — `showDirectoryPicker()` (primary) selects `GameData` or `base`;
+   the app finds `base/` and enumerates `assets*.pk3` and `demos/*.dm_26`.
+   The fallback `<input type=file multiple accept=".pk3,.dm_26">` supports
+   browsers without FSA. The directory handle is persisted in IndexedDB and
+   re-permissioned on demand.
+2. **Demo** — pick one of the demos found in the folder or choose another
+   `.dm_26` file directly.
+3. **Map** — the chosen demo is parsed and checked; a map `.pk3` is requested
+   only when the map is absent.
+
+Selecting a folder does not stage every PK3 in it: only `assets0..3.pk3` are
+staged, so custom maps and mods in the same folder do not inflate memory use.
 
 ### 3.2 Validation
 
 - `assets0.pk3` … `assets3.pk3` must all be present.
 - `productid.txt` is searched in `assets2.pk3` (central-directory bytes).
-- At least one `.dm_26` is required; wrong protocol extensions produce a warning.
+- A demo is optional during the assets step; the demo step requires one.
+- Wrong protocol extensions produce a warning.
 - The first demo record is checked for a plausible length and sequence.
 
 ### 3.3 Staging
 
 - Runs inside the Emscripten `preRun` before `Com_Init`.
+- Stages the four validated retail PK3s plus the chosen demo.
 - Reads each `File` with `arrayBuffer()`, writes with
   `FS.createDataFile(..., canOwn=true)`.
 - Writes PK3s to `/jka/base` and demos to `/jka/base/demos`.
@@ -95,7 +109,22 @@ app/
 - `/userdata` is a MEMFS directory in this build; IDBFS persistence is deferred
   until the engine writes config/saves.
 
-### 3.4 Playback controls
+### 3.4 Demo map resolution
+
+After the engine boots (still on the map step), the app calls the bridge:
+
+| Call | Purpose |
+|---|---|
+| `JKA_ParseDemoMap(name)` | Reads `demos/<name>.dm_26`, decodes the first gamestate with the engine's MSG/Huffman reader, returns `mapname` from `CS_SERVERINFO` |
+| `JKA_HasMap(map)` | Opens `maps/<map>.bsp` through the pak search path (`FS_FOpenFileRead`), so PK3 contents are seen |
+| `JKA_RestartFS()` | Re-scans `/jka/base` after a map `.pk3` is written into MEMFS |
+
+If the map is present, the wizard shows **Map ready** and Play starts the demo.
+If it is absent, the wizard asks for the map `.pk3`; the file is written to
+`/jka/base` and the file system is restarted, then the map is re-checked before
+Play is enabled. Nothing is written back to the user's folder.
+
+### 3.5 Playback controls
 
 | Control | Bridge |
 |---|---|
@@ -109,7 +138,7 @@ app/
 The UI shows map, state, demo time, paused/ended overlays, an engine log panel
 and a downloadable log.
 
-### 3.5 Error handling
+### 3.6 Error handling
 
 Validation, picker, staging, engine boot, wasm abort and missing-demo errors
 produce an in-app error panel with the last engine log lines and a reload path.
@@ -120,20 +149,32 @@ The taxonomy follows the architecture document (`ASSETS_*`, `DEMO_*`,
 
 ## 4. Evidence
 
-Automated flow (CDP, file-input fallback):
+Automated flows (CDP, file-input fallback, `?norefresh=1` for capture):
+
+Base demo with a map inside the retail assets:
 
 ```text
-validated: true
-validation body: 4/4 PK3s, 1 demo, OK
-Playing: map mp/duel1, state Playing
-demo time: 0:15 → 0:25
+assets 4/4 · step 2 · demo m05_base.dm_26
+step 3: Map ready · mp/duel1 · FOUND
+Play demo → state Playing · demo time advancing
 ```
 
+Custom-map demo, map absent from assets:
+
+```text
+assets0..3 + "stryx vs myriad r2.dm_26"
+step 3: Map missing · ffa_YavinPlaza · NOT IN SELECTED ASSETS
+add ffa_YavinPlaza.pk3 → JKA_RestartFS() → Map ready · FOUND
+Play demo → state Playing · demo time 0:03
+```
+
+Selecting all 36 PK3s in the base folder still staged only `assets0..3` and
+reached Map ready, confirming the folder is not staged wholesale.
+
 - Launcher capture: `/tmp/opencode/m4-ui.png`.
-- Player shell capture: `/tmp/opencode/m4-playing.png` (map, state, time and
-  controls visible; captured under the test-only `?norefresh=1` mode, so the HUD
-  texture atlas in that capture is not representative — the normal frame is the
-  M3 capture below).
+- Map-ready and playing captures: `/tmp/opencode/m4-wizard-final.png`,
+  `/tmp/opencode/m4-map-final.png` (captured in `?norefresh=1` mode, so the
+  HUD texture atlas is not representative — the normal frame is the M3 capture).
 - Runtime canvas (same engine/demo, captured by the M3 verifier):
   `/tmp/opencode/m3/artifacts-shot/browser-demo.png`.
 - Native comparison: `/tmp/opencode/m2/shots/native-vs-browser-final.png`.
@@ -157,7 +198,11 @@ launcher capture.
   until IDBFS is enabled.
 - **Rendering:** SwiftShader on the test host; no hardware-GPU frame-time
   baseline yet.
-- **Memory:** the full retail set is staged into MEMFS (~1.2 GB JS heap).
+- **Memory:** `assets0..3` plus the demo are staged into MEMFS (~1.2 GB JS heap).
+- **Map resolution:** the map name comes from the demo's first gamestate; a
+  truncated demo shows an explicit map-read error instead of a guess.
+- **Map PK3:** the added PK3 must contain `maps/<map>.bsp` for the map to be
+  accepted; the wizard stays on the map step otherwise.
 - **No seek/camera/inspector:** M5/M6.
 - The `r_m2_pause` bridge is still a test/capture hook; normal UI pause uses it.
 
