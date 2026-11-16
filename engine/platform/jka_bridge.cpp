@@ -20,6 +20,7 @@ published by the Free Software Foundation.
 #include "qcommon/qcommon.h"
 
 qboolean jka_demoEnded = qfalse;
+qboolean jka_engineReady = qfalse;
 
 extern "C" {
 
@@ -30,14 +31,15 @@ EMSCRIPTEN_KEEPALIVE const char *JKA_StatusJson( void )
 
 	Com_sprintf( buffer, sizeof( buffer ),
 		"{\"state\":%d,\"demo\":%d,\"serverTime\":%d,\"snapTime\":%d,"
-		"\"clientNum\":%d,\"map\":\"%s\",\"ended\":%d}",
+		"\"clientNum\":%d,\"map\":\"%s\",\"ended\":%d,\"ready\":%d}",
 		(int)cls.state,
 		clc.demoplaying ? 1 : 0,
 		cl.serverTime,
 		cl.snap.serverTime,
 		clc.clientNum,
 		map ? map : "",
-		jka_demoEnded ? 1 : 0 );
+		jka_demoEnded ? 1 : 0,
+		jka_engineReady ? 1 : 0 );
 
 	return buffer;
 }

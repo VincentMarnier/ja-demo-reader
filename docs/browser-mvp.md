@@ -1,7 +1,9 @@
 # Browser MVP (M4)
 
 > **Renderer note:** `master` replaces the `rd-vanilla` renderer with the
-> statically linked `rd-rend2` renderer on a WebGL2/GLES3 context. The previous
+> statically linked `rd-rend2` renderer on a WebGL2/GLES3 context. The rd-rend2
+> build uses Asyncify and a loading overlay so map checking and Play do not
+> freeze the browser. The previous
 > `rd-vanilla` version is preserved on branch `rd-vanilla`. See
 > [rd-rend2-spike.md](./rd-rend2-spike.md) for the build and current
 > limitations. The `rd-vanilla` evidence below is the M4 baseline.

@@ -93,8 +93,9 @@ if [ "$BUILD_REND2" = "1" ]; then
   fi
   REND2=ON
   # rd-rend2 uses modern GL; WebGL2/GLES3 is required and the legacy GL
-  # emulation must not be linked.
-  GL_FLAGS="$GL_FLAGS -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1 -sGL_UNSAFE_OPTS=0"
+  # emulation must not be linked. Asyncify lets the renderer yield between
+  # shader programs so map loading does not freeze the browser tab.
+  GL_FLAGS="$GL_FLAGS -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1 -sASYNCIFY=1 -sGL_UNSAFE_OPTS=0"
 fi
 if [ "$NODE_RAWF" = "1" ]; then
   GL_FLAGS="$GL_FLAGS -sNODERAWFS=1"

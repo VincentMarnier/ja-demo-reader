@@ -19,6 +19,7 @@ branch `rd-vanilla`.
 | Play / pause / restart / stop | **Pass** |
 | Map parsing + map PK3 restart path | **Pass** |
 | Texture/portrait correctness | **Pass** — JPG/RGBA upload path fixed |
+| UI responsiveness during map check/play | **Pass** — Asyncify yields; probes stayed under 0.6 s |
 | Production app build | **Pass** |
 
 Evidence:
@@ -26,6 +27,8 @@ Evidence:
 - `/tmp/opencode/rend2/final-visual.png` — `mp/duel1`, normal WebGL2 frame.
 - `/tmp/opencode/rend2/final-map.png` — `ffa_YavinPlaza` after adding the map PK3.
 - `/tmp/opencode/rend2/final-play.log`, `/tmp/opencode/rend2/final-map.log` — CDP runs.
+- `/tmp/opencode/rend2/responsive-final.png` — normal frame from the responsive build.
+- `/tmp/opencode/rend2/responsive-probe.log` — map-check and Play responsiveness probes.
 - `/tmp/opencode/rend2/final-build.log` — clean build from the patch set.
 
 ## Build
@@ -71,6 +74,20 @@ Without it the app uses 800×600 at picmip 0 and 60 fps.
 - **Context** (`rd-rend2/tr_init.cpp`): Emscripten's SDL/EGL creates the
   WebGL2 context from the linker settings; desktop GL 3.2 core attributes are
   skipped.
+- **Responsiveness**:
+  - The rd-rend2 build uses Emscripten **Asyncify** and yields after each shader
+    program. Map checking and Play therefore keep the browser UI responsive
+    while shaders compile and the map loads.
+  - `Sys_Init` publishes a `ready` flag only after the engine has finished
+    initialising and the main loop is installed; the app waits for it instead
+    of guessing from `cls.state`.
+  - `JKA_PlayDemo` is invoked with the async `ccall` result and awaited. While
+    that call is in flight, status polling and pause/stop calls are suspended
+    to avoid re-entering the Asyncify runtime.
+  - The app shows a "Loading demo / Preparing the map" overlay during this
+    phase instead of freezing on the map screen.
+  - Stop/pause teardown also uses async bridge calls and a "Stopping demo"
+    overlay, so it cannot re-enter the Asyncify runtime.
 - **Shaders**:
   - Header changed to `#version 300 es` with default precision declarations,
     including shadow sampler types.
@@ -110,7 +127,10 @@ Without it the app uses 800×600 at picmip 0 and 60 fps.
   and `glGetCompressedTexImage` are not exposed; the renderer paths that use
   them are not exercised by this demo player.
 - **Performance.** The headless verification runs on SwiftShader; hardware GPU
-  frame times are not yet measured.
+  frame times are not yet measured. Asyncify increases the wasm from ~3.4 MB to
+  ~4.9 MB and adds some runtime overhead, in exchange for a responsive UI during
+  shader compilation, map loading and teardown. Stop can take a few seconds on
+  SwiftShader; the stopping overlay makes that explicit.
 - **Audio/input** remain as in the M4 baseline.
 
 ## Why not Vulkan/WebGPU

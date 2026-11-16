@@ -20,6 +20,7 @@ export interface DemoStatus {
   clientNum: number;
   map: string;
   ended: number;
+  ready?: number;
 }
 
 export interface StageProgress {
@@ -33,6 +34,8 @@ export type Phase =
   | 'validating'
   | 'staging'
   | 'booting'
+  | 'loading'
+  | 'stopping'
   | 'ready'
   | 'playing'
   | 'paused'

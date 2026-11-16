@@ -529,13 +529,17 @@ index 83190a34..e684ee18 100644
  
  	// GL state
 diff --git a/codemp/rd-rend2/tr_glsl.cpp b/codemp/rd-rend2/tr_glsl.cpp
-index 25b289fc..feeb8d2a 100644
+index 25b289fc..0711f374 100644
 --- a/codemp/rd-rend2/tr_glsl.cpp
 +++ b/codemp/rd-rend2/tr_glsl.cpp
-@@ -21,6 +21,23 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+@@ -21,6 +21,27 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
  // tr_glsl.c
  #include "tr_local.h"
++
++#ifdef __EMSCRIPTEN__
++#include <emscripten.h>
++#endif
 +
 +#ifdef __EMSCRIPTEN__
 +// WebGL2 requires GLSL ES 3.00 and a default precision for fragment shaders.
@@ -556,7 +560,7 @@ index 25b289fc..feeb8d2a 100644
  #include "tr_allocator.h"
  #include "glsl_shaders.h"
  
-@@ -252,7 +269,7 @@ static size_t GLSL_GetShaderHeader(
+@@ -252,7 +273,7 @@ static size_t GLSL_GetShaderHeader(
  
  	dest[0] = '\0';
  
@@ -565,7 +569,7 @@ index 25b289fc..feeb8d2a 100644
  
  	Q_strcat(dest, size,
  					"#ifndef M_PI\n"
-@@ -494,6 +511,29 @@ static size_t GLSL_LoadGPUShaderSource(
+@@ -494,6 +515,29 @@ static size_t GLSL_LoadGPUShaderSource(
  		result = strlen(dest);
  	}
  
@@ -595,7 +599,7 @@ index 25b289fc..feeb8d2a 100644
  	if ( buffer )
  	{
  		ri.FS_FreeFile(buffer);
-@@ -585,10 +625,14 @@ static void GLSL_BindShaderInterface( shaderProgram_t *program )
+@@ -585,10 +629,14 @@ static void GLSL_BindShaderInterface( shaderProgram_t *program )
  		}
  	}
  
@@ -610,7 +614,20 @@ index 25b289fc..feeb8d2a 100644
  
  	const uint32_t xfbVars = program->xfbVariables;
  	if (xfbVars != 0)
-@@ -919,12 +963,25 @@ void GLSL_InitUniforms(shaderProgram_t *program)
+@@ -769,6 +817,12 @@ bool ShaderProgramBuilder::Build( shaderProgram_t *shaderProgram )
+ 	ReleaseShaders();
+ 	program = 0;
+ 
++#ifdef __EMSCRIPTEN__
++	// Yield after each program so the browser can paint and handle input while
++	// the renderer compiles its shader variants.
++	emscripten_sleep( 0 );
++#endif
++
+ 	return true;
+ }
+ 
+@@ -919,12 +973,25 @@ void GLSL_InitUniforms(shaderProgram_t *program)
  			for (int j = 0; j < numMembers; ++j)
  			{
  				char memberName[512];
@@ -636,7 +653,7 @@ index 25b289fc..feeb8d2a 100644
  
  				ri.Printf(PRINT_DEVELOPER, "....uniform '%s'\n", memberName);
  				ri.Printf(PRINT_DEVELOPER, "......offset: %d\n", memberOffsets[j]);
-@@ -1354,7 +1411,7 @@ Block *FindBlock( const char *name, Block *blocks, size_t numBlocks )
+@@ -1354,7 +1421,7 @@ Block *FindBlock( const char *name, Block *blocks, size_t numBlocks )
  void GLSL_InitSplashScreenShader()
  {
  	const char *vs =
@@ -645,7 +662,7 @@ index 25b289fc..feeb8d2a 100644
  		"out vec2 var_TexCoords;\n"
  		"void main() {\n"
  		"  vec2 position = vec2(2.0 * float(gl_VertexID & 2) - 1.0, 4.0 * float(gl_VertexID & 1) - 1.0);\n"
-@@ -1363,7 +1420,7 @@ void GLSL_InitSplashScreenShader()
+@@ -1363,7 +1430,7 @@ void GLSL_InitSplashScreenShader()
  		"}";
  
  	const char *fs =
@@ -654,7 +671,7 @@ index 25b289fc..feeb8d2a 100644
  		"uniform sampler2D u_SplashTexture;\n"
  		"in vec2 var_TexCoords;\n"
  		"out vec4 out_Color;\n"
-@@ -1723,7 +1780,7 @@ static int GLSL_LoadGPUProgramLightAll(
+@@ -1723,7 +1790,7 @@ static int GLSL_LoadGPUProgramLightAll(
  
  			Q_strcat(
  				extradefines, sizeof(extradefines),
@@ -663,7 +680,7 @@ index 25b289fc..feeb8d2a 100644
  			Q_strcat(
  				extradefines, sizeof(extradefines),
  				va("#define r_shadowCascadeZFar %f\n", r_shadowCascadeZFar->value));
-@@ -2354,20 +2411,26 @@ void GLSL_LoadGPUShaders()
+@@ -2354,20 +2421,26 @@ void GLSL_LoadGPUShaders()
  	numEtcShaders += GLSL_LoadGPUProgramRefraction(builder, allocator);
  	numEtcShaders += GLSL_LoadGPUProgramTextureColor(builder, allocator);
  	numEtcShaders += GLSL_LoadGPUProgramPShadow(builder, allocator);
@@ -1064,3 +1081,16 @@ index 4025bd31..e253c72f 100644
 +#endif
  }
 \ No newline at end of file
+diff --git a/shared/sys/sys_main.cpp b/shared/sys/sys_main.cpp
+index c163764c..e3485af0 100644
+--- a/shared/sys/sys_main.cpp
++++ b/shared/sys/sys_main.cpp
+@@ -821,6 +821,8 @@ int main ( int argc, char* argv[] )
+ 	// The browser owns the frame clock. Returning to JS and letting Emscripten
+ 	// call Com_Frame from requestAnimationFrame is mandatory: a wasm while(1)
+ 	// blocks RAF, input, audio and devtools.
++	extern qboolean jka_engineReady;
++	jka_engineReady = qtrue;
+ 	emscripten_set_main_loop( Com_Frame, 0, 1 );
+ 	return 0;
+ #else

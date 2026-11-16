@@ -158,13 +158,14 @@ export default function App() {
   );
 
   const handleDemoSelect = useCallback(
-    (name: string) => {
+    async (name: string) => {
       const file = assetSelection?.demos.find(d => d.name === name) ?? null;
       void selectDemo(file);
       // Switching demos while the player is open must go back through the
       // map check: the new demo may need a different map PK3.
       if (engineRef.current && (phase === 'playing' || phase === 'paused' || phase === 'ended')) {
-        engineRef.current.stopDemo();
+        setPhase('stopping');
+        await engineRef.current.stopDemo();
         playbackRequestedRef.current = false;
         setPaused(false);
         setDemoStart(null);
@@ -263,13 +264,20 @@ export default function App() {
     }
   }, [assetSelection, assetValidation, demoFile]);
 
-  const startPlay = useCallback(() => {
-    if (!engineRef.current || !demoFile || mapMissing) return;
+  const startPlay = useCallback(async () => {
+    const engine = engineRef.current;
+    if (!engine || !demoFile || mapMissing) return;
     playbackRequestedRef.current = true;
-    engineRef.current.playDemo(demoBase(demoFile.name));
     setDemoStart(null);
     setPaused(false);
-    setPhase('playing');
+    setPhase('loading');
+    try {
+      await engine.playDemo(demoBase(demoFile.name));
+      setPhase('playing');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setPhase('error');
+    }
   }, [demoFile, mapMissing]);
 
   const handleMapFileInput = useCallback(
@@ -299,30 +307,39 @@ export default function App() {
     [demoFile]
   );
 
-  const togglePause = useCallback(() => {
-    if (!engineRef.current) return;
-    if (paused) {
-      engineRef.current.setPaused(false);
-      setPaused(false);
-      setPhase('playing');
-    } else {
-      engineRef.current.setPaused(true);
-      setPaused(true);
-      setPhase('paused');
+  const togglePause = useCallback(async () => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    const next = !paused;
+    setPaused(next);
+    setPhase(next ? 'paused' : 'playing');
+    try {
+      await engine.setPaused(next);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setPhase('error');
     }
   }, [paused]);
 
-  const restart = useCallback(() => {
-    if (!engineRef.current || !demoFile) return;
-    engineRef.current.playDemo(demoBase(demoFile.name));
+  const restart = useCallback(async () => {
+    const engine = engineRef.current;
+    if (!engine || !demoFile) return;
     setPaused(false);
     setDemoStart(null);
-    setPhase('playing');
+    setPhase('loading');
+    try {
+      await engine.playDemo(demoBase(demoFile.name));
+      setPhase('playing');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setPhase('error');
+    }
   }, [demoFile]);
 
-  const stop = useCallback(() => {
+  const stop = useCallback(async () => {
+    setPhase('stopping');
     try {
-      engineRef.current?.stopDemo();
+      await engineRef.current?.stopDemo();
     } catch (error) {
       // The UI should still return to the map step even if the engine call
       // misbehaves; the next Play reuses or reloads the engine.
@@ -397,7 +414,7 @@ export default function App() {
             />
           ) : null}
 
-          {phase === 'staging' || phase === 'booting' ? (
+          {phase === 'staging' || phase === 'booting' || phase === 'loading' || phase === 'stopping' ? (
             <ProgressOverlay
               progress={progress}
               phase={phase}

@@ -11,24 +11,39 @@ export function ProgressOverlay({ progress, phase, onCancel }: ProgressOverlayPr
   const total = progress?.total ?? 0;
   const loaded = progress?.loaded ?? 0;
   const percent = total > 0 ? Math.min(100, (loaded / total) * 100) : 0;
+  const loading = phase === 'loading';
+  const stopping = phase === 'stopping';
+  const booting = phase === 'booting';
 
   return (
     <div className="overlay">
       <div className="panel compact">
-        <div className="eyebrow">{phase === 'booting' ? 'Starting engine' : 'Staging assets'}</div>
-        <h2>{phase === 'booting' ? 'Preparing the player' : 'Reading local files'}</h2>
+        <div className="eyebrow">
+          {stopping ? 'Stopping demo' : loading ? 'Loading demo' : booting ? 'Starting engine' : 'Staging assets'}
+        </div>
+        <h2>
+          {stopping ? 'Returning to the map' : loading ? 'Preparing the map' : booting ? 'Preparing the player' : 'Reading local files'}
+        </h2>
         <p className="muted">
-          {phase === 'booting'
-            ? 'The wasm engine is initialising. The first frame can take a moment.'
-            : progress?.current || 'Preparing the virtual filesystem…'}
+          {stopping
+            ? 'The engine is tearing down the demo.'
+            : loading
+            ? 'The engine is loading the map and compiling shaders. The interface stays responsive; this can take a moment.'
+            : booting
+              ? 'The wasm engine is initialising. The first frame can take a moment.'
+              : progress?.current || 'Preparing the virtual filesystem…'}
         </p>
-        <div className="progress">
-          <div className="progress-bar" style={{ width: `${percent}%` }} />
-        </div>
-        <div className="progress-meta">
-          <span>{total ? `${stagingBytesLabel(loaded)} / ${stagingBytesLabel(total)}` : ''}</span>
-          <span>{total ? `${percent.toFixed(0)}%` : ''}</span>
-        </div>
+        {!loading && !stopping ? (
+          <>
+            <div className="progress">
+              <div className="progress-bar" style={{ width: `${percent}%` }} />
+            </div>
+            <div className="progress-meta">
+              <span>{total ? `${stagingBytesLabel(loaded)} / ${stagingBytesLabel(total)}` : ''}</span>
+              <span>{total ? `${percent.toFixed(0)}%` : ''}</span>
+            </div>
+          </>
+        ) : null}
         <button className="ghost" onClick={onCancel}>Cancel</button>
       </div>
     </div>

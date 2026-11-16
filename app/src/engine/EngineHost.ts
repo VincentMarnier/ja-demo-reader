@@ -2,7 +2,7 @@ import type { DemoStatus, LocalFile, StageProgress } from '../types';
 import { prepareAndStage } from '../fs/stage';
 
 interface ModuleLike {
-  ccall?(name: string, returnType: string | null, argTypes: string[], args: unknown[]): unknown;
+  ccall?(name: string, returnType: string | null, argTypes: string[], args: unknown[], opts?: { async?: boolean }): unknown;
   arguments?: string[];
   canvas?: HTMLCanvasElement;
   print?: (text: string) => void;
@@ -37,6 +37,7 @@ export class EngineHost {
   private logs: string[] = [];
   private callbacks: EngineCallbacks;
   private currentDemo: string | null = null;
+  private asyncInFlight = false;
 
   constructor(callbacks: EngineCallbacks) {
     this.callbacks = callbacks;
@@ -169,10 +170,13 @@ export class EngineHost {
   private startPolling(): void {
     if (this.statusTimer !== null) return;
     this.statusTimer = window.setInterval(() => {
+      // Do not re-enter the wasm runtime while an asyncified engine call (the
+      // map load during JKA_PlayDemo) is in flight.
+      if (this.asyncInFlight) return;
       const status = this.getStatus();
       if (!status) return;
       this.callbacks.onStatus(status);
-      if (!this.ready && status.state > 0) {
+      if (!this.ready && status.ready === 1) {
         this.ready = true;
       }
     }, 250);
@@ -188,27 +192,46 @@ export class EngineHost {
     }
   }
 
-  playDemo(name: string): void {
+  async playDemo(name: string): Promise<void> {
     if (!this.module?.ccall) throw new Error('Engine is not ready.');
     this.currentDemo = name;
-    this.module.ccall?.('JKA_Resume', null, [], []);
-    this.module.ccall?.('JKA_PlayDemo', null, ['string'], [name]);
+    this.asyncInFlight = true;
+    try {
+      await this.module.ccall?.('JKA_Resume', null, [], [], { async: true });
+      // JKA_PlayDemo can yield while the renderer compiles shaders and loads
+      // the map; ccall must therefore be asked for its async result.
+      await this.module.ccall?.('JKA_PlayDemo', null, ['string'], [name], { async: true });
+    } finally {
+      this.asyncInFlight = false;
+    }
   }
 
-  setPaused(paused: boolean): void {
-    if (!this.module?.ccall) return;
-    this.module.ccall?.('JKA_SetPaused', null, ['number'], [paused ? 1 : 0]);
-    if (!paused) this.module.ccall?.('JKA_Resume', null, [], []);
+  async setPaused(paused: boolean): Promise<void> {
+    if (!this.module?.ccall || this.asyncInFlight) return;
+    this.asyncInFlight = true;
+    try {
+      await this.module.ccall?.('JKA_SetPaused', null, ['number'], [paused ? 1 : 0], { async: true });
+      if (!paused) {
+        await this.module.ccall?.('JKA_Resume', null, [], [], { async: true });
+      }
+    } finally {
+      this.asyncInFlight = false;
+    }
   }
 
-  stopDemo(): void {
-    if (!this.module?.ccall) return;
-    this.module.ccall?.('JKA_StopDemo', null, [], []);
-    // Stop can be pressed while paused; leave the engine loop running so the
-    // disconnected scene can render behind the wizard.
-    this.module.ccall?.('JKA_SetPaused', null, ['number'], [0]);
-    this.module.ccall?.('JKA_Resume', null, [], []);
-    this.currentDemo = null;
+  async stopDemo(): Promise<void> {
+    if (!this.module?.ccall || this.asyncInFlight) return;
+    this.asyncInFlight = true;
+    try {
+      await this.module.ccall?.('JKA_StopDemo', null, [], [], { async: true });
+      // Stop can be pressed while paused; leave the engine loop running so the
+      // disconnected scene can render behind the wizard.
+      await this.module.ccall?.('JKA_SetPaused', null, ['number'], [0], { async: true });
+      await this.module.ccall?.('JKA_Resume', null, [], [], { async: true });
+      this.currentDemo = null;
+    } finally {
+      this.asyncInFlight = false;
+    }
   }
 
   get demoName(): string | null {
@@ -245,7 +268,12 @@ export class EngineHost {
       // not staged yet
     }
     FS.createDataFile('/jka/base', file.name, new Uint8Array(buffer), true, false, true);
-    this.module?.ccall?.('JKA_RestartFS', null, [], []);
+    this.asyncInFlight = true;
+    try {
+      await this.module?.ccall?.('JKA_RestartFS', null, [], [], { async: true });
+    } finally {
+      this.asyncInFlight = false;
+    }
   }
 
   downloadLogs(): void {
