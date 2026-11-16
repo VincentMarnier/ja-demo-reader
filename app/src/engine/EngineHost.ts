@@ -265,6 +265,8 @@ export class EngineHost {
       FS?: {
         createDataFile(parent: string, name: string, data: Uint8Array, read: boolean, write: boolean, own: boolean): void;
         unlink?(path: string): void;
+        mkdirTree?(path: string): void;
+        mkdir?(path: string): void;
       };
     }).FS;
     if (!FS) throw new Error('Engine filesystem unavailable.');
@@ -281,6 +283,46 @@ export class EngineHost {
       await this.module?.ccall?.('JKA_RestartFS', null, [], [], { async: true });
     } finally {
       this.asyncInFlight = false;
+    }
+  }
+
+  async addDemoFile(file: LocalFile): Promise<void> {
+    const FS = (window as unknown as {
+      FS?: {
+        createDataFile(parent: string, name: string, data: Uint8Array, read: boolean, write: boolean, own: boolean): void;
+        unlink?(path: string): void;
+        mkdirTree?(path: string): void;
+        mkdir?(path: string): void;
+      };
+    }).FS;
+    if (!FS) throw new Error('Engine filesystem unavailable.');
+    const name = file.name.split('/').pop() || file.name;
+    let buffer: ArrayBuffer;
+    try {
+      buffer = await file.file.arrayBuffer();
+    } catch (err) {
+      throw new Error(`could not read ${name}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    // Create every missing parent explicitly: some minimal Emscripten builds
+    // do not expose mkdirTree, and the directory may not exist after a boot
+    // that was started without the demo file.
+    const directories = ['/jka', '/jka/base', '/jka/base/demos'];
+    for (const directory of directories) {
+      try {
+        FS.mkdir?.(directory);
+      } catch {
+        // already exists
+      }
+    }
+    try {
+      FS.unlink?.(`/jka/base/demos/${name}`);
+    } catch {
+      // not staged yet
+    }
+    try {
+      FS.createDataFile('/jka/base/demos', name, new Uint8Array(buffer), true, false, true);
+    } catch (err) {
+      throw new Error(`could not write ${name}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 

@@ -78,6 +78,23 @@ export function SettingsPanel({ settings, onChange, onClose, onClearCache }: Set
               <output>{settings.cgFov}°</output>
             </span>
           </label>
+          <label className="setting-row">
+            <span>
+              Gamma
+              <small>Brightness of the rendered scene. Default is 1.00.</small>
+            </span>
+            <span className="setting-value">
+              <input
+                type="range"
+                min={0.5}
+                max={3}
+                step={0.05}
+                value={settings.rGamma}
+                onChange={event => onChange({ rGamma: Number(event.target.value) })}
+              />
+              <output>{settings.rGamma.toFixed(2)}</output>
+            </span>
+          </label>
         </section>
 
         <section className="settings-section">

@@ -281,9 +281,11 @@ M8 adds:
 - Exact kills/deaths at any seek target, replayed from the parsed event list.
 - OPFS caching of the retail PK3s plus an IndexedDB summary cache, with a
   **Use cached assets** button and **Clear cached game data** in Settings.
-- A playback-speed slider (`0.25×`–`2.5×`, `0.25` steps).
-- A 10-second keyframe cache for fast forward seeks and a restart path for
-  backward seeks.
+- A playback-speed slider (`0.25×`–`2.5×`, `0.25` steps) and a gamma slider
+  (`r_gamma`).
+- Background engine staging as soon as assets are selected, and a 10-second
+  keyframe cache for fast forward seeks plus a restart path for backward seeks.
+- Vertical follow-camera pitch for remote players.
 
 See [m8.md](./m8.md) for the bridge additions, measurements and limits.
 

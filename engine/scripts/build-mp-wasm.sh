@@ -70,6 +70,12 @@ cp "$ROOT/engine/platform/jka_bridge.cpp" "$WORK/codemp/client/jka_bridge.cpp"
 # shellcheck disable=SC1090
 source "$EMSDK/emsdk_env.sh" >/dev/null 2>&1
 
+# The CMake find_package calls resolve these from the Emscripten sysroot.  A
+# fresh SDK does not always have the ports built, so make them explicit.
+if command -v embuilder >/dev/null 2>&1; then
+  embuilder build libjpeg libpng sdl2 >/dev/null 2>&1 || true
+fi
+
 if [ "$NODE_RAWF" = "1" ] || [ "${NO_PRELOAD:-0}" = "1" ]; then
   PRELOAD_ARGS=""
 elif [ -n "${PRELOAD_DIR:-}" ]; then

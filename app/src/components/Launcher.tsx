@@ -1,5 +1,5 @@
 import type { ChangeEvent, RefObject } from 'react';
-import type { AssetSelection, DemoSummary, LocalFile, ValidationResult } from '../types';
+import type { AssetSelection, DemoSummary, LocalFile, StageProgress, ValidationResult } from '../types';
 import type { CachedAssets } from '../fs/assetCache';
 import { DemoSummaryView } from './DemoSummaryView';
 
@@ -17,6 +17,8 @@ interface LauncherProps {
   summary: DemoSummary | null;
   cachedAssets: CachedAssets | null;
   cacheStatus: string | null;
+  enginePreparing: boolean;
+  engineProgress: StageProgress | null;
   onUseCachedAssets: () => void;
   savedHandle: FileSystemDirectoryHandle | null;
   busy: boolean;
@@ -220,6 +222,21 @@ export function Launcher(props: LauncherProps) {
               </div>
             )}
           </>
+        ) : null}
+
+        {props.enginePreparing ? (
+          <p className="scan-status">
+            <span className="spinner" aria-hidden="true" />
+            <span>
+              {props.engineProgress && props.engineProgress.total > 0 && props.engineProgress.loaded >= props.engineProgress.total
+                ? 'Starting the wasm engine…'
+                : `Preparing the wasm engine… ${
+                    props.engineProgress && props.engineProgress.total > 0
+                      ? Math.round((props.engineProgress.loaded / props.engineProgress.total) * 100) + '%'
+                      : ''
+                  }`}
+            </span>
+          </p>
         ) : null}
 
         <input

@@ -57,6 +57,8 @@ export default function App() {
   const [demoSummary, setDemoSummary] = useState<DemoSummary | null>(null);
   const [cachedAssets, setCachedAssets] = useState<CachedAssets | null>(null);
   const [cacheStatus, setCacheStatus] = useState<string | null>(null);
+  const [enginePreparing, setEnginePreparing] = useState(false);
+  const [engineProgress, setEngineProgress] = useState<StageProgress | null>(null);
   const [freeCam, setFreeCam] = useState(false);
   const [followClient, setFollowClient] = useState<number | null>(null);
   const [pointerLocked, setPointerLocked] = useState(false);
@@ -74,6 +76,9 @@ export default function App() {
   const demoSummaryRef = useRef<DemoSummary | null>(null);
   const statusRef = useRef<DemoStatus | null>(null);
   const cacheInFlightRef = useRef(false);
+  const bootPromiseRef = useRef<Promise<EngineHost> | null>(null);
+  const bootForegroundRef = useRef(false);
+  const bootedAssetKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     loadDirectoryHandle().then(handle => setSavedHandle(handle));
@@ -124,6 +129,12 @@ export default function App() {
     if (!engine) return;
     engine.setCvar('cg_fov', String(settings.cgFov));
   }, [settings.cgFov, phase]);
+
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    engine.setCvar('r_gamma', String(settings.rGamma));
+  }, [settings.rGamma, phase]);
 
   useEffect(() => {
     const engine = engineRef.current;
@@ -307,6 +318,74 @@ export default function App() {
     setFollowClient(null);
   }, [freeCam]);
 
+  const bootEngine = useCallback(async (files: LocalFile[], foreground: boolean): Promise<EngineHost> => {
+    if (bootPromiseRef.current) {
+      if (foreground) {
+        bootForegroundRef.current = true;
+        setPhase(current => (current === 'playing' || current === 'paused' ? current : 'booting'));
+      }
+      return bootPromiseRef.current;
+    }
+    if (engineRef.current) return engineRef.current;
+
+    const canvas = canvasRef.current;
+    if (!canvas) throw new Error('The engine canvas is not ready.');
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+    bootForegroundRef.current = foreground;
+    setProgress({ loaded: 0, total: 0, current: '' });
+    setEngineProgress({ loaded: 0, total: 0, current: '' });
+    setEnginePreparing(!foreground);
+    if (foreground) setPhase('staging');
+
+    const created = new EngineHost({
+      onLog: () => undefined,
+      onProgress: next => {
+        setProgress(next);
+        setEngineProgress(next);
+        if (bootForegroundRef.current) {
+          setPhase(next.total > 0 && next.loaded >= next.total ? 'booting' : 'staging');
+        } else {
+          setEnginePreparing(true);
+        }
+      },
+      onStatus: next => {
+        statusRef.current = next;
+        setStatus(next);
+        if (playbackRequestedRef.current && next.state === CA_ACTIVE && next.demo === 1) {
+          setPhase(current => (current === 'paused' ? current : 'playing'));
+        }
+        if (next.ended === 1) {
+          setPhase('ended');
+          setPaused(false);
+        }
+      },
+      onFatal: message => {
+        setError(message);
+        setPhase('error');
+      }
+    });
+    engineRef.current = created;
+    bootedAssetKeyRef.current = assetCacheKey(files.filter(file => /^assets[0-3]\.pk3$/i.test(file.name)));
+
+    const promise = created
+      .boot({ canvas, files, signal: controller.signal })
+      .then(() => {
+        created.setCvar('cg_fov', String(settings.cgFov));
+        created.setCvar('r_gamma', String(settings.rGamma));
+        created.setCvar('timescale', String(settings.playbackSpeed));
+        return created;
+      })
+      .finally(() => {
+        bootPromiseRef.current = null;
+        setEnginePreparing(false);
+        setEngineProgress(null);
+      });
+    bootPromiseRef.current = promise;
+    return promise;
+  }, [settings.cgFov, settings.rGamma, settings.playbackSpeed]);
+
   const applyAssets = useCallback(async (next: AssetSelection, persistHandle?: FileSystemDirectoryHandle) => {
     setChecking(true);
     setError(null);
@@ -322,7 +401,14 @@ export default function App() {
       setDemoInfo(null);
       setDemoSummary(null);
       if (result.errors.length === 0) {
+        const key = assetCacheKey(result.assets);
+        if (engineRef.current && bootedAssetKeyRef.current && key !== bootedAssetKeyRef.current) {
+          setError('The wasm engine was preloaded with a different asset set. Reload the page to use the selected folder.');
+          setPhase('error');
+          return;
+        }
         setStep('demo');
+        void bootEngine(result.assets, false).catch(() => undefined);
       } else {
         setStep('assets');
       }
@@ -336,7 +422,7 @@ export default function App() {
     } finally {
       setChecking(false);
     }
-  }, []);
+  }, [bootEngine]);
 
   const handlePickAssets = useCallback(async () => {
     try {
@@ -462,52 +548,24 @@ export default function App() {
     setError(null);
 
     let engine = engineRef.current;
-    if (!engine) {
-      const controller = new AbortController();
-      abortRef.current = controller;
-      setProgress({ loaded: 0, total: 0, current: '' });
-      setPhase('staging');
-
-      const created = new EngineHost({
-        onLog: () => undefined,
-        onProgress: next => {
-          setProgress(next);
-          setPhase(next.total > 0 && next.loaded >= next.total ? 'booting' : 'staging');
-        },
-        onStatus: next => {
-          statusRef.current = next;
-          setStatus(next);
-          if (playbackRequestedRef.current && next.state === CA_ACTIVE && next.demo === 1) {
-            setPhase(current => (current === 'paused' ? current : 'playing'));
-          }
-          if (next.ended === 1) {
-            setPhase('ended');
-            setPaused(false);
-          }
-        },
-        onFatal: message => {
-          setError(message);
-          setPhase('error');
-        }
-      });
-      engineRef.current = created;
-      engine = created;
-
-      // Stage only the four validated retail PK3s plus the chosen demo.
-      // Extra PK3s in the folder (custom maps and mods) are not loaded unless
-      // the map step asks for them.
-      const baseAssets = assetValidation?.assets ?? [];
-      const files: LocalFile[] = [...baseAssets, demoFile];
-
+    if (!engine || bootPromiseRef.current) {
       try {
-        await created.boot({ canvas: canvasRef.current, files, signal: controller.signal });
+        engine = await bootEngine(assetValidation?.assets ?? [], true);
       } catch (err) {
-        if (controller.signal.aborted) setError('Staging cancelled.');
-        else setError(err instanceof Error ? err.message : String(err));
+        setError(err instanceof Error ? err.message : String(err));
         setPhase('error');
         setChecking(false);
         return;
       }
+    }
+
+    try {
+      await engine.addDemoFile(demoFile);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setPhase('error');
+      setChecking(false);
+      return;
     }
 
     setPhase('launcher');
@@ -559,7 +617,7 @@ export default function App() {
       // Keep the engine warm; Play starts the actual demo.
       setPhase('launcher');
     }
-  }, [assetSelection, assetValidation, demoFile, cacheAssets]);
+  }, [assetSelection, assetValidation, demoFile, cacheAssets, bootEngine]);
 
   const startPlay = useCallback(async () => {
     const engine = engineRef.current;
@@ -739,6 +797,8 @@ export default function App() {
               summary={demoSummary}
               cachedAssets={cachedAssets}
               cacheStatus={cacheStatus}
+              enginePreparing={enginePreparing}
+              engineProgress={engineProgress}
               onUseCachedAssets={useCachedAssets}
               savedHandle={savedHandle}
               busy={checking}

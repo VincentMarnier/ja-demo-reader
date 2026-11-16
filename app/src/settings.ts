@@ -14,6 +14,7 @@ export type FreeCamKeys = Record<FreeCamAction, string>;
 
 export interface AppSettings {
   cgFov: number;
+  rGamma: number;
   showScoreboard: boolean;
   showScores: boolean;
   showTimer: boolean;
@@ -49,6 +50,7 @@ export const DEFAULT_FREE_CAM_KEYS: FreeCamKeys = {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   cgFov: 97,
+  rGamma: 1,
   showScoreboard: true,
   showScores: true,
   showTimer: true,
@@ -59,6 +61,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
 const STORAGE_KEY = 'jka-demo-player.settings.v1';
 const MIN_FOV = 60;
 const MAX_FOV = 130;
+const MIN_GAMMA = 0.5;
+const MAX_GAMMA = 3;
 const MIN_SPEED = 0.25;
 const MAX_SPEED = 2.5;
 const SPEED_STEP = 0.25;
@@ -67,6 +71,12 @@ function clampFov(value: unknown): number {
   const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n)) return DEFAULT_SETTINGS.cgFov;
   return Math.min(MAX_FOV, Math.max(MIN_FOV, Math.round(n)));
+}
+
+function clampGamma(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n)) return DEFAULT_SETTINGS.rGamma;
+  return Math.min(MAX_GAMMA, Math.max(MIN_GAMMA, Math.round(n * 100) / 100));
 }
 
 export function clampSpeed(value: unknown): number {
@@ -89,6 +99,7 @@ export function loadSettings(): AppSettings {
     }
     return {
       cgFov: clampFov(parsed.cgFov),
+      rGamma: clampGamma(parsed.rGamma),
       showScoreboard: parsed.showScoreboard !== false,
       showScores: parsed.showScores !== false,
       showTimer: parsed.showTimer !== false,
