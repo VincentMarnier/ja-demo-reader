@@ -54,7 +54,7 @@ export function Launcher(props: LauncherProps) {
                 Select GameData folder
               </button>
               <button className="secondary" onClick={() => props.assetInputRef.current?.click()} disabled={props.busy}>
-                Choose files instead
+                Choose assets instead
               </button>
               {props.savedHandle ? (
                 <button className="ghost" onClick={props.onSaved} disabled={props.busy}>Use last folder</button>
