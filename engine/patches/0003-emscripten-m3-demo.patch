@@ -1,0 +1,61 @@
+--- a/codemp/client/cl_main.cpp
++++ b/codemp/client/cl_main.cpp
+@@ -409,6 +409,10 @@
+ CL_DemoCompleted
+ =================
+ */
++#ifdef __EMSCRIPTEN__
++extern qboolean jka_demoEnded;
++#endif
++
+ void CL_DemoCompleted( void ) {
+ 	if (cl_timedemo && cl_timedemo->integer) {
+ 		int	time;
+@@ -427,11 +431,20 @@
+ 	//rww - The above code seems to just stick you in a no-menu state and you can't do anything there.
+ 	//I'm not sure why it ever worked in TA, but whatever. This code will bring us back to the main menu
+ 	//after a demo is finished playing instead.
++#ifdef __EMSCRIPTEN__
++	// No UI VM in the browser build; disconnect and report completion through
++	// the bridge instead of entering the menu path.
++	jka_demoEnded = qtrue;
++	CL_Disconnect_f();
++	S_StopAllSounds();
++	return;
++#else
+ 	CL_Disconnect_f();
+ 	S_StopAllSounds();
+ 	UIVM_SetActiveMenu( UIMENU_MAIN );
+ 
+ 	CL_NextDemo();
++#endif
+ }
+ 
+ /*
+@@ -550,6 +563,10 @@
+ 	}
+ 	Q_strncpyz( clc.demoName, Cmd_Argv(1), sizeof( clc.demoName ) );
+ 
++#ifdef __EMSCRIPTEN__
++	jka_demoEnded = qfalse;
++#endif
++
+ 	Con_Close();
+ 
+ 	cls.state = CA_CONNECTED;
+--- a/codemp/CMakeLists.txt
++++ b/codemp/CMakeLists.txt
+@@ -555,10 +555,11 @@
+ 	set(MPEngineFiles ${MPEngineFiles} ${MPEngineSysFiles})
+ 
+ 	if(EMSCRIPTEN)
+-		# M1 boot stub plus M2 WebGL compatibility shims.
++		# M1 boot stub, M2 WebGL compatibility shims, M3 status bridge.
+ 		set(MPEngineFiles ${MPEngineFiles}
+ 			"${MPDir}/client/ref_stub.cpp"
+-			"${MPDir}/client/gl_stubs.cpp")
++			"${MPDir}/client/gl_stubs.cpp"
++			"${MPDir}/client/jka_bridge.cpp")
+ 	endif()
+ 	source_group("sys" FILES ${MPEngineSysFiles})
+ 

@@ -1,0 +1,147 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>OpenJK MP — browser demo playback (M3)</title>
+  <style>
+    body { background: #111; color: #ddd; font: 14px/1.4 monospace; margin: 16px; }
+    canvas { display: block; width: 640px; height: 480px; background: #000;
+             border: 1px solid #333; image-rendering: pixelated; }
+    #log { white-space: pre-wrap; max-width: 960px; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas" width="640" height="480"></canvas>
+  <pre id="log"></pre>
+  <script>
+    function m3log(line) {
+      var el = document.getElementById('log');
+      el.textContent += line + "\n";
+      console.log(line);
+    }
+    window.alert = function (msg) { m3log("ALERT>>>" + msg + "<<<"); };
+
+    var params = new URLSearchParams(window.location.search);
+    var demoName = params.get('demo') || 'm05_base';
+    if (!/^[A-Za-z0-9._-]+$/.test(demoName)) {
+      throw new Error('invalid demo name');
+    }
+    var timescale = params.get('timescale') || '1';
+    var maxfps = params.get('fps') || '10';
+
+    window.__m3 = {
+      ready: false,
+      staged: false,
+      status: null,
+      errors: [],
+      logs: []
+    };
+
+    function m3error(err) {
+      window.__m3.errors.push(String(err));
+      m3log('M3 ERROR ' + err);
+    }
+
+    var args = [
+      '+set', 'cl_renderer', 'rd-vanilla',
+      '+set', 'fs_basepath', '/jka',
+      '+set', 'fs_homepath', '/userdata',
+      '+set', 'cl_allowDownload', '0',
+      '+set', 's_initsound', '0',
+      '+set', 'com_bootlogo', '0',
+      '+set', 'r_fullscreen', '0',
+      '+set', 'r_mode', '3',
+      '+set', 'r_picmip', '3',
+      '+set', 'r_shadows', '0',
+      '+set', 'r_dynamicglow', '0',
+      '+set', 'r_flares', '0',
+      '+set', 'com_maxfps', maxfps,
+      '+set', 'timescale', timescale
+    ];
+    if (params.get('norefresh') === '1') {
+      args.push('+set', 'r_norefresh', '1');
+    }
+    if (params.get('pause') === '1') {
+      args.push('+set', 'r_m2_pause', '1');
+    }
+    args.push('+demo', demoName);
+
+    var Module = {
+      arguments: args,
+      canvas: document.getElementById('canvas'),
+      print: function (t) { window.__m3.logs.push(t); m3log(t); },
+      printErr: function (t) { window.__m3.logs.push(t); m3log("ERR " + t); },
+      onAbort: function (what) { m3error('ABORT ' + what); },
+      onRuntimeInitialized: function () {
+        window.__m3.ready = true;
+        pollStatus();
+      },
+      preRun: [function () {
+        try { FS.mkdir('/jka'); } catch (e) { /* exists */ }
+        try { FS.mkdir('/jka/base'); } catch (e) { /* exists */ }
+        try { FS.mkdir('/jka/base/demos'); } catch (e) { /* exists */ }
+
+        var files = [
+          ['/assets0.pk3', '/jka/base/assets0.pk3', true],
+          ['/assets1.pk3', '/jka/base/assets1.pk3', true],
+          ['/assets2.pk3', '/jka/base/assets2.pk3', true],
+          ['/assets3.pk3', '/jka/base/assets3.pk3', true],
+          ['/demos/' + demoName + '.dm_26', '/jka/base/demos/' + demoName + '.dm_26', false]
+        ];
+        var pending = files.length;
+
+        files.forEach(function (item) {
+          var dep = 'stage:' + item[1];
+          addRunDependency(dep);
+          m3log('staging ' + item[0]);
+          fetch(item[0]).then(function (r) {
+            if (!r.ok) { throw new Error(item[0] + ': HTTP ' + r.status); }
+            return r.arrayBuffer();
+          }).then(function (buf) {
+            var bytes = new Uint8Array(buf);
+            if (item[2]) {
+              FS.createDataFile('/jka/base', item[1].split('/').pop(), bytes, true, false, true);
+            } else {
+              FS.createDataFile('/jka/base/demos', item[1].split('/').pop(), bytes, true, false, true);
+            }
+            m3log('staged ' + item[0] + ' (' + bytes.length + ' bytes)');
+            removeRunDependency(dep);
+            if (--pending === 0) {
+              window.__m3.staged = true;
+            }
+          }).catch(function (err) {
+            m3error(err);
+            removeRunDependency(dep);
+            if (--pending === 0) {
+              window.__m3.staged = true;
+            }
+          });
+        });
+      }]
+    };
+
+    function pollStatus() {
+      try {
+        if (Module.ccall) {
+          var raw = Module.ccall('JKA_StatusJson', 'string', [], []);
+          window.__m3.status = JSON.parse(raw);
+          console.log('M3STATUS ' + raw);
+        }
+      } catch (e) {
+        m3error(e);
+      }
+      setTimeout(pollStatus, 500);
+    }
+
+    // Preserve the WebGL buffer so a verifier can read the last frame.
+    (function () {
+      var orig = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (type, attrs) {
+        var a = Object.assign({}, attrs || {}, { preserveDrawingBuffer: true });
+        return orig.call(this, type, a);
+      };
+    })();
+  </script>
+  <script src="openjk.x86.js"></script>
+</body>
+</html>

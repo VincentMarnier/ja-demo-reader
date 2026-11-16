@@ -64,6 +64,7 @@ done
 echo "==> adding platform sources"
 cp "$ROOT/engine/platform/ref_stub.cpp" "$WORK/codemp/client/ref_stub.cpp"
 cp "$ROOT/engine/platform/gl_stubs.cpp" "$WORK/codemp/client/gl_stubs.cpp"
+cp "$ROOT/engine/platform/jka_bridge.cpp" "$WORK/codemp/client/jka_bridge.cpp"
 
 # shellcheck disable=SC1090
 source "$EMSDK/emsdk_env.sh" >/dev/null 2>&1
@@ -78,7 +79,7 @@ fi
 
 RENDERER=OFF
 CGAME=OFF
-GL_FLAGS="-sALLOW_MEMORY_GROWTH=1 -sASSERTIONS=1 -sSTACK_SIZE=8388608 -sSTACK_OVERFLOW_CHECK=1 -sDISABLE_EXCEPTION_CATCHING=0"
+GL_FLAGS="-sALLOW_MEMORY_GROWTH=1 -sASSERTIONS=1 -sSTACK_SIZE=8388608 -sSTACK_OVERFLOW_CHECK=1 -sDISABLE_EXCEPTION_CATCHING=0 -sEXPORTED_RUNTIME_METHODS=ccall,cwrap"
 if [ "$BUILD_RENDERER" = "1" ]; then
   RENDERER=ON
   GL_FLAGS="$GL_FLAGS -sMIN_WEBGL_VERSION=1 -sMAX_WEBGL_VERSION=2 -sLEGACY_GL_EMULATION=1 -sGL_UNSAFE_OPTS=0"
@@ -116,7 +117,7 @@ cp "$BUILD"/openjk.x86.js "$BUILD"/openjk.x86.wasm "$OUT"/
 if [ -f "$BUILD/openjk.x86.data" ]; then
   cp "$BUILD"/openjk.x86.data "$OUT"/
 fi
-cp "$ROOT/engine/platform/web/index.html" "$OUT"/
+cp "$ROOT"/engine/platform/web/*.html "$OUT"/
 
 printf '\nBuilt:\n'
 ls -l "$OUT/openjk.x86.js" "$OUT/openjk.x86.wasm"

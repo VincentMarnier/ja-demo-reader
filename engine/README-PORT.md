@@ -1,8 +1,9 @@
 # engine/ — OpenJK MP Emscripten port
 
-**Status:** M1 boot and M2 renderer/cgame bring-up are verified. `rd-vanilla` and
-cgame are statically linked; a retail base demo on `mp/duel1` renders with
-textures, geometry and HUD in Chrome. No UI, input or audio yet.
+**Status:** M1 boot, M2 renderer/cgame and M3 browser demo playback are verified.
+`rd-vanilla` and cgame are statically linked; a retail base demo on `mp/duel1`
+plays to `CA_ACTIVE`, advances, renders and ends cleanly in Chrome. No UI, input
+or audio yet.
 
 This directory is the project-owned port layer around upstream OpenJK. Upstream
 source is not vendored here yet: `references/OpenJK` is the pinned, read-only
@@ -27,11 +28,15 @@ engine/
 ├── platform/
 │   ├── ref_stub.cpp                    # M1 boot renderer stub
 │   ├── gl_stubs.cpp                    # display-list/array-element shims
+│   ├── jka_bridge.cpp                  # JKA_StatusJson / play / pause ABI
+│   ├── web/demo.html                   # M3 demo harness
 │   ├── fixtures/base/mpdefault.cfg     # boot fixture, no game data
 │   └── web/index.html                  # boot harness (not a product UI)
 └── scripts/
     ├── build-mp-wasm.sh                # worktree + patch + emcmake build
     └── verify-boot-node.sh             # headless boot smoke test
+
+scripts/verify-demo.mjs                 # M3 headless demo verification (CDP)
 ```
 
 ## Patch scope
@@ -85,6 +90,15 @@ BUILD_RENDERER=1 BUILD_CGAME=1 engine/scripts/build-mp-wasm.sh
 # M2 with a small asset fixture (extracted from user PK3s; not committed)
 BUILD_RENDERER=1 PRELOAD_DIR=/tmp/opencode/m2/testassets/base \
   engine/scripts/build-mp-wasm.sh
+
+# M3 headless demo verification (needs the M2+cgame build)
+WEB_DIR=/tmp/opencode/m3/web ASSETS_DIR=/path/to/base \
+  DEMO_FILE=/path/to/demos/m05_base.dm_26 \
+  NOREFRESH=1 node scripts/verify-demo.mjs
+
+WEB_DIR=/tmp/opencode/m3/web ASSETS_DIR=/path/to/base \
+  DEMO_FILE=/path/to/demos/m05_base.dm_26 \
+  PAUSE_FIRST=1 node scripts/verify-demo.mjs
 ```
 
 For the full-asset run, serve `assets0..3.pk3` and `demos/m05_base.dm_26`
@@ -116,6 +130,8 @@ Defaults: worktree `/tmp/opencode/m1/OpenJK-work`, build
   `mp/duel1` demo with textures, characters and HUD.
 - Full retail assets are staged into MEMFS at runtime; a 1.2 GB run boots and
   plays in Chrome under SwiftShader.
+- M3: `JKA_StatusJson`, MEMFS demo staging, `CA_ACTIVE`, advancing clock, first
+  frame capture, no network after staging, and clean demo end.
 - Chrome and Node runs, no wasm trap.
 
 ## Known limitations
@@ -129,6 +145,7 @@ Defaults: worktree `/tmp/opencode/m1/OpenJK-work`, build
 - No UI, input, audio or product file picker. Assets are staged by the test HTML.
 - SwiftShader only: no hardware-GPU performance baseline yet.
 - The `r_m2_pause` capture hook is test-only.
+- M3 assets are served by a loopback test server; the product picker is M4.
 - No cgame, no map, no demo, no assets, no audio, no input.
 - Emscripten's POSIX layer compiles `sys_unix.cpp` today. A dedicated
   `sys_emscripten.cpp` is deferred until browser-specific behaviour (paths,
