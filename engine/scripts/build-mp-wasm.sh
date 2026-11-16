@@ -69,7 +69,7 @@ cp "$ROOT/engine/platform/jka_bridge.cpp" "$WORK/codemp/client/jka_bridge.cpp"
 # shellcheck disable=SC1090
 source "$EMSDK/emsdk_env.sh" >/dev/null 2>&1
 
-if [ "$NODE_RAWF" = "1" ]; then
+if [ "$NODE_RAWF" = "1" ] || [ "${NO_PRELOAD:-0}" = "1" ]; then
   PRELOAD_ARGS=""
 elif [ -n "${PRELOAD_DIR:-}" ]; then
   PRELOAD_ARGS="--preload-file=$PRELOAD_DIR@/jka/base"

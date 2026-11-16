@@ -64,4 +64,9 @@ EMSCRIPTEN_KEEPALIVE void JKA_SetPaused( int paused )
 	Cvar_Set( "r_m2_pause", paused ? "1" : "0" );
 }
 
+EMSCRIPTEN_KEEPALIVE void JKA_Resume( void )
+{
+	emscripten_resume_main_loop();
+}
+
 }
