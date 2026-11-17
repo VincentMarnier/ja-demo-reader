@@ -961,6 +961,13 @@ export default function App() {
   const demoPosition = demoInfo && status ? Math.max(0, status.serverTime - demoInfo.first) : 0;
   const showWizard = phase === 'launcher' || phase === 'validating';
   const showPlayer = phase === 'playing' || phase === 'paused' || phase === 'ended';
+  // A demo chosen from a file input may not be in the folder list.
+  const playbackDemos: Array<{ name: string }> = (() => {
+    const list = assetSelection?.demos ?? [];
+    const name = demoFile?.name;
+    if (!name || list.some(demo => demo.name === name)) return list;
+    return [{ name }, ...list];
+  })();
 
   return (
     <div className="app">
@@ -984,127 +991,147 @@ export default function App() {
       </header>
 
       <main className="main">
-        <div className="play-area">
-        <div className="stage" ref={stageRef}>
-          <svg className="gamma-filter" aria-hidden="true" focusable="false">
-            <filter id="jka-gamma" colorInterpolationFilters="sRGB">
-              <feComponentTransfer>
-                <feFuncR type="gamma" amplitude={1} exponent={gammaExponent} offset={0} />
-                <feFuncG type="gamma" amplitude={1} exponent={gammaExponent} offset={0} />
-                <feFuncB type="gamma" amplitude={1} exponent={gammaExponent} offset={0} />
-              </feComponentTransfer>
-            </filter>
-          </svg>
-          <canvas
-            key={canvasGeneration}
-            ref={canvasRef}
-            width={800}
-            height={600}
-            className="screen"
-            style={{ filter: gammaFilter }}
-          />
-
-          {showWizard ? (
-            <Launcher
-              step={step}
-              assetSelection={assetSelection}
-              assetValidation={assetValidation}
-              demoFile={demoFile}
-              demoWarning={demoWarning}
-              mapName={mapName}
-              mapMissing={mapMissing}
-              mapError={mapError}
-              summary={demoSummary}
-              engineMode={engineMode}
-              enginePreparing={enginePreparing}
-              preparingDemo={!!preparingDemo}
-              engineActive={engineActive}
-              onReleaseMemory={releaseMemory}
-              engineProgress={engineProgress}
-              savedHandle={savedHandle}
-              busy={checking}
-              onPickAssets={handlePickAssets}
-              onSaved={handleSaved}
-              onAssetsFileInput={handleAssetsFileInput}
-              onFolderFileInput={handleFolderFileInput}
-              assetInputRef={assetInputRef}
-              folderInputRef={folderInputRef}
-              demoInputRef={demoInputRef}
-              mapInputRef={mapInputRef}
-              onDemoSelect={handleDemoSelect}
-              onDemoFileInput={handleDemoFileInput}
-              onCheckMap={checkMap}
-              onMapFileInput={handleMapFileInput}
-              onPlay={startPlay}
-              onStep={setStep}
-            />
+        <div
+          className={
+            showPlayer && settings.showScoreboard
+              ? 'play-area'
+              : 'play-area solo'
+          }
+        >
+          {showPlayer && playbackDemos.length > 1 ? (
+            <div className="play-toolbar">
+              <label className="demo-switcher">
+                <span>Demo</span>
+                <select
+                  value={demoFile?.name ?? ''}
+                  onChange={event => {
+                    void handleDemoSelect(event.target.value);
+                  }}
+                >
+                  {playbackDemos.map(demo => (
+                    <option key={demo.name} value={demo.name}>{demo.name}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
           ) : null}
 
-          {phase === 'staging' || phase === 'booting' || phase === 'loading' || phase === 'stopping' || phase === 'seeking' ? (
-            <ProgressOverlay
-              progress={progress}
-              phase={phase}
-              onCancel={() => {
-                abortRef.current?.abort();
-                reload();
-              }}
-            />
-          ) : null}
+          <div className="play-row">
+            <div className="stage" ref={stageRef}>
+              <svg className="gamma-filter" aria-hidden="true" focusable="false">
+                <filter id="jka-gamma" colorInterpolationFilters="sRGB">
+                  <feComponentTransfer>
+                    <feFuncR type="gamma" amplitude={1} exponent={gammaExponent} offset={0} />
+                    <feFuncG type="gamma" amplitude={1} exponent={gammaExponent} offset={0} />
+                    <feFuncB type="gamma" amplitude={1} exponent={gammaExponent} offset={0} />
+                  </feComponentTransfer>
+                </filter>
+              </svg>
+              <canvas
+                key={canvasGeneration}
+                ref={canvasRef}
+                width={800}
+                height={600}
+                className="screen"
+                style={{ filter: gammaFilter }}
+              />
 
-          {phase === 'error' ? (
-            <ErrorPanel message={error ?? 'Unknown error.'} logs={logs} onReload={reload} onBack={reload} />
-          ) : null}
+              {showWizard ? (
+                <Launcher
+                  step={step}
+                  assetSelection={assetSelection}
+                  assetValidation={assetValidation}
+                  demoFile={demoFile}
+                  demoWarning={demoWarning}
+                  mapName={mapName}
+                  mapMissing={mapMissing}
+                  mapError={mapError}
+                  summary={demoSummary}
+                  engineMode={engineMode}
+                  enginePreparing={enginePreparing}
+                  preparingDemo={!!preparingDemo}
+                  engineActive={engineActive}
+                  onReleaseMemory={releaseMemory}
+                  engineProgress={engineProgress}
+                  savedHandle={savedHandle}
+                  busy={checking}
+                  onPickAssets={handlePickAssets}
+                  onSaved={handleSaved}
+                  onAssetsFileInput={handleAssetsFileInput}
+                  onFolderFileInput={handleFolderFileInput}
+                  assetInputRef={assetInputRef}
+                  folderInputRef={folderInputRef}
+                  demoInputRef={demoInputRef}
+                  mapInputRef={mapInputRef}
+                  onDemoSelect={handleDemoSelect}
+                  onDemoFileInput={handleDemoFileInput}
+                  onCheckMap={checkMap}
+                  onMapFileInput={handleMapFileInput}
+                  onPlay={startPlay}
+                  onStep={setStep}
+                />
+              ) : null}
 
-          {showPlayer ? (
-            <Player
-              matchTime={matchTime}
-              speed={settings.playbackSpeed}
-              onSpeedChange={value => setSettings(current => ({ ...current, playbackSpeed: value }))}
-              volumes={{
-                effects: settings.volumeEffects,
-                music: settings.volumeMusic,
-                voice: settings.volumeVoice
-              }}
-              onVolumeChange={(kind, value) => {
-                const key =
-                  kind === 'effects' ? 'volumeEffects' : kind === 'music' ? 'volumeMusic' : 'volumeVoice';
-                setSettings(current => ({ ...current, [key]: Math.min(1, Math.max(0, value)) }));
-              }}
-              paused={paused}
-              phase={phase}
-              scores={scoreboard}
-              view={scoreboard?.view ?? null}
-              showScores={settings.showScores}
-              showTimer={settings.showTimer}
-              currentMs={demoPosition}
-              durationMs={demoInfo?.duration ?? 0}
-              freeCam={freeCam}
+              {phase === 'staging' || phase === 'booting' || phase === 'loading' || phase === 'stopping' || phase === 'seeking' ? (
+                <ProgressOverlay
+                  progress={progress}
+                  phase={phase}
+                  onCancel={() => {
+                    abortRef.current?.abort();
+                    reload();
+                  }}
+                />
+              ) : null}
+
+              {phase === 'error' ? (
+                <ErrorPanel message={error ?? 'Unknown error.'} logs={logs} onReload={reload} onBack={reload} />
+              ) : null}
+
+              {showPlayer ? (
+                <Player
+                  matchTime={matchTime}
+                  speed={settings.playbackSpeed}
+                  onSpeedChange={value => setSettings(current => ({ ...current, playbackSpeed: value }))}
+                  volumes={{
+                    effects: settings.volumeEffects,
+                    music: settings.volumeMusic,
+                    voice: settings.volumeVoice
+                  }}
+                  onVolumeChange={(kind, value) => {
+                    const key =
+                      kind === 'effects' ? 'volumeEffects' : kind === 'music' ? 'volumeMusic' : 'volumeVoice';
+                    setSettings(current => ({ ...current, [key]: Math.min(1, Math.max(0, value)) }));
+                  }}
+                  paused={paused}
+                  phase={phase}
+                  scores={scoreboard}
+                  view={scoreboard?.view ?? null}
+                  showScores={settings.showScores}
+                  showTimer={settings.showTimer}
+                  currentMs={demoPosition}
+                  durationMs={demoInfo?.duration ?? 0}
+                  onPause={togglePause}
+                  onRestart={restart}
+                  onStop={stop}
+                  onFullscreen={fullscreen}
+                  onSeek={handleSeek}
+                />
+              ) : null}
+            </div>
+          </div>
+
+          {showPlayer && settings.showScoreboard ? (
+            <ScoreboardPanel
+              data={scoreboard}
               followClient={followClient}
+              freeCam={freeCam}
               pointerLocked={pointerLocked}
-              onCaptureMouse={captureMouse}
-              demoName={demoFile?.name ?? ''}
-              demos={assetSelection?.demos ?? []}
-              onPause={togglePause}
-              onRestart={restart}
-              onStop={stop}
-              onFullscreen={fullscreen}
+              onFollow={followPlayer}
               onToggleFreeCam={toggleFreeCam}
+              onCaptureMouse={captureMouse}
               onDemoCamera={demoCamera}
-              onSeek={handleSeek}
-              onSelectDemo={handleDemoSelect}
-              onShowLogs={() => setShowLogs(true)}
             />
           ) : null}
-        </div>
-
-        {showPlayer && settings.showScoreboard ? (
-          <ScoreboardPanel
-            data={scoreboard}
-            followClient={followClient}
-            onFollow={followPlayer}
-            onDemoCamera={demoCamera}
-          />
-        ) : null}
         </div>
       </main>
 

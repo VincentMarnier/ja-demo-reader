@@ -95,12 +95,20 @@ own. See [docs/github-pages.md](docs/github-pages.md).
 
 ## Controls and UI
 
+- **Player bar** — pause/resume, sound, seek bar, playback speed and fullscreen,
+  in that order. It fades out a few seconds after the pointer stops moving over
+  the video and returns on movement (it stays up while paused, while a popover
+  is open and while the bar is hovered). The health/armor/saber HUD and the
+  score strip stay on screen; hovering the seek bar previews the time under the
+  pointer. **‹** at the top left stops the demo.
+- **Demo selector** — when several demos are available it sits above the video
+  and the scoreboard.
 - **Seek bar** — jump through the demo. Forward seeks use a keyframe; backward
   seeks restart from the nearest keyframe.
 - **Follow** — first-person model camera for the recorded POV player, third-person
   model camera for other players.
-- **Free cam** — WASD/Space/Ctrl movement, arrow keys or pointer-lock mouse look.
-  Bindings can be changed in Settings.
+- **Free cam** — toggled from the scoreboard panel; WASD/Space/Ctrl movement,
+  arrow keys or pointer-lock mouse look. Bindings can be changed in Settings.
 - **Speed** — opens the playback-speed popover.
 - **Settings** — FOV, gamma, texture quality, HUD toggles, free-cam bindings and
   local summary clearing.

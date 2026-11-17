@@ -3,7 +3,11 @@ import type { ScoreboardData, ScoreboardPlayer } from '../types';
 interface ScoreboardPanelProps {
   data: ScoreboardData | null;
   followClient: number | null;
+  freeCam: boolean;
+  pointerLocked: boolean;
   onFollow: (clientNum: number) => void;
+  onToggleFreeCam: () => void;
+  onCaptureMouse: () => void;
   onDemoCamera: () => void;
 }
 
@@ -46,7 +50,8 @@ function PlayerRow(props: {
   );
 }
 
-export function ScoreboardPanel({ data, followClient, onFollow, onDemoCamera }: ScoreboardPanelProps) {
+export function ScoreboardPanel(props: ScoreboardPanelProps) {
+  const { data, followClient, freeCam } = props;
   const players = data
     ? [...data.players].filter(p => p.team !== 3 && p.name.length > 0).sort((a, b) => b.score - a.score)
     : [];
@@ -67,10 +72,33 @@ export function ScoreboardPanel({ data, followClient, onFollow, onDemoCamera }: 
     <aside className="scoreboard-panel" aria-label="Scoreboard">
       <div className="scoreboard-head">
         <strong>Scoreboard</strong>
-        <button type="button" className="ghost small" onClick={onDemoCamera}>
-          Demo camera
+        <button
+          type="button"
+          className={freeCam ? 'follow-btn active' : 'follow-btn'}
+          onClick={props.onToggleFreeCam}
+          aria-pressed={freeCam}
+          title="Move the camera freely with the free camera keys"
+        >
+          {freeCam ? 'Free cam on' : 'Free cam'}
         </button>
       </div>
+
+      {freeCam || followClient !== null ? (
+        <div className="scoreboard-tools">
+          {freeCam ? (
+            <button
+              type="button"
+              className={props.pointerLocked ? 'follow-btn active' : 'follow-btn'}
+              onClick={props.onCaptureMouse}
+            >
+              {props.pointerLocked ? 'Mouse captured' : 'Capture mouse'}
+            </button>
+          ) : null}
+          <button type="button" className="follow-btn" onClick={props.onDemoCamera}>
+            Demo camera
+          </button>
+        </div>
+      ) : null}
 
       {players.length === 0 ? (
         <p className="muted scoreboard-empty">Waiting for players…</p>
@@ -83,7 +111,7 @@ export function ScoreboardPanel({ data, followClient, onFollow, onDemoCamera }: 
                 key={player.num}
                 player={player}
                 following={followClient === player.num}
-                onFollow={onFollow}
+                onFollow={props.onFollow}
               />
             ))}
           </section>
