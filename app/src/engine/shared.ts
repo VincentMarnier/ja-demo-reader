@@ -109,7 +109,7 @@ export function buildEngineArgs(options: {
     '+set', 'fs_basepath', '/jka',
     '+set', 'fs_homepath', '/userdata',
     '+set', 'cl_allowDownload', '0',
-    '+set', 's_initsound', '0',
+    '+set', 's_initsound', '1',
     '+set', 'com_bootlogo', '0',
     '+set', 'r_fullscreen', '0',
     '+set', 'r_mode', '4',
@@ -137,6 +137,11 @@ export function buildEngineArgs(options: {
   const fastProfile = params.get('profile') === 'fast';
   if (params.get('norefresh') === '1') {
     args.push('+set', 'r_norefresh', '1');
+  }
+  if (params.get('sound') === '0') {
+    // Diagnostic fallback for browsers where the Web Audio bridge is not
+    // wanted or causes trouble.
+    args.push('+set', 's_initsound', '0');
   }
   if (params.get('quality') === 'low') {
     // Software rasterisers / low-end GPUs: fewer texture pixels and a lower

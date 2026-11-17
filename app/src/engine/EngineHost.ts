@@ -2,6 +2,7 @@ import type { DemoInfo, DemoStatus, DemoSummary, FreeCamPose, LocalFile, Scorebo
 import { prepareAndStage } from '../fs/stage';
 import type { BootOptions, EngineCallbacks, EngineHostApi } from './shared';
 import { buildEngineArgs, ENGINE_BASE } from './shared';
+import { EngineAudioOutput } from './audio';
 
 interface FsNode {
   contents?: Uint8Array | Record<string, FsNode>;
@@ -18,6 +19,7 @@ interface ModuleLike {
   preRun?: Array<() => void>;
   locateFile?: (path: string) => string;
   FS?: unknown;
+  jkaAudio?: Record<string, unknown>;
 }
 
 // Keep the whole diagnostic build log; the old 5000-line cap could drop boot
@@ -45,6 +47,7 @@ export class MainThreadEngineHost implements EngineHostApi {
   private runtimeReady = false;
   private stagedBytes = 0;
   private lastMarkAt = 0;
+  private audio: EngineAudioOutput | null = null;
 
   constructor(callbacks: EngineCallbacks) {
     this.callbacks = callbacks;
@@ -57,6 +60,11 @@ export class MainThreadEngineHost implements EngineHostApi {
   async boot(options: BootOptions): Promise<void> {
     const { canvas, files, signal } = options;
     this.markStage('boot-start');
+
+    // The page's AudioContext is the only audio device; the wasm module's
+    // Emscripten DMA backend hands mixed PCM to it.
+    this.audio = new EngineAudioOutput(line => this.profile(line));
+    await this.audio.prepare();
 
     return new Promise<void>((resolve, reject) => {
       const addDependency = (name: string) => {
@@ -140,6 +148,10 @@ export class MainThreadEngineHost implements EngineHostApi {
           }
         ]
       };
+
+      // SNDDMA_Init calls this during engine boot.  It must be present before
+      // the engine script runs.
+      module.jkaAudio = this.audio?.bridge();
 
       this.module = module;
       (window as unknown as { Module?: ModuleLike }).Module = module;
@@ -315,6 +327,20 @@ export class MainThreadEngineHost implements EngineHostApi {
     }
   }
 
+  /**
+   * Freeze the playback clock while the engine is blocked in a map load/scan.
+   * Otherwise its get-DMA-position call jumps several ring buffers on resume
+   * and the mixer's wrap counter loses track.
+   */
+  private async runAudioLoad<T>(task: () => Promise<T>): Promise<T> {
+    await this.audio?.suspend();
+    try {
+      return await task();
+    } finally {
+      await this.audio?.resume();
+    }
+  }
+
   private runExclusive<T>(task: () => Promise<T>): Promise<T> {
     const result = this.queue.then(async () => {
       this.asyncInFlight = true;
@@ -335,11 +361,11 @@ export class MainThreadEngineHost implements EngineHostApi {
     // returns, which is what produced the Asyncify "already in flight" abort.
     if (this.playInFlight) return this.playInFlight;
     this.currentDemo = name;
-    this.playInFlight = this.runExclusive(async () => {
+    this.playInFlight = this.runAudioLoad(() => this.runExclusive(async () => {
       await this.module?.ccall?.('JKA_SetPaused', null, ['number'], [0], { async: true });
       await this.module?.ccall?.('JKA_Resume', null, [], [], { async: true });
       await this.module?.ccall?.('JKA_PlayDemo', null, ['string'], [name], { async: true });
-    }).finally(() => {
+    })).finally(() => {
       this.playInFlight = null;
     });
     return this.playInFlight;
@@ -349,9 +375,9 @@ export class MainThreadEngineHost implements EngineHostApi {
     if (this.prepareInFlight) return this.prepareInFlight;
     if (!this.module?.ccall) return;
     this.currentDemo = name;
-    this.prepareInFlight = this.runExclusive(async () => {
+    this.prepareInFlight = this.runAudioLoad(() => this.runExclusive(async () => {
       await this.module?.ccall?.('JKA_PrepareDemo', null, ['string'], [name], { async: true });
-    }).finally(() => {
+    })).finally(() => {
       this.prepareInFlight = null;
     });
     return this.prepareInFlight;
@@ -359,6 +385,7 @@ export class MainThreadEngineHost implements EngineHostApi {
 
   async resumeDemo(): Promise<void> {
     if (!this.module?.ccall) return;
+    await this.audio?.resume();
     await this.runExclusive(async () => {
       await this.module?.ccall?.('JKA_ResumeDemo', null, [], [], { async: true });
     });
@@ -369,6 +396,7 @@ export class MainThreadEngineHost implements EngineHostApi {
     await this.runExclusive(async () => {
       await this.module?.ccall?.('JKA_Suspend', null, [], [], { async: true });
     });
+    await this.audio?.suspend();
   }
 
   async releaseEngine(): Promise<void> {
@@ -430,7 +458,7 @@ export class MainThreadEngineHost implements EngineHostApi {
     }).FS;
     if (!FS) throw new Error('Engine filesystem unavailable.');
     const buffer = await file.arrayBuffer();
-    await this.runExclusive(async () => {
+    await this.runAudioLoad(() => this.runExclusive(async () => {
       // Re-adding the same map should replace it rather than fail with EEXIST.
       try {
         FS.unlink?.(`/jka/base/${file.name}`);
@@ -439,7 +467,7 @@ export class MainThreadEngineHost implements EngineHostApi {
       }
       FS.createDataFile('/jka/base', file.name, new Uint8Array(buffer), true, false, true);
       await this.module?.ccall?.('JKA_RestartFS', null, [], [], { async: true });
-    });
+    }));
   }
 
   async addDemoFile(file: LocalFile): Promise<void> {
@@ -487,13 +515,13 @@ export class MainThreadEngineHost implements EngineHostApi {
   async demoInfo(name: string): Promise<DemoInfo | null> {
     if (!this.module?.ccall) return null;
     try {
-      return await this.runExclusive(async () => {
+      return await this.runAudioLoad(() => this.runExclusive(async () => {
         const raw = await this.module?.ccall?.('JKA_DemoInfo', 'string', ['string'], [name], { async: true });
         if (!raw) return null;
         const info = JSON.parse(String(raw)) as DemoInfo;
         if (!Number.isFinite(info.first) || !Number.isFinite(info.duration) || info.duration <= 0) return null;
         return info;
-      });
+      }));
     } catch {
       return null;
     }
@@ -514,11 +542,11 @@ export class MainThreadEngineHost implements EngineHostApi {
 
   async seekDemo(name: string, targetMs: number): Promise<void> {
     if (!this.module?.ccall) throw new Error('Engine is not ready.');
-    await this.runExclusive(async () => {
+    await this.runAudioLoad(() => this.runExclusive(async () => {
       await this.module?.ccall?.('JKA_SeekDemo', null, ['string', 'number'], [name, Math.max(0, Math.round(targetMs))], {
         async: true
       });
-    });
+    }));
   }
 
   setCvar(name: string, value: string): void {
@@ -589,5 +617,7 @@ export class MainThreadEngineHost implements EngineHostApi {
       window.clearInterval(this.statusTimer);
       this.statusTimer = null;
     }
+    this.audio?.close();
+    this.audio = null;
   }
 }

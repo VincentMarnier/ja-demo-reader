@@ -73,6 +73,7 @@ interface EngineModule {
   onAbort?: (what: unknown) => void;
   onRuntimeInitialized?: () => void;
   preRun?: Array<() => void>;
+  jkaAudio?: Record<string, unknown>;
 }
 
 declare function importScripts(...urls: string[]): void;
@@ -94,6 +95,85 @@ let logTimer: ReturnType<typeof setTimeout> | null = null;
 let mountedBytes = 0;
 let mountedFiles = 0;
 let workerBootStart = 0;
+let audioOutRate = 0;
+let audioChannels = 2;
+let audioClockFrame = 0;
+let audioClockAt = 0;
+let audioClockLogged = false;
+let audioClockStarted = false;
+let audioLastCallAt = 0;
+let audioLastFrame = 0;
+let audioHasPcm = false;
+
+/**
+ * Audio clock the engine reads through SNDDMA_GetDMAPos.  The page owns the
+ * AudioContext; it sends its audible frame roughly ten times a second, and the
+ * worker extrapolates with the wall clock between messages.
+ */
+function audioPlayFrame(): number {
+  // Until the page has scheduled its first block there is no playback position;
+  // returning a value extrapolated from a stale timestamp would invent time
+  // while a long worker task (boot) has kept the clock messages queued.
+  if (!audioOutRate || !audioClockStarted) return 0;
+  const now = Date.now();
+  const stalled = audioHasPcm && audioLastCallAt > 0 && now - audioLastCallAt > 1500;
+  if (stalled) {
+    // A long main-thread stall (map load, background tab) would otherwise make
+    // the engine's DMA position jump several ring buffers at once.  Continue
+    // from the last audible frame with a small lead and re-anchor the page.
+    audioClockFrame = audioLastFrame + Math.round(audioOutRate * 0.1);
+    audioClockAt = now;
+    post({ type: 'audio-rebase', frame: audioClockFrame });
+  }
+  const elapsed = Math.max(0, now - audioClockAt) * (audioOutRate / 1000);
+  const frame = Math.max(0, Math.floor(audioClockFrame + elapsed));
+  audioLastCallAt = now;
+  audioLastFrame = frame;
+  return frame;
+}
+
+/**
+ * Implements Module.jkaAudio for the wasm module.  AudioContext does not exist
+ * in a dedicated worker, so PCM is forwarded to the page, which schedules it.
+ * Keep this object plain: the worker is served as a classic script.
+ */
+const audioBridge: Record<string, unknown> = {
+  open(requestedRate: number, frames: number, channels: number): number {
+    if (!audioOutRate) return 0;
+    if (requestedRate > 0 && requestedRate !== audioOutRate) {
+      sendLog(`JKA_PROFILE audio rate requested=${requestedRate} using=${audioOutRate}`);
+    }
+    audioChannels = channels;
+    // The page anchors frame 0 when it receives audio-open; start the local
+    // extrapolation from the same moment instead of from worker boot.
+    audioClockFrame = 0;
+    audioClockAt = Date.now();
+    audioLastCallAt = 0;
+    audioLastFrame = 0;
+    audioHasPcm = false;
+    audioClockStarted = false;
+    post({ type: 'audio-open', rate: audioOutRate, frames, channels });
+    return audioOutRate;
+  },
+  submit(startFrame: number, pcm: ArrayBuffer, count: number): void {
+    if (!audioOutRate || count <= 0) return;
+    if (pcm.byteLength < count * audioChannels * 2) return;
+    audioHasPcm = true;
+    post({ type: 'audio-data', start: startFrame, pcm }, [pcm]);
+  },
+  playFrame(): number {
+    return audioPlayFrame();
+  },
+  clear(): void {
+    post({ type: 'audio-clear' });
+  },
+  close(): void {
+    post({ type: 'audio-close' });
+  },
+  activate(): void {
+    // The page owns the context lifecycle.
+  }
+};
 
 function post(message: WorkerResponse, transfer?: Transferable[]): void {
   scope.postMessage(message, transfer);
@@ -386,6 +466,9 @@ function installPakCentralDirectoryCache(FS: EmscriptenFS): void {
 
 function boot(request: Extract<WorkerRequest, { type: 'boot' }>): void {
   workerBootStart = performance.now();
+  audioOutRate = request.audioRate > 0 ? request.audioRate : 0;
+  audioClockFrame = 0;
+  audioClockAt = Date.now();
   const files = request.files;
   sendLog(`JKA_PROFILE worker boot-message at=${workerBootStart.toFixed(0)} files=${files.length}`);
   const pk3s = files.filter(file => /\.pk3$/i.test(file.name));
@@ -399,6 +482,9 @@ function boot(request: Extract<WorkerRequest, { type: 'boot' }>): void {
     arguments: request.args,
     canvas: request.canvas,
     locateFile: path => request.base + path,
+    // SNDDMA_Init runs during engine boot in this worker; AudioContext is not
+    // available here, so the bridge forwards to the page.
+    jkaAudio: audioBridge,
     print: line => sendLog(String(line)),
     printErr: line => sendLog(`ERR ${line}`),
     onAbort: what => fatal(`Engine aborted: ${String(what)}`),
@@ -616,6 +702,15 @@ scope.onmessage = event => {
       return;
     case 'stage':
       sendMemory(request.stage);
+      return;
+    case 'audio-clock':
+      audioClockFrame = request.frame;
+      audioClockStarted = request.started;
+      audioClockAt = Date.now();
+      if (!audioClockLogged) {
+        audioClockLogged = true;
+        sendLog(`JKA_PROFILE audio clock frame=${audioClockFrame}`);
+      }
       return;
     default:
       break;

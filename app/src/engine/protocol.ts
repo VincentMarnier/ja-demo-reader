@@ -14,6 +14,8 @@ export type WorkerRequest =
       base: string;
       args: string[];
       files: BootFile[];
+      /** Page AudioContext rate; 0 when Web Audio is unavailable. */
+      audioRate: number;
     }
   | { id: number; type: 'play'; name: string }
   | { id: number; type: 'prepare'; name: string }
@@ -34,7 +36,8 @@ export type WorkerRequest =
   | { type: 'follow'; client: number }
   | { type: 'freecam-pose'; pose: FreeCamPose }
   | { type: 'freecam-off' }
-  | { type: 'stage'; stage: string };
+  | { type: 'stage'; stage: string }
+  | { type: 'audio-clock'; frame: number; started: boolean };
 
 export interface WorkerMemory {
   heap: number;
@@ -55,6 +58,11 @@ export type WorkerResponse =
   | { type: 'status'; status: DemoStatus }
   | { type: 'scoreboard'; scoreboard: ScoreboardData }
   | { type: 'memory'; stage: string; memory: WorkerMemory }
+  | { type: 'audio-open'; rate: number; frames: number; channels: number }
+  | { type: 'audio-data'; start: number; pcm: ArrayBuffer }
+  | { type: 'audio-rebase'; frame: number }
+  | { type: 'audio-clear' }
+  | { type: 'audio-close' }
   | { type: 'fatal'; message: string };
 
 export interface WorkerValueMap {

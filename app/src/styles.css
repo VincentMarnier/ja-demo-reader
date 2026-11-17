@@ -746,6 +746,27 @@ summary { cursor: pointer; color: var(--muted); }
   accent-color: var(--accent);
   cursor: pointer;
 }
+
+.audio-popover {
+  width: 250px;
+}
+.audio-row + .audio-row {
+  margin-top: 8px;
+}
+.audio-row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.audio-row-head strong {
+  color: var(--text);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
 @media (max-width: 720px) {
   .speed-popover { right: 8px; bottom: 86px; width: 210px; }
+  .audio-popover { width: 210px; }
 }

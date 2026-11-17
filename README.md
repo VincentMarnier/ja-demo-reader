@@ -24,6 +24,9 @@ Academy and select your own `assets0..3.pk3` and demo files. Nothing is uploaded
 - Follow camera for any player, a free-fly camera with mouse look, and the
   original recorded demo camera.
 - Custom Health/Armor/saber HUD, score strip, timer and scoreboard.
+- Demo sound through the engine's software mixer: effects, music and voice
+  volumes are adjustable from the player's Sound button; `?sound=0` boots
+  silently.
 - Playback speed (`0.25×`–`2.5×`) and gamma controls.
 - The engine runs in a dedicated Web Worker and renders to an OffscreenCanvas.
   Retail PK3s are mounted read-only with WORKERFS instead of being copied into

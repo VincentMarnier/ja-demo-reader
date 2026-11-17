@@ -74,15 +74,17 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
 - `engine/platform/jka_bridge.cpp` is copied into `codemp/client/` by the build
   script; editing it needs no patch change.
 - Changes to upstream/cgame/client source belong in a patch. The current patch
-  set is `0001`–`0009`; `0004` contains the linked cgame/rend2 changes,
+  set is `0001`–`0010`; `0004` contains the linked cgame/rend2 changes,
   `0005` keeps the last frame when a demo ends, `0006` adds M9 `jka_profile`
   diagnostics (timings, image counters, shader usage), `0007` adds the hybrid
   eager/lazy shader compile, `0008` selects the OffscreenCanvas window layer
-  and skips DOM input in the worker, and `0009` adds the cgame seek reset,
-  scan-only gamestate path, target server-command application and EOF guard.
-  Prefer a new patch over editing a large existing one. Verify every patch
-  with a clean worktree: apply all patches from the pin and compare the
-  affected files.
+  and skips DOM input in the worker, `0009` adds the cgame seek reset,
+  scan-only gamestate path, target server-command application and EOF guard,
+  and `0010` swaps the SDL audio device for `client/em_audio.cpp` on
+  Emscripten and fixes the `C_MP3Stream_Decode` signature that wasm-ld rejects
+  once demo music starts. Prefer a new patch over editing a large existing one.
+  Verify every patch with a clean worktree: apply all patches from the pin and
+  compare the affected files.
 - `engine/platform/win_emscripten.cpp` is copied into `codemp/client/` by the
   build script, like `jka_bridge.cpp`; editing it needs no patch change. It is
   selected only when `Module.canvas` is an OffscreenCanvas, so the SDL
@@ -213,6 +215,56 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   module runs in the worker. `-sDISABLE_DEPRECATED_FIND_EVENT_TARGET_BEHAVIOR=0`
   is required so target 0 resolves to `Module.canvas` (the newer selector-only
   lookup cannot find an OffscreenCanvas in a worker).
+
+## Audio
+
+- Sound is on: `buildEngineArgs` passes `s_initsound 1`. Both hosts use the
+  engine's software mixer; `engine/platform/em_audio.cpp` (copied into
+  `codemp/client/`, patch `0010` replaces `shared/sdl/sdl_sound.cpp` on
+  Emscripten) is the DMA backend.
+- `mp3code/towave.c`'s `C_MP3Stream_Decode` must keep the two-argument
+  signature declared in `snd_mp3.h`. Native ABIs ignored the extra argument;
+  wasm-ld inserts a signature-mismatch trap that aborts playback as soon as
+  demo music reaches the decoder (patch `0010`).
+- The wasm module never opens SDL audio. It calls `Module.jkaAudio`
+  (`open/submit/playFrame/clear/close`), which the main-thread host implements
+  directly with `app/src/engine/audio.ts` and the worker implements by
+  forwarding PCM to the page. `AudioContext` does not exist in a dedicated
+  worker; keep audio code on the page.
+- `SNDDMA_GetDMAPos` must track audible playback: the page reports the frame
+  currently audible from its scheduling frontier (`nextFrame` minus the queued
+  audio), and the worker extrapolates from `audio-clock` messages. The engine
+  derives `s_soundtime` and its mix-ahead from it.
+- `SNDDMA_Submit` sends the slice of the mix-ahead window that just became
+  final (the paint start moved forward), not the far end of the 16384-frame
+  stereo ring. The engine repaints the whole 200 ms window every frame and can
+  still mix a new sound into the tail, so the tail is not final; sending it
+  delayed every new sound by 150–200 ms. A zero delta is `S_ClearSoundBuffer`
+  (drop queued audio); a backward paint start is a rebase after `snd_restart`.
+- Page playback is a scheduling frontier (`nextFrame`/`nextTime`): final blocks
+  are appended back-to-back, overlapping frames are trimmed and gaps re-anchor.
+  Do not map absolute engine frames to one fixed AudioContext anchor: a
+  missed ring wrap then becomes a permanent one-ring (371 ms) A/V delay. The
+  frame clock starts on the first PCM block, not in `open()`, and the worker
+  clock only extrapolates after the page reports `started` (otherwise a long
+  boot task invents seconds of playback). Keep the 120 ms queue cap: a stalled
+  frame can finalize a large range, and trimming its stale front re-aligns
+  instead of carrying the lag for the rest of the demo.
+- Freeze the page clock around long engine calls (`play`, `prepare`, `seek`,
+  `demo-info`, `add-map`): a map load can block the engine loop for tens of
+  seconds, and a `GetDMAPos` jump of several ring buffers breaks the mixer's
+  wrap counter (observed as a wasm `unreachable` after the first demo frame).
+  The worker also rebases both clocks when `GetDMAPos` is not called for more
+  than 1.5 s (background tab).
+- `HEAP16` is not exported on `Module`; copy PCM inside the `EM_ASM` snippet
+  where the heap view is in scope, then hand the buffer to `jkaAudio.submit`.
+- Stop suspends the page AudioContext (and drops queued sources); Play, Resume
+  and Check map resume it. Release/destroy closes it. Demo Pause does not touch
+  audio.
+- The player's Sound popover writes `s_volume` (effects), `s_musicvolume` and
+  `s_volumeVoice` through `setCvar`; the mixer reads them live, so no engine
+  rebuild or special call is needed. Volumes persist in app settings.
+  `?sound=0` keeps `s_initsound 0` for silent troubleshooting.
 
 ## Demo model
 

@@ -150,6 +150,14 @@ export default function App() {
   }, [settings.playbackSpeed, phase]);
 
   useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    engine.setCvar('s_volume', settings.volumeEffects.toFixed(2));
+    engine.setCvar('s_musicvolume', settings.volumeMusic.toFixed(2));
+    engine.setCvar('s_volumeVoice', settings.volumeVoice.toFixed(2));
+  }, [settings.volumeEffects, settings.volumeMusic, settings.volumeVoice, phase]);
+
+  useEffect(() => {
     if (phase !== 'playing' && phase !== 'paused' && phase !== 'ended') return;
     let cancelled = false;
     const tick = () => {
@@ -416,6 +424,9 @@ export default function App() {
         created.setCvar('cg_fov', String(settings.cgFov));
         created.setCvar('r_gamma', String(settings.rGamma));
         created.setCvar('timescale', String(settings.playbackSpeed));
+        created.setCvar('s_volume', settings.volumeEffects.toFixed(2));
+        created.setCvar('s_musicvolume', settings.volumeMusic.toFixed(2));
+        created.setCvar('s_volumeVoice', settings.volumeVoice.toFixed(2));
         return created;
       })
       .finally(() => {
@@ -429,6 +440,9 @@ export default function App() {
     settings.cgFov,
     settings.rGamma,
     settings.playbackSpeed,
+    settings.volumeEffects,
+    settings.volumeMusic,
+    settings.volumeVoice,
     settings.texturePicmip,
     settings.textureMipmaps
   ]);
@@ -1046,6 +1060,16 @@ export default function App() {
               matchTime={matchTime}
               speed={settings.playbackSpeed}
               onSpeedChange={value => setSettings(current => ({ ...current, playbackSpeed: value }))}
+              volumes={{
+                effects: settings.volumeEffects,
+                music: settings.volumeMusic,
+                voice: settings.volumeVoice
+              }}
+              onVolumeChange={(kind, value) => {
+                const key =
+                  kind === 'effects' ? 'volumeEffects' : kind === 'music' ? 'volumeMusic' : 'volumeVoice';
+                setSettings(current => ({ ...current, [key]: Math.min(1, Math.max(0, value)) }));
+              }}
               paused={paused}
               phase={phase}
               scores={scoreboard}

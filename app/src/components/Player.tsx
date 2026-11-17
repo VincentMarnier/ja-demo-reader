@@ -8,6 +8,8 @@ interface PlayerProps {
   matchTime: string;
   speed: number;
   onSpeedChange: (value: number) => void;
+  volumes: { effects: number; music: number; voice: number };
+  onVolumeChange: (kind: 'effects' | 'music' | 'voice', value: number) => void;
   paused: boolean;
   phase: Phase;
   scores: ScoreboardData | null;
@@ -35,7 +37,12 @@ interface PlayerProps {
 
 export function Player(props: PlayerProps) {
   const ended = props.phase === 'ended';
-  const [speedOpen, setSpeedOpen] = useState(false);
+  const [popover, setPopover] = useState<'speed' | 'sound' | null>(null);
+  const volumeRows = [
+    { kind: 'effects' as const, label: 'Effects', value: props.volumes.effects },
+    { kind: 'music' as const, label: 'Music', value: props.volumes.music },
+    { kind: 'voice' as const, label: 'Voice', value: props.volumes.voice }
+  ];
   // A demo chosen from a file input may not be in the folder list.
   const demos = props.demos.some(d => d.name === props.demoName)
     ? props.demos
@@ -58,7 +65,7 @@ export function Player(props: PlayerProps) {
           disabled={ended}
           onSeek={props.onSeek}
         />
-        {speedOpen ? (
+        {popover === 'speed' ? (
           <div className="speed-popover">
             <div className="speed-popover-head">
               <span>Playback speed</span>
@@ -74,6 +81,31 @@ export function Player(props: PlayerProps) {
               aria-label="Playback speed"
               onChange={event => props.onSpeedChange(Number(event.target.value))}
             />
+          </div>
+        ) : null}
+
+        {popover === 'sound' ? (
+          <div className="speed-popover audio-popover">
+            <div className="speed-popover-head">
+              <span>Sound</span>
+            </div>
+            {volumeRows.map(row => (
+              <div className="audio-row" key={row.kind}>
+                <div className="audio-row-head">
+                  <span>{row.label}</span>
+                  <strong>{Math.round(row.value * 100)}%</strong>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={row.value}
+                  aria-label={`${row.label} volume`}
+                  onChange={event => props.onVolumeChange(row.kind, Number(event.target.value))}
+                />
+              </div>
+            ))}
           </div>
         ) : null}
 
@@ -94,11 +126,19 @@ export function Player(props: PlayerProps) {
           </button>
           <button
             type="button"
-            className={speedOpen ? 'secondary active' : 'ghost'}
-            onClick={() => setSpeedOpen(open => !open)}
-            aria-expanded={speedOpen}
+            className={popover === 'speed' ? 'secondary active' : 'ghost'}
+            onClick={() => setPopover(open => (open === 'speed' ? null : 'speed'))}
+            aria-expanded={popover === 'speed'}
           >
             Speed {props.speed.toFixed(2)}×
+          </button>
+          <button
+            type="button"
+            className={popover === 'sound' ? 'secondary active' : 'ghost'}
+            onClick={() => setPopover(open => (open === 'sound' ? null : 'sound'))}
+            aria-expanded={popover === 'sound'}
+          >
+            Sound
           </button>
           {props.freeCam ? (
             <button

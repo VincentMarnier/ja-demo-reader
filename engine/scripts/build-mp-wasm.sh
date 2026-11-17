@@ -69,6 +69,7 @@ cp "$ROOT/engine/platform/ref_stub.cpp" "$WORK/codemp/client/ref_stub.cpp"
 cp "$ROOT/engine/platform/gl_stubs.cpp" "$WORK/codemp/client/gl_stubs.cpp"
 cp "$ROOT/engine/platform/jka_bridge.cpp" "$WORK/codemp/client/jka_bridge.cpp"
 cp "$ROOT/engine/platform/win_emscripten.cpp" "$WORK/codemp/client/win_emscripten.cpp"
+cp "$ROOT/engine/platform/em_audio.cpp" "$WORK/codemp/client/em_audio.cpp"
 
 # shellcheck disable=SC1090
 source "$EMSDK/emsdk_env.sh" >/dev/null 2>&1

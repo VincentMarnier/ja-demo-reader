@@ -23,6 +23,9 @@ export interface AppSettings {
   showScores: boolean;
   showTimer: boolean;
   playbackSpeed: number;
+  volumeEffects: number;
+  volumeMusic: number;
+  volumeVoice: number;
   freeCamKeys: FreeCamKeys;
 }
 
@@ -61,6 +64,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showScores: true,
   showTimer: true,
   playbackSpeed: 1,
+  // The engine's own defaults: s_volume 0.5, s_musicvolume 0.25, s_volumeVoice 1.
+  volumeEffects: 0.5,
+  volumeMusic: 0.25,
+  volumeVoice: 1,
   freeCamKeys: { ...DEFAULT_FREE_CAM_KEYS }
 };
 
@@ -100,6 +107,12 @@ export function clampSpeed(value: unknown): number {
   return Math.min(MAX_SPEED, Math.max(MIN_SPEED, Number(stepped.toFixed(2))));
 }
 
+export function clampVolume(value: unknown, fallback: number): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(1, Math.max(0, Math.round(n * 100) / 100));
+}
+
 export function loadSettings(): AppSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -133,6 +146,9 @@ export function loadSettings(): AppSettings {
       showScores: parsed.showScores !== false,
       showTimer: parsed.showTimer !== false,
       playbackSpeed: clampSpeed(parsed.playbackSpeed),
+      volumeEffects: clampVolume(parsed.volumeEffects, DEFAULT_SETTINGS.volumeEffects),
+      volumeMusic: clampVolume(parsed.volumeMusic, DEFAULT_SETTINGS.volumeMusic),
+      volumeVoice: clampVolume(parsed.volumeVoice, DEFAULT_SETTINGS.volumeVoice),
       freeCamKeys
     };
   } catch {

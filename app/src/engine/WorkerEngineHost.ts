@@ -1,6 +1,7 @@
 import type { DemoInfo, DemoSummary, FreeCamPose, LocalFile, ScoreboardData } from '../types';
 import type { BootOptions, EngineCallbacks, EngineHostApi } from './shared';
 import { buildEngineArgs, ENGINE_BASE, WorkerUnsupportedError } from './shared';
+import { EngineAudioOutput } from './audio';
 import type { BootFile, WorkerMemory, WorkerRequest, WorkerResponse } from './protocol';
 
 const LOG_LIMIT = 20000;
@@ -60,6 +61,8 @@ export class WorkerEngineHost implements EngineHostApi {
   private bootReject: ((error: Error) => void) | null = null;
   private bootTimer: number | null = null;
   private lastMarkAt = 0;
+  private audio: EngineAudioOutput | null = null;
+  private audioClockTimer: number | null = null;
 
   constructor(callbacks: EngineCallbacks) {
     this.callbacks = callbacks;
@@ -91,6 +94,13 @@ export class WorkerEngineHost implements EngineHostApi {
       engineArgs.diagnostics
     );
 
+    // Create the AudioContext here, while the page still has the click's user
+    // activation.  The worker has no AudioContext and reports this rate back
+    // through SNDDMA_Init; 0 leaves the engine silent instead of failing.
+    this.audio = new EngineAudioOutput(line => this.profile(line));
+    await this.audio.prepare();
+    const audioRate = this.audio.sampleRate;
+
     const bootFileList: BootFile[] = options.files
       .filter(file => /\.pk3$/i.test(file.name))
       .map(file => ({ name: file.name, file: file.file }));
@@ -111,7 +121,8 @@ export class WorkerEngineHost implements EngineHostApi {
     worker.onmessage = event => this.onMessage(event.data as WorkerResponse);
     worker.onerror = event => {
       event.preventDefault();
-      this.fail(event.message ? `Engine worker error: ${event.message}` : 'Engine worker error.');
+      const stack = event.error instanceof Error ? `\n${event.error.stack}` : '';
+      this.fail(event.message ? `Engine worker error: ${event.message}${stack}` : 'Engine worker error.');
     };
     worker.onmessageerror = () => this.fail('Engine worker message could not be deserialized.');
 
@@ -140,7 +151,8 @@ export class WorkerEngineHost implements EngineHostApi {
       canvas: offscreen,
       base: ENGINE_BASE,
       args: engineArgs.args,
-      files: bootFileList
+      files: bootFileList,
+      audioRate
     };
 
     this.bootTimer = window.setTimeout(() => {
@@ -267,6 +279,31 @@ export class WorkerEngineHost implements EngineHostApi {
       case 'memory':
         void this.logWorkerMemory(event.stage, event.memory);
         return;
+      case 'audio-open': {
+        const rate = this.audio?.open({ rate: event.rate, frames: event.frames, channels: event.channels }) ?? 0;
+        if (rate > 0) {
+          this.startAudioClock();
+        } else {
+          this.profile('audio unavailable: the page has no AudioContext output');
+        }
+        return;
+      }
+      case 'audio-data': {
+        const wasStarted = this.audio?.started ?? false;
+        this.audio?.writePcm(event.start, new Int16Array(event.pcm));
+        if (!wasStarted && this.audio?.started) this.sendAudioClock();
+        return;
+      }
+      case 'audio-rebase':
+        this.audio?.rebase(event.frame);
+        return;
+      case 'audio-clear':
+        this.audio?.clear();
+        return;
+      case 'audio-close':
+        this.stopAudioClock();
+        this.audio?.close();
+        return;
       case 'fatal':
         this.fail(event.message);
         return;
@@ -332,6 +369,30 @@ export class WorkerEngineHost implements EngineHostApi {
     this.callbacks.onLog(text);
   }
 
+  /**
+   * The worker cannot read the page's AudioContext, so it gets the audible
+   * frame from here.  Ten updates a second is plenty; the worker extrapolates
+   * between them and S_GetSoundtime only needs the wrapped ring position.
+   */
+  private sendAudioClock(): void {
+    const audio = this.audio;
+    if (!audio?.active) return;
+    this.worker?.postMessage({ type: 'audio-clock', frame: audio.playFrame(), started: audio.started });
+  }
+
+  private startAudioClock(): void {
+    if (this.audioClockTimer !== null) return;
+    this.audioClockTimer = window.setInterval(() => this.sendAudioClock(), 100);
+    this.sendAudioClock();
+    this.profile(`audio clock timer start frame=${this.audio?.playFrame() ?? 0}`);
+  }
+
+  private stopAudioClock(): void {
+    if (this.audioClockTimer === null) return;
+    window.clearInterval(this.audioClockTimer);
+    this.audioClockTimer = null;
+  }
+
   private logBrowserProfile(session: string, diagnostics: boolean): void {
     let webgl2 = false;
     let offscreenWebgl2 = false;
@@ -388,7 +449,7 @@ export class WorkerEngineHost implements EngineHostApi {
   async playDemo(name: string): Promise<void> {
     if (this.playInFlight) return this.playInFlight;
     this.currentDemo = name;
-    this.playInFlight = this.call<void>('play', { name }).finally(() => {
+    this.playInFlight = this.runAudioLoad(() => this.call<void>('play', { name })).finally(() => {
       this.playInFlight = null;
     });
     return this.playInFlight;
@@ -397,18 +458,34 @@ export class WorkerEngineHost implements EngineHostApi {
   async prepareDemo(name: string): Promise<void> {
     if (this.prepareInFlight) return this.prepareInFlight;
     this.currentDemo = name;
-    this.prepareInFlight = this.call<void>('prepare', { name }).finally(() => {
+    this.prepareInFlight = this.runAudioLoad(() => this.call<void>('prepare', { name })).finally(() => {
       this.prepareInFlight = null;
     });
     return this.prepareInFlight;
   }
 
+  /**
+   * Map loads and scans can block the engine loop for a long time.  Freeze the
+   * playback clock meanwhile: the engine's get-DMA-position call must not jump
+   * several ring buffers while it is not mixing.
+   */
+  private async runAudioLoad(task: () => Promise<void>): Promise<void> {
+    await this.audio?.suspend();
+    try {
+      await task();
+    } finally {
+      await this.audio?.resume();
+    }
+  }
+
   async resumeDemo(): Promise<void> {
+    await this.audio?.resume();
     await this.call<void>('resume');
   }
 
   async suspendDemo(): Promise<void> {
     await this.call<void>('suspend');
+    await this.audio?.suspend();
   }
 
   async releaseEngine(): Promise<void> {
@@ -437,7 +514,7 @@ export class WorkerEngineHost implements EngineHostApi {
     if (!file.name.toLowerCase().endsWith('.pk3')) {
       throw new Error('The map must be supplied as a .pk3 file.');
     }
-    await this.call<void>('add-map', { name: file.name, file });
+    await this.runAudioLoad(() => this.call<void>('add-map', { name: file.name, file }));
   }
 
   async addDemoFile(file: LocalFile): Promise<void> {
@@ -448,12 +525,15 @@ export class WorkerEngineHost implements EngineHostApi {
 
   async demoInfo(name: string): Promise<DemoInfo | null> {
     try {
+      await this.audio?.suspend();
       const info = await this.call<DemoInfo | null>('demo-info', { name });
       if (!info) return null;
       if (!Number.isFinite(info.first) || !Number.isFinite(info.duration) || info.duration <= 0) return null;
       return info;
     } catch {
       return null;
+    } finally {
+      await this.audio?.resume();
     }
   }
 
@@ -468,7 +548,7 @@ export class WorkerEngineHost implements EngineHostApi {
   }
 
   async seekDemo(name: string, targetMs: number): Promise<void> {
-    await this.call<void>('seek', { name, target: Math.max(0, Math.round(targetMs)) });
+    await this.runAudioLoad(() => this.call<void>('seek', { name, target: Math.max(0, Math.round(targetMs)) }));
   }
 
   setCvar(name: string, value: string): void {
@@ -514,6 +594,9 @@ export class WorkerEngineHost implements EngineHostApi {
   }
 
   destroy(): void {
+    this.stopAudioClock();
+    this.audio?.close();
+    this.audio = null;
     if (this.bootTimer !== null) {
       window.clearTimeout(this.bootTimer);
       this.bootTimer = null;
