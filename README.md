@@ -12,7 +12,11 @@ Academy and select your own `assets0..3.pk3` and demo files. Nothing is uploaded
 
 - Three-step local setup: assets → demo → map check.
 - Real demo playback through OpenJK MP and the `rd-rend2` renderer in WebGL2.
-- Timeline seeking with a 10-second keyframe cache.
+- Timeline seeking with a 10-second keyframe cache; backward seeks and Restart
+  reset the cgame in place instead of reloading the map.
+- Check map parses the demo without starting the renderer or cgame (~0.5 s in
+  the worker), and the demo then loads in the background while the map step is
+  visible.
 - Per-game resume: map, time played, match clock, scores and deaths. Map
   restarts and level changes start new games with reset stats.
 - Exact kills/deaths at the current playback or seek position, replayed from the

@@ -9,9 +9,13 @@ Brave the tab was **45 MB** after page load, **125 MB** after engine boot/Check
 map (before the background prepare completes), **275 MB** playing, **280 MB**
 after keep-warm Stop and **95 MB** after Release; the user reported no errors.
 
+**Update:** Phase 5 added warm backward/forward seek, Restart and the
+parse-only Check map; see `docs/m9-phase5.md`. The Stop/Play/Release behaviour
+below is unchanged.
+
 **Scope:** Remove the repeated map/cgame load from Play and Stop, without
-changing the engine's Asyncify/single-flight rules. Backward seek (Phase 5)
-and the demo-scan pure-list issue are out of scope.
+changing the engine's Asyncify/single-flight rules. Backward seek and the
+demo-scan pure-list issue were out of scope for this phase.
 
 ## Target scorecard
 

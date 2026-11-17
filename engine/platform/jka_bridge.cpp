@@ -19,6 +19,7 @@ published by the Free Software Foundation.
 #include <cstdarg>
 
 #include "client/client.h"
+#include "client/cl_cgameapi.h"
 #include "qcommon/qcommon.h"
 
 qboolean jka_demoEnded = qfalse;
@@ -34,6 +35,10 @@ static int jka_scanMs;
 // M9 Phase 4: keep one loaded demo warm and paused behind the wizard.
 static char jka_preparedDemo[128];
 static qboolean jka_suspended = qfalse;
+
+// M9 Phase 5: while set, CL_ParseGamestate only rebuilds the client
+// configstring/snapshot state and does not load the map or cgame.
+qboolean jka_scanOnly = qfalse;
 
 static qboolean JKA_BridgeProfileEnabled( void )
 {
@@ -816,6 +821,7 @@ static int JKA_ScanDemo( const char *name, int targetTime, qboolean stopAtTarget
 	int count = 0;
 	int lastYield = Sys_Milliseconds();
 	int profileStart = lastYield;
+	qboolean previousDemoPlaying = clc.demoplaying;
 
 	*firstTime = 0;
 	*lastTime = 0;
@@ -838,6 +844,8 @@ static int JKA_ScanDemo( const char *name, int targetTime, qboolean stopAtTarget
 	}
 
 	jka_lastCommandSeq = clc.serverCommandSequence;
+	jka_scanOnly = qtrue;
+	clc.demoplaying = qtrue;
 
 	try {
 		while ( FS_Read( &sequence, 4, file ) == 4 ) {
@@ -869,6 +877,7 @@ static int JKA_ScanDemo( const char *name, int targetTime, qboolean stopAtTarget
 				int commandNameLen = 0;
 
 				if ( !command || !command[0] ) {
+					clc.lastExecutedServerCommand = commandSeq;
 					continue;
 				}
 				while ( command[commandNameLen] && command[commandNameLen] != ' ' &&
@@ -878,9 +887,19 @@ static int JKA_ScanDemo( const char *name, int targetTime, qboolean stopAtTarget
 					commandNameLen++;
 				}
 				commandName[commandNameLen] = 0;
-				if ( !Q_stricmp( commandName, "cs" ) ) {
-					continue;
+
+				// Apply configstring updates so the keyframe's gameState is the
+				// same as the one live playback would have.  CL_GetServerCommand
+				// also advances lastExecutedServerCommand.
+				if ( !Q_stricmp( commandName, "cs" ) ||
+					!Q_stricmp( commandName, "bcs0" ) ||
+					!Q_stricmp( commandName, "bcs1" ) ||
+					!Q_stricmp( commandName, "bcs2" ) ) {
+					CL_GetServerCommand( commandSeq );
+				} else {
+					clc.lastExecutedServerCommand = commandSeq;
 				}
+
 				if ( !Q_stricmp( commandName, "map_restart" ) ||
 					!Q_stricmp( commandName, "newgame" ) || !Q_stricmp( commandName, "newGame" ) ) {
 					jka_mapRestartCount++;
@@ -918,6 +937,8 @@ static int JKA_ScanDemo( const char *name, int targetTime, qboolean stopAtTarget
 	}
 
 	FS_FCloseFile( file );
+	jka_scanOnly = qfalse;
+	clc.demoplaying = previousDemoPlaying;
 	jka_scanMessages = count;
 	jka_scanMs = Sys_Milliseconds() - profileStart;
 	*firstTime = first;
@@ -1043,11 +1064,43 @@ EMSCRIPTEN_KEEPALIVE const char *JKA_DemoInfo( const char *name )
 	return buffer;
 }
 
+static int JKA_GameIndexForTime( int targetTime )
+{
+	int i;
+
+	if ( jka_gameCount <= 0 ) {
+		return -1;
+	}
+	for ( i = 0; i < jka_gameCount; i++ ) {
+		if ( targetTime >= jka_games[i].startTime && targetTime <= jka_games[i].endTime ) {
+			return i;
+		}
+	}
+	// Before the first or after the last game; use the nearest end.
+	if ( targetTime < jka_games[0].startTime ) {
+		return 0;
+	}
+	return jka_gameCount - 1;
+}
+
 static jkaKeyframe_t *JKA_FindKeyframe( int targetTime )
 {
 	jkaKeyframe_t *best = NULL;
+	int gameIndex = JKA_GameIndexForTime( targetTime );
 	int i;
 
+	for ( i = 0; i < jka_keyframeCount; i++ ) {
+		if ( jka_keyframes[i].time <= targetTime &&
+			( gameIndex < 0 || jka_keyframes[i].gameIndex == gameIndex ) &&
+			( !best || jka_keyframes[i].time > best->time ) ) {
+			best = &jka_keyframes[i];
+		}
+	}
+	if ( best || gameIndex < 0 ) {
+		return best;
+	}
+	// A game without a captured keyframe: fall back to the nearest earlier
+	// keyframe; the seek path will reject a map mismatch and reload.
 	for ( i = 0; i < jka_keyframeCount; i++ ) {
 		if ( jka_keyframes[i].time <= targetTime &&
 			( !best || jka_keyframes[i].time > best->time ) ) {
@@ -1055,71 +1108,6 @@ static jkaKeyframe_t *JKA_FindKeyframe( int targetTime )
 		}
 	}
 	return best;
-}
-
-// Seek inside the already loaded demo: no map reload, no cgame reinit.  This
-// keeps the jump close to jaMME's indexed seek once the map is warm.
-static int JKA_SeekKeyframeExisting( int targetTime )
-{
-	jkaKeyframe_t *keyframe = JKA_FindKeyframe( targetTime );
-	jkaGame_t *game;
-	int lastYield = Sys_Milliseconds();
-
-	if ( !keyframe || targetTime < keyframe->time ) {
-		return 0;
-	}
-	if ( !clc.demofile || cls.state != CA_ACTIVE || !clc.demoplaying ) {
-		return 0;
-	}
-
-	game = ( keyframe->gameIndex >= 0 && keyframe->gameIndex < jka_gameCount )
-		? &jka_games[keyframe->gameIndex] : NULL;
-	{
-		const char *currentMap = Info_ValueForKey( JKA_ConfigString( CS_SERVERINFO ), "mapname" );
-		if ( !game || !currentMap || Q_stricmp( currentMap, game->map ) ) {
-			return 0;
-		}
-	}
-	if ( game && game->hasBaselines ) {
-		Com_Memcpy( cl.entityBaselines, game->baselines, sizeof( cl.entityBaselines ) );
-	}
-	Com_Memcpy( &cl.gameState, &keyframe->gameState, sizeof( cl.gameState ) );
-	Com_Memset( cl.snapshots, 0, sizeof( cl.snapshots ) );
-	cl.snap = keyframe->snap;
-	cl.snap.parseEntitiesNum = 0;
-	for ( int i = 0; i < keyframe->entityCount; i++ ) {
-		cl.parseEntities[i] = keyframe->entities[i];
-	}
-	cl.parseEntitiesNum = keyframe->entityCount;
-	cl.snapshots[cl.snap.messageNum & PACKET_MASK] = cl.snap;
-	clc.serverMessageSequence = cl.snap.messageNum;
-	clc.serverCommandSequence = keyframe->serverCommandSequence;
-	clc.lastExecutedServerCommand = keyframe->lastExecutedServerCommand;
-	clc.clientNum = keyframe->clientNum;
-	FS_Seek( clc.demofile, keyframe->resumeOffset, FS_SEEK_SET );
-
-	try {
-		while ( clc.demofile && cl.snap.serverTime < targetTime ) {
-			CL_ReadDemoMessage();
-			if ( !clc.demofile ) {
-				break;
-			}
-			JKA_MaybeYield( &lastYield );
-		}
-	} catch ( int ) {
-		return -1;
-	}
-	if ( !clc.demofile || !cl.snap.valid ) {
-		return -1;
-	}
-
-	cl.serverTime = cl.snap.serverTime;
-	cl.serverTimeDelta = cl.snap.serverTime - cls.realtime;
-	cl.oldServerTime = cl.snap.serverTime;
-	cl.oldFrameServerTime = cl.snap.serverTime;
-	cl.newSnapshots = qfalse;
-	clc.firstDemoFrameSkipped = qtrue;
-	return 1;
 }
 
 // Start the demo, restore the nearest parsed keyframe and replay only the
@@ -1186,11 +1174,17 @@ static int JKA_SeekKeyframe( const char *name, int targetTime )
 	FS_Seek( clc.demofile, keyframe->resumeOffset, FS_SEEK_SET );
 
 	try {
+		int lastPos = FS_FTell( clc.demofile );
 		while ( clc.demofile && cl.snap.serverTime < targetTime ) {
 			CL_ReadDemoMessage();
 			if ( !clc.demofile ) {
 				break;
 			}
+			// CL_DemoCompleted leaves the file open at EOF in this build.
+			if ( FS_FTell( clc.demofile ) <= lastPos ) {
+				break;
+			}
+			lastPos = FS_FTell( clc.demofile );
 			JKA_MaybeYield( &lastYield );
 		}
 	} catch ( int ) {
@@ -1215,6 +1209,108 @@ static int JKA_SeekKeyframe( const char *name, int targetTime )
 	return 1;
 }
 
+// M9 Phase 5: seek inside the live demo.  The map, renderer and cgame stay
+// resident; only the client snapshot/configstring state and the cgame are
+// rebuilt.  This is the same keyframe restore as JKA_SeekKeyframe, minus the
+// "demo" command/CL_Disconnect/map load.
+static int JKA_SeekKeyframeWarm( int targetTime )
+{
+	jkaKeyframe_t *keyframe = JKA_FindKeyframe( targetTime );
+	jkaGame_t *game;
+	const char *currentMap;
+	int profileStart = Sys_Milliseconds();
+	int lastYield = profileStart;
+	int firstSnapshot;
+	int targetSnapshot;
+
+	if ( !keyframe || targetTime < keyframe->time ) {
+		return 0;
+	}
+	if ( !clc.demofile || !clc.demoplaying || cls.state != CA_ACTIVE ) {
+		return 0;
+	}
+	if ( keyframe->gameIndex < 0 || keyframe->gameIndex >= jka_gameCount ) {
+		return 0;
+	}
+	game = &jka_games[keyframe->gameIndex];
+	currentMap = Info_ValueForKey( JKA_ConfigString( CS_SERVERINFO ), "mapname" );
+	if ( !currentMap || !currentMap[0] || Q_stricmp( currentMap, game->map ) ) {
+		// A different map still needs the full Renderer/cgame load.
+		return 0;
+	}
+
+	if ( game->hasBaselines ) {
+		Com_Memcpy( cl.entityBaselines, game->baselines, sizeof( cl.entityBaselines ) );
+	}
+	Com_Memcpy( &cl.gameState, &keyframe->gameState, sizeof( cl.gameState ) );
+	Com_Memset( cl.snapshots, 0, sizeof( cl.snapshots ) );
+	cl.snap = keyframe->snap;
+	cl.snap.parseEntitiesNum = 0;
+	for ( int i = 0; i < keyframe->entityCount; i++ ) {
+		cl.parseEntities[i] = keyframe->entities[i];
+	}
+	cl.parseEntitiesNum = keyframe->entityCount;
+	cl.snapshots[cl.snap.messageNum & PACKET_MASK] = cl.snap;
+	clc.serverMessageSequence = cl.snap.messageNum;
+	clc.serverCommandSequence = keyframe->serverCommandSequence;
+	clc.lastExecutedServerCommand = keyframe->lastExecutedServerCommand;
+	clc.clientNum = keyframe->clientNum;
+	clc.firstDemoFrameSkipped = qtrue;
+	cl.newSnapshots = qfalse;
+	FS_Seek( clc.demofile, keyframe->resumeOffset, FS_SEEK_SET );
+	JKA_BridgeProfileLog( "seek-warm phase=restored keyframe=%d target=%d filePos=%d",
+		keyframe->snap.serverTime, targetTime, FS_FTell( clc.demofile ) );
+
+	try {
+		int lastPos = FS_FTell( clc.demofile );
+		while ( clc.demofile && cl.snap.serverTime < targetTime ) {
+			CL_ReadDemoMessage();
+			if ( !clc.demofile ) {
+				break;
+			}
+			if ( FS_FTell( clc.demofile ) <= lastPos ) {
+				break;
+			}
+			lastPos = FS_FTell( clc.demofile );
+			JKA_MaybeYield( &lastYield );
+		}
+	} catch ( int ) {
+		return -1;
+	}
+	if ( !clc.demofile || !cl.snap.valid ) {
+		return -1;
+	}
+	JKA_BridgeProfileLog( "seek-warm phase=replayed target=%d snapTime=%d filePos=%d",
+		targetTime, cl.snap.serverTime, FS_FTell( clc.demofile ) );
+
+	targetSnapshot = cl.snap.messageNum;
+	// Give the cgame the oldest snapshot still in the client ring.  Older
+	// snapshots cannot be read back, and every snapshot carries a full entity
+	// list, so starting at the ring edge is safe.
+	firstSnapshot = targetSnapshot - ( PACKET_BACKUP - 2 );
+	if ( firstSnapshot < keyframe->snap.messageNum ) {
+		firstSnapshot = keyframe->snap.messageNum;
+	}
+
+	cl.serverTime = cl.snap.serverTime;
+	cl.serverTimeDelta = cl.snap.serverTime - cls.realtime;
+	cl.oldServerTime = cl.snap.serverTime;
+	cl.oldFrameServerTime = cl.snap.serverTime;
+	cl.newSnapshots = qfalse;
+	clc.firstDemoFrameSkipped = qtrue;
+	cls.state = CA_ACTIVE;
+	jka_demoEnded = qfalse;
+
+	JKA_BridgeProfileLog( "seek-warm phase=reset-start first=%d", firstSnapshot );
+	CGVM_SeekReset( firstSnapshot, keyframe->serverCommandSequence, keyframe->clientNum );
+	JKA_BridgeProfileLog( "seek-warm phase=reset-done first=%d", firstSnapshot );
+
+	JKA_BridgeProfileLog( "seek target=%d path=warm-inplace keyframe=%d first=%d levelStart=%s serverTime=%d ms=%d",
+		targetTime, keyframe->snap.serverTime, firstSnapshot,
+		JKA_ConfigString( CS_LEVEL_START_TIME ), cl.snap.serverTime, Sys_Milliseconds() - profileStart );
+	return 1;
+}
+
 EMSCRIPTEN_KEEPALIVE void JKA_SeekDemo( const char *name, int targetTime )
 {
 	int profileStart = Sys_Milliseconds();
@@ -1225,10 +1321,9 @@ EMSCRIPTEN_KEEPALIVE void JKA_SeekDemo( const char *name, int targetTime )
 
 	emscripten_pause_main_loop();
 
-	// The warm path avoids a map reload, but cgame tolerates a forward time
-	// jump only; a backward seek goes through the restart path below.
-	if ( targetTime >= cl.snap.serverTime && JKA_SeekKeyframeExisting( targetTime ) == 1 ) {
-		JKA_BridgeProfileLog( "seek target=%d path=warm ms=%d", targetTime, Sys_Milliseconds() - profileStart );
+	// The in-place path keeps the map, renderer and cgame loaded for any seek
+	// inside the same map, including backward seeks.
+	if ( JKA_SeekKeyframeWarm( targetTime ) == 1 ) {
 		emscripten_resume_main_loop();
 		return;
 	}
@@ -1256,11 +1351,16 @@ EMSCRIPTEN_KEEPALIVE void JKA_SeekDemo( const char *name, int targetTime )
 	if ( clc.demofile ) {
 		int lastYield = Sys_Milliseconds();
 		try {
+			int lastPos = FS_FTell( clc.demofile );
 			while ( clc.demofile && cl.snap.serverTime < targetTime ) {
 				CL_ReadDemoMessage();
 				if ( !clc.demofile ) {
 					break;
 				}
+				if ( FS_FTell( clc.demofile ) <= lastPos ) {
+					break;
+				}
+				lastPos = FS_FTell( clc.demofile );
 				JKA_MaybeYield( &lastYield );
 			}
 		} catch ( int ) {

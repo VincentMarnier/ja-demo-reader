@@ -8,8 +8,9 @@
   `docs/m9-phase0-results.md` records the measured baseline,
   `docs/m9-phase1.md` describes the hybrid shader compile and texture profile,
   `docs/m9-phase3.md` describes the worker engine, WORKERFS and OPFS removal,
-  and `docs/m9-phase4.md` covers background prepare, keep-warm Stop and
-  Release.
+  `docs/m9-phase4.md` covers background prepare, keep-warm Stop and Release,
+  and `docs/m9-phase5.md` covers warm seek, Restart and the scan-only Check
+  map.
 - The app is a single Vite/React app in `app/`. `App.tsx` owns the wizard and
   player state, `engine/WorkerEngineHost.ts` and `engine/EngineHost.ts` are the
   two implementations of the shared `engine/host.ts` interface, and `src/fs/`
@@ -72,11 +73,12 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
 - `engine/platform/jka_bridge.cpp` is copied into `codemp/client/` by the build
   script; editing it needs no patch change.
 - Changes to upstream/cgame/client source belong in a patch. The current patch
-  set is `0001`–`0008`; `0004` contains the linked cgame/rend2 changes,
+  set is `0001`–`0009`; `0004` contains the linked cgame/rend2 changes,
   `0005` keeps the last frame when a demo ends, `0006` adds M9 `jka_profile`
   diagnostics (timings, image counters, shader usage), `0007` adds the hybrid
-  eager/lazy shader compile, and `0008` selects the OffscreenCanvas window
-  layer and skips DOM input in the worker. Prefer a new patch over editing a
+  eager/lazy shader compile, `0008` selects the OffscreenCanvas window layer
+  and skips DOM input in the worker, and `0009` adds the cgame seek reset,
+  scan-only gamestate path and EOF guard. Prefer a new patch over editing a
   large existing one. Verify every patch with a clean worktree: apply all
   patches from the pin and compare the affected files.
 - `engine/platform/win_emscripten.cpp` is copied into `codemp/client/` by the
@@ -129,20 +131,38 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   across a scan.
 - Status polling skips while an async call is running. Do not add another poll
   or synchronous cgame call that can run during a map load.
-- `JKA_DemoInfo` pauses the main loop, disconnects and scans the whole demo. Do
-  not run it during playback; it is part of the serialized setup path.
+- `JKA_DemoInfo` pauses the main loop, disconnects and scans the whole demo.
+  Since Phase 5 the scan is parse-only (`jka_scanOnly`): it does **not** load a
+  map/cgame. Do not run it during playback; it is part of the serialized setup
+  path.
 - `CL_DemoCompleted` in the Emscripten branch intentionally leaves the last
-  frame in place. Disconnecting there leaves renderer/map teardown in flight and
-  breaks Replay. Stop still does a full disconnect.
+  frame in place and keeps `CA_ACTIVE`. Disconnecting there leaves
+  renderer/map teardown in flight and breaks Replay. Keep the `jka_demoEnded`
+  break in `CL_SetCGameTime`; without it a seek to the last snapshot loops on
+  EOF forever. Stop suspends (Phase 4); Release is the full teardown.
+- Phase 5 warm seek: `JKA_SeekKeyframeWarm` restores a keyframe and replays to
+  the target **without** `CL_Disconnect` or a map load, then calls
+  `CGVM_SeekReset` (patch `0009`). It is only valid for the same map; return 0
+  for a different map and let the full keyframe path run. Keyframes are chosen
+  within the target game, not across a game boundary.
+- `CG_SeekReset` must keep map-level media (renderer, BSP/collision map,
+  registered graphics, world item visuals) and clear only per-demo cgame
+  state. Do not replace it with `CG_Init` (reloads the map) or
+  `CG_Shutdown`-only (stale snapshots/entities).
+- The scan executes `cs`/`bcs` commands while parsing so keyframe
+  `cl.gameState` matches live playback (scores, level start, clientinfo).
+  Keep that; a keyframe with only the initial gamestate restores wrong HUD
+  values. The replay loops in `JKA_SeekDemo` also stop when the demo file
+  position stops advancing; keep that EOF guard.
 - Worker host (`app/src/engine/engine.worker.ts`): every long/async wasm call
   goes through the worker's own `runExclusive` queue, and `play` stays
   single-flight on both sides. Short synchronous calls (status/scoreboard
   polls, cvar, follow, free-cam) are only made while no async call is in
   flight. Do not add a call path that can enter wasm during an Asyncify
   suspension.
-- `JKA_DemoInfo` pauses the loop, disconnects and map-loads while scanning, so
-  it must be an **async** ccall in both hosts. The worker uses
-  `ccallAsyncString`; a synchronous call aborts with Emscripten's
+- `JKA_DemoInfo` pauses the loop, disconnects and scans; since Phase 5 it does
+  not load a map, but it must still be an **async** ccall in both hosts. The
+  worker uses `ccallAsyncString`; a synchronous call aborts with Emscripten's
   “The call to JKA_DemoInfo is running asynchronously” assertion.
 - `WORKERFS` mount details: the `files` option takes File/Blob objects (it
   reads `.size`/`.slice`); `{ name, data }` wrappers belong to `blobs`. Do not
@@ -180,8 +200,16 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
 ## Demo model
 
 - `JKA_DemoInfo` builds the per-game summary and in-memory keyframes;
-  `JKA_DemoSummaryJson` returns it. `JKA_SeekDemo` uses warm keyframes while
-  playing and restarts from the nearest keyframe for backward/cold seeks.
+  `JKA_DemoSummaryJson` returns it. `JKA_SeekDemo` restores the nearest
+  keyframe in the target game and replays to the target, resetting the cgame in
+  place. `JKA_FindKeyframe` must prefer a keyframe from the target game; the
+  nearest earlier keyframe may belong to a previous game and force a map/game
+  reload.
+- Keyframes store the full snapshot and `cl.gameState` after the scan has
+  executed the message's `cs`/`bcs` commands. The scan is parse-only
+  (`jka_scanOnly`) and must not trigger `CL_InitDownloads`; that is also what
+  fixed the added-map-PK3 scan (`asms.pk3`: 24,359 messages, 20 keyframes, two
+  games).
 - Game boundaries come from `svc_gamestate`, map changes, `map_restart` server
   commands and `CS_LEVEL_START_TIME` changes. A command restart opens the next
   game; the delayed level-start update is merged, not treated as another game.
@@ -202,6 +230,14 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
 - Summary cache keys are versioned (`v3:name:size:lastModified`). Bump the
   version when the summary shape or game-boundary logic changes; otherwise old
   one-game summaries are reused. The IndexedDB cache self-heals a missing store.
+- A cached summary does not contain the in-memory seek keyframes. The app's
+  `keyframesReady` flag forces one scan per engine/demo (including after
+  Release or a demo switch); with keyframes present, Check map can use the
+  cached summary. Do not remove that condition or warm seek silently falls
+  back to the full keyframe reload.
+- Check map now uses the parse-only scan, so it does not load a map/cgame. Map
+  presence is still checked with `JKA_HasMap`; map/asset errors surface during
+  the background prepare or Play instead of at Check map.
 - There is no asset cache. The worker host mounts the retail/mod PK3s read-only
   with WORKERFS and writes only demos and added map PK3s to `/userdata/base`.
   The main-thread fallback still copies PK3s into MEMFS. `app/src/fs/assetCache.ts`

@@ -1,0 +1,196 @@
+diff --git a/codemp/cgame/cg_main.c b/codemp/cgame/cg_main.c
+index 5588f581..664cb210 100644
+--- a/codemp/cgame/cg_main.c
++++ b/codemp/cgame/cg_main.c
+@@ -2728,6 +2728,72 @@ void CG_DestroyAllGhoul2(void)
+ 	CG_CleanJetpackGhoul2();
+ }
+ 
++/*
++=================
++CG_SeekReset
++
++M9 Phase 5: reinitialize the cgame for an in-place demo seek.  The renderer,
++BSP, collision map and registered media stay loaded; only the per-demo cgame
++state is rebuilt.  This mirrors the state-clearing half of CG_Init without
++R_LoadWorld or the registration passes.
++
++firstSnapshotNum is the first client snapshot the cgame should request.  The
++client has already restored the keyframe and replayed to the target, so this
++is normally the oldest snapshot still in the client ring buffer.
++=================
++*/
++void CG_SeekReset( int firstSnapshotNum, int serverCommandSequence, int clientNum )
++{
++	int i;
++
++	// Do not use CG_DestroyAllGhoul2 here: it also frees the registered world
++	// item models, which stay valid across a seek.  Entities and weapon/jetpack
++	// instances are per-demo; item visuals are map media.
++	for ( i = 0; i < MAX_GENTITIES; i++ ) {
++		CG_KillCEntityG2( i );
++	}
++	CG_ShutDownG2Weapons();
++	CG_CleanJetpackGhoul2();
++	trap->FX_FreeSystem();
++	trap->ROFF_Clean();
++	trap->R_ClearDecals();
++	trap->R_WorldEffectCommand( "die" );
++
++	CG_Init_CGents();
++	CG_Init_CG();
++	CG_InitJetpackGhoul2();
++	CG_PmoveClientPointerUpdate();
++	trap->RegisterSharedMemory( cg.sharedBuffer.raw );
++
++	cg.clientNum = clientNum;
++	cgs.processedSnapshotNum = firstSnapshotNum - 1;
++	cgs.serverCommandSequence = serverCommandSequence;
++	cg.infoScreenText[0] = 0;
++
++	trap->GetGameState( &cgs.gameState );
++	CG_TransitionPermanent();
++	CG_ParseServerinfo();
++	CG_SetConfigValues();
++	CG_ClearLightStyles();
++
++	// Rebuild the player list from the restored keyframe configstrings; the
++	// old list reflected the playback position before the seek.
++	cg.loading = qtrue;
++	for ( i = 0; i < MAX_CLIENTS; i++ ) {
++		CG_NewClientInfo( i, qfalse );
++	}
++	cg.loading = qfalse;
++
++	CG_InitLocalEntities();
++	CG_InitMarkPolys();
++
++	cg.renderingThirdPerson = cg_thirdPerson.integer;
++	cg.weaponSelect = WP_BRYAR_PISTOL;
++	cg.latestSnapshotNum = 0;
++	cg.snap = NULL;
++	cg.nextSnap = NULL;
++}
++
+ /*
+ =================
+ CG_Shutdown
+@@ -3037,6 +3103,7 @@ Q_EXPORT cgameExport_t* QDECL GetModuleAPI( int apiVersion, cgameImport_t *impor
+ 	cge.AutomapInput			= CG_AutomapInput;
+ 	cge.MiscEnt					= CG_MiscEnt;
+ 	cge.CameraShake				= CG_FX_CameraShake;
++	cge.SeekReset				= CG_SeekReset;
+ 
+ 	return &cge;
+ }
+@@ -3171,6 +3238,10 @@ Q_EXPORT intptr_t vmMain( int command, intptr_t arg0, intptr_t arg1, intptr_t ar
+ 		CG_FX_CameraShake();
+ 		return 0;
+ 
++	case CG_SEEK_RESET:
++		CG_SeekReset( arg0, arg1, arg2 );
++		return 0;
++
+ 	default:
+ 		trap->Error( ERR_DROP, "vmMain: unknown command %i", command );
+ 		break;
+diff --git a/codemp/cgame/cg_public.h b/codemp/cgame/cg_public.h
+index 801aa1be..b615ed2b 100644
+--- a/codemp/cgame/cg_public.h
++++ b/codemp/cgame/cg_public.h
+@@ -471,6 +471,7 @@ typedef enum cgameExportLegacy_e {
+ 	CG_MISC_ENT,
+ 	CG_GET_SORTED_FORCE_POWER,
+ 	CG_FX_CAMERASHAKE,
++	CG_SEEK_RESET,
+ } cgameExportLegacy_t;
+ 
+ typedef struct cgameImport_s {
+@@ -747,6 +748,7 @@ typedef struct cgameExport_s {
+ 	void			(*AutomapInput)				( void );
+ 	void			(*MiscEnt)					( void );
+ 	void			(*CameraShake)				( void );
++	void			(*SeekReset)				( int firstSnapshotNum, int serverCommandSequence, int clientNum );
+ } cgameExport_t;
+ 
+ //linking of cgame library
+diff --git a/codemp/client/cl_cgame.cpp b/codemp/client/cl_cgame.cpp
+index 42919ebc..94031ec4 100644
+--- a/codemp/client/cl_cgame.cpp
++++ b/codemp/client/cl_cgame.cpp
+@@ -841,7 +841,18 @@ void CL_SetCGameTime( void ) {
+ 		cl.serverTime = clc.timeDemoBaseTime + clc.timeDemoFrames * 50;
+ 	}
+ 
++#ifdef __EMSCRIPTEN__
++	extern qboolean jka_demoEnded;
++#endif
+ 	while ( cl.serverTime >= cl.snap.serverTime ) {
++#ifdef __EMSCRIPTEN__
++		// CL_DemoCompleted leaves the last frame and CA_ACTIVE in place.
++		// Without this, seeking to the last snapshot makes this loop call
++		// CL_ReadDemoMessage at EOF forever.
++		if ( jka_demoEnded ) {
++			break;
++		}
++#endif
+ 		// feed another messag, which should change
+ 		// the contents of cl.snap
+ 		CL_ReadDemoMessage();
+diff --git a/codemp/client/cl_cgameapi.cpp b/codemp/client/cl_cgameapi.cpp
+index 571f8a95..f4a9a23a 100644
+--- a/codemp/client/cl_cgameapi.cpp
++++ b/codemp/client/cl_cgameapi.cpp
+@@ -291,6 +291,19 @@ void CGVM_MiscEnt( void ) {
+ 	cge->MiscEnt();
+ }
+ 
++void CGVM_SeekReset( int firstSnapshotNum, int serverCommandSequence, int clientNum ) {
++	if ( !cgvm || !cls.cgameStarted ) {
++		return;
++	}
++	if ( cgvm->isLegacy ) {
++		VM_Call( cgvm, CG_SEEK_RESET, firstSnapshotNum, serverCommandSequence, clientNum );
++		return;
++	}
++	VMSwap v( cgvm );
++
++	cge->SeekReset( firstSnapshotNum, serverCommandSequence, clientNum );
++}
++
+ void CGVM_CameraShake( void ) {
+ 	if ( cgvm->isLegacy ) {
+ 		VM_Call( cgvm, CG_FX_CAMERASHAKE );
+diff --git a/codemp/client/cl_cgameapi.h b/codemp/client/cl_cgameapi.h
+index b4f9933e..8a3bb8ca 100644
+--- a/codemp/client/cl_cgameapi.h
++++ b/codemp/client/cl_cgameapi.h
+@@ -47,6 +47,7 @@ void			CGVM_MapChange				( void );
+ void			CGVM_AutomapInput			( void );
+ void			CGVM_MiscEnt				( void );
+ void			CGVM_CameraShake			( void );
++void			CGVM_SeekReset				( int firstSnapshotNum, int serverCommandSequence, int clientNum );
+ 
+ void CL_BindCGame( void );
+ void CL_UnbindCGame( void );
+diff --git a/codemp/client/cl_parse.cpp b/codemp/client/cl_parse.cpp
+index 9ca7b6ab..83fce330 100644
+--- a/codemp/client/cl_parse.cpp
++++ b/codemp/client/cl_parse.cpp
+@@ -609,6 +609,16 @@ void CL_ParseGamestate( msg_t *msg ) {
+ 	// parse serverId and other cvars
+ 	CL_SystemInfoChanged();
+ 
++#ifdef __EMSCRIPTEN__
++	// M9 Phase 5: a keyframe/summary scan parses the demo without loading the
++	// map or cgame.  Only the client snapshot/configstring state is needed.
++	extern qboolean jka_scanOnly;
++	if ( jka_scanOnly ) {
++		Cvar_Set( "cl_paused", "0" );
++		return;
++	}
++#endif
++
+ 	// reinitialize the filesystem if the game directory has changed
+ 	if( FS_ConditionalRestart( clc.checksumFeed ) ) {
+ 		// don't set to true because we yet have to start downloading

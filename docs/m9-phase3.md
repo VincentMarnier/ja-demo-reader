@@ -10,8 +10,9 @@ reloads (Phase 4/5), and Stop still performs a full teardown instead of
 keep-warm.
 
 **Update:** Phase 4 replaced Stop with keep-warm suspend and added background
-prepare and Release; see `docs/m9-phase4.md`. Restart and backward seek remain
-as described below.
+prepare and Release; Phase 5 made backward seek and Restart warm and Check map
+a parse-only scan. See `docs/m9-phase4.md` and `docs/m9-phase5.md`. The
+measurements below are the Phase 3 baseline, not current results.
 
 **Scope:** Run the same engine build in a dedicated Web Worker against an
 OffscreenCanvas, mount retail PK3s read-only with WORKERFS, keep a degraded

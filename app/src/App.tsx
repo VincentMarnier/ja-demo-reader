@@ -85,6 +85,9 @@ export default function App() {
   const bootGammaRef = useRef(1);
   const preparePromiseRef = useRef<Promise<boolean> | null>(null);
   const preparedDemoRef = useRef<string | null>(null);
+  // The scan builds the in-memory seek keyframes.  After a demo/engine change
+  // a cached summary alone is not enough for a warm seek.
+  const keyframesReadyRef = useRef(false);
 
   useEffect(() => {
     loadDirectoryHandle().then(handle => setSavedHandle(handle));
@@ -471,6 +474,7 @@ export default function App() {
       setMapError(null);
       setDemoInfo(null);
       setDemoSummary(null);
+      keyframesReadyRef.current = false;
       if (result.errors.length === 0) {
         const key = assetSetKey(result.assets);
         if (engineRef.current && bootedAssetKeyRef.current && key !== bootedAssetKeyRef.current) {
@@ -540,6 +544,7 @@ export default function App() {
       setMapError(null);
       setDemoInfo(null);
       setDemoSummary(null);
+      keyframesReadyRef.current = false;
       if (file) {
         const warning = await validateDemoFile(file.file);
         setDemoWarning(warning);
@@ -643,12 +648,14 @@ export default function App() {
     setDemoSummary(null);
     engine.markStage('check-map:demo-staged');
 
-    // Scanning an eight-minute demo takes a few seconds. Cache the parsed
-    // summary per file so the map step and the resume are instant next time.
-    // Bump this when the summary format or game-boundary logic changes so
-    // old cached summaries are not reused.
+    // The scan builds the in-memory seek keyframes as well as the summary.
+    // A cached summary is only enough when this engine already has keyframes
+    // for the demo; otherwise scan again (the scan no longer loads the map).
+    // Bump the cache key when the summary format or game-boundary logic
+    // changes so old cached summaries are not reused.
     const cacheKey = `v3:${demoFile.name}:${demoFile.file.size}:${demoFile.file.lastModified}`;
-    let summary = await loadDemoSummary(cacheKey);
+    const hadKeyframes = keyframesReadyRef.current;
+    let summary = hadKeyframes ? await loadDemoSummary(cacheKey) : null;
     let info: DemoInfo | null = null;
     if (summary) {
       info = {
@@ -666,6 +673,7 @@ export default function App() {
           await saveDemoSummary(cacheKey, summary);
         }
       }
+      keyframesReadyRef.current = true;
       engine.markStage('check-map:scan-done');
     }
     setDemoInfo(info);
@@ -777,7 +785,13 @@ export default function App() {
     engine.markStage('restart:start');
     try {
       const name = demoBase(demoFile.name);
-      await engine.playDemo(name);
+      // A warm seek to the first snapshot avoids another map/cgame load.
+      // Without a timeline/keyframes the bridge falls back to the old path.
+      if (demoInfo) {
+        await engine.seekDemo(name, demoInfo.first);
+      } else {
+        await engine.playDemo(name);
+      }
       preparedDemoRef.current = name;
       engine.markStage('restart:done');
       setPhase('playing');
@@ -787,7 +801,7 @@ export default function App() {
     } finally {
       playbackActionRef.current = false;
     }
-  }, [demoFile]);
+  }, [demoFile, demoInfo]);
 
   const handleSeek = useCallback(async (positionMs: number) => {
     const engine = engineRef.current;
@@ -866,6 +880,7 @@ export default function App() {
     bootedAssetKeyRef.current = null;
     preparedDemoRef.current = null;
     preparePromiseRef.current = null;
+    keyframesReadyRef.current = false;
     setPreparingDemo(null);
     setEngineActive(false);
     setEngineMode(null);
