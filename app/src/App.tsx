@@ -18,6 +18,7 @@ import { formatTime } from './format';
 import { createEngineHost, WorkerUnsupportedError } from './engine/host';
 import type { EngineHostApi, EngineMode } from './engine/host';
 import { Launcher } from './components/Launcher';
+import { KillFeed } from './components/KillFeed';
 import { Player } from './components/Player';
 import { ProgressOverlay } from './components/ProgressOverlay';
 import { ErrorPanel } from './components/ErrorPanel';
@@ -1135,6 +1136,10 @@ export default function App() {
                   onFullscreen={fullscreen}
                   onSeek={handleSeek}
                 />
+              ) : null}
+
+              {showPlayer ? (
+                <KillFeed game={currentGame} serverTime={status?.serverTime ?? 0} />
               ) : null}
             </div>
           </div>

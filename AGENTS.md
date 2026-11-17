@@ -74,15 +74,17 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
 - `engine/platform/jka_bridge.cpp` is copied into `codemp/client/` by the build
   script; editing it needs no patch change.
 - Changes to upstream/cgame/client source belong in a patch. The current patch
-  set is `0001`–`0010`; `0004` contains the linked cgame/rend2 changes,
+  set is `0001`–`0011`; `0004` contains the linked cgame/rend2 changes,
   `0005` keeps the last frame when a demo ends, `0006` adds M9 `jka_profile`
   diagnostics (timings, image counters, shader usage), `0007` adds the hybrid
   eager/lazy shader compile, `0008` selects the OffscreenCanvas window layer
   and skips DOM input in the worker, `0009` adds the cgame seek reset,
   scan-only gamestate path, target server-command application and EOF guard,
-  and `0010` swaps the SDL audio device for `client/em_audio.cpp` on
-  Emscripten and fixes the `C_MP3Stream_Decode` signature that wasm-ld rejects
-  once demo music starts. Prefer a new patch over editing a large existing one.
+  `0010` swaps the SDL audio device for `client/em_audio.cpp` on Emscripten
+  and fixes the `C_MP3Stream_Decode` signature that wasm-ld rejects once demo
+  music starts, and `0011` adds the `cg_killMessage` cvar that turns off the
+  cgame's obituary console/centerprint text (the app draws its own kill feed).
+  Prefer a new patch over editing a large existing one.
   Verify every patch with a clean worktree: apply all patches from the pin and
   compare the affected files.
 - `engine/platform/win_emscripten.cpp` is copied into `codemp/client/` by the

@@ -126,6 +126,7 @@ export function buildEngineArgs(options: {
     '+set', 'cg_drawStatus', '0',
     '+set', 'cg_hudFiles', '0',
     '+set', 'cg_drawCrosshair', '0',
+    '+set', 'cg_killMessage', '0',
     '+set', 'com_maxfps', '60',
     '+set', 'logfile', '0',
     '+set', 'r_picmip', String(picmip),

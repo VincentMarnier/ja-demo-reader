@@ -1,0 +1,59 @@
+diff --git a/codemp/cgame/cg_event.c b/codemp/cgame/cg_event.c
+index 21b44130..869092fb 100644
+--- a/codemp/cgame/cg_event.c
++++ b/codemp/cgame/cg_event.c
+@@ -267,7 +267,9 @@ static void CG_Obituary( entityState_t *ent ) {
+ 		}
+ 		message = (char *)CG_GetStringEdString("MP_INGAME", message);
+ 
+-		trap->Print( "%s %s\n", targetName, message);
++		if ( cg_killMessage.integer ) {
++			trap->Print( "%s %s\n", targetName, message);
++		}
+ 		return;
+ 	}
+ 
+@@ -327,7 +329,9 @@ clientkilled:
+ 			s = va("%s %s", sKilledStr, targetName );
+ 		}
+ 		//if (!(cg_singlePlayerActive.integer && cg_cameraOrbit.integer)) {
++		if ( cg_killMessage.integer ) {
+ 			CG_CenterPrint( s, SCREEN_HEIGHT * 0.30, BIGCHAR_WIDTH );
++		}
+ 		//}
+ 		// print the text message as well
+ 	}
+@@ -445,14 +449,18 @@ clientkilled:
+ 		if (message) {
+ 			message = (char *)CG_GetStringEdString("MP_INGAME", message);
+ 
+-			trap->Print( "%s %s %s\n",
+-				targetName, message, attackerName);
++			if ( cg_killMessage.integer ) {
++				trap->Print( "%s %s %s\n",
++					targetName, message, attackerName);
++			}
+ 			return;
+ 		}
+ 	}
+ 
+ 	// we don't know what it was
+-	trap->Print( "%s %s\n", targetName, (char *)CG_GetStringEdString("MP_INGAME", "DIED_GENERIC") );
++	if ( cg_killMessage.integer ) {
++		trap->Print( "%s %s\n", targetName, (char *)CG_GetStringEdString("MP_INGAME", "DIED_GENERIC") );
++	}
+ }
+ 
+ //==========================================================================
+diff --git a/codemp/cgame/cg_xcvar.h b/codemp/cgame/cg_xcvar.h
+index 1390ff23..3f5b5df5 100644
+--- a/codemp/cgame/cg_xcvar.h
++++ b/codemp/cgame/cg_xcvar.h
+@@ -100,6 +100,7 @@ XCVAR_DEF( cg_gunY,								"0",					NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_gunZ,								"0",					NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_hudFiles,							"ui/jahud.txt",			NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_jumpSounds,						"0",					NULL,					CVAR_ARCHIVE )
++XCVAR_DEF( cg_killMessage,						"1",					NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_lagometer,						"0",					NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_marks,							"1",					NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_noPlayerAnims,					"0",					NULL,					CVAR_CHEAT )

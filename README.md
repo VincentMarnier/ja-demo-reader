@@ -112,6 +112,10 @@ own. See [docs/github-pages.md](docs/github-pages.md).
 - **Free cam** — toggled from the scoreboard panel; WASD/Space/Ctrl movement,
   arrow keys or pointer-lock mouse look. Bindings can be changed in Settings.
 - **Speed** — opens the playback-speed popover.
+- **Kill feed** — the top-right corners shows the last few kills from the parsed
+  obituaries for the seconds around the playhead: killer, weapon and victim,
+  with team colours. The cgame's own obituary text is turned off
+  (`cg_killMessage 0`, patch `0011`).
 - **Settings** — FOV, gamma, texture quality, HUD toggles, free-cam bindings and
   local summary clearing.
 
