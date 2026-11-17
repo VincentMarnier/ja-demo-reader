@@ -48,7 +48,7 @@ export interface EngineHostApi {
   stopDemo(): Promise<void>;
   parseDemoMap(name: string): Promise<string | null>;
   hasMap(map: string): Promise<boolean>;
-  addMapFile(file: File): Promise<void>;
+  addPk3Files(files: File[]): Promise<void>;
   addDemoFile(file: LocalFile): Promise<void>;
   demoInfo(name: string): Promise<DemoInfo | null>;
   demoSummary(): Promise<DemoSummary | null>;

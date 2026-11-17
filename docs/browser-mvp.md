@@ -151,9 +151,13 @@ After the engine boots (still on the map step), the app calls the bridge:
 | `JKA_RestartFS()` | Re-scans `/jka/base` after a map `.pk3` is written into MEMFS |
 
 If the map is present, the wizard shows **Map ready** and Play starts the demo.
-If it is absent, the wizard asks for the map `.pk3`; the file is written to
-`/jka/base` and the file system is restarted, then the map is re-checked before
-Play is enabled. Nothing is written back to the user's folder.
+If it is absent, the wizard asks for the map `.pk3`; one selection may include
+the map plus dependency PK3s (community maps often reuse decorative models or
+textures from another map PK3). The files are written to `/jka/base` and the
+file system is restarted once, then the map is re-checked before Play is
+enabled. Nothing is written back to the user's folder. A map that only needs the
+decorative `misc_model_static` models missing from the selected PK3s still
+plays: the engine logs a warning and skips those props (patch `0013`).
 
 ### 3.5 Playback controls
 
@@ -188,6 +192,10 @@ result per file. See [m6.md](./m6.md) for the bridge calls and known limits.
 
 Validation, picker, staging, engine boot, wasm abort and missing-demo errors
 produce an in-app error panel with the last engine log lines and a reload path.
+Asyncify keeps the wasm runtime alive, so `Module.onExit` is not called when
+`Com_Error` exits the program; both hosts also watch the engine/`printErr` log
+for `recursive error after:` and a nonzero `program exited` and surface those as
+a fatal error instead of leaving a map load spinning.
 The taxonomy follows the architecture document (`ASSETS_*`, `DEMO_*`,
 `ENGINE_BOOT_FAILED`, etc.).
 

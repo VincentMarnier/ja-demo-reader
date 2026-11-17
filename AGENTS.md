@@ -74,7 +74,7 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
 - `engine/platform/jka_bridge.cpp` is copied into `codemp/client/` by the build
   script; editing it needs no patch change.
 - Changes to upstream/cgame/client source belong in a patch. The current patch
-  set is `0001`–`0012`; `0004` contains the linked cgame/rend2 changes,
+  set is `0001`–`0013`; `0004` contains the linked cgame/rend2 changes,
   `0005` keeps the last frame when a demo ends, `0006` adds M9 `jka_profile`
   diagnostics (timings, image counters, shader usage), `0007` adds the hybrid
   eager/lazy shader compile, `0008` selects the OffscreenCanvas window layer
@@ -86,7 +86,10 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   cgame's obituary console/centerprint text (the app draws its own kill feed),
   and `0012` fills a followed remote player's `saberStyle` from the clientinfo
   saber type plus `entityState.fireflag` (the wire stance field is only two
-  bits, so dual/staff need the clientinfo correction).
+  bits, so dual/staff need the clientinfo correction). `0013` makes a missing
+  `misc_model_static` model a warning instead of an `ERR_DROP`; community maps
+  often reuse a decorative model from another map PK3, and a demo must still
+  play when only the map PK3 is supplied.
   Prefer a new patch over editing a large existing one.
   Verify every patch with a clean worktree: apply all patches from the pin and
   compare the affected files.
@@ -313,12 +316,18 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   presence is still checked with `JKA_HasMap`; map/asset errors surface during
   the background prepare or Play instead of at Check map.
 - There is no asset cache. The worker host mounts the retail/mod PK3s read-only
-  with WORKERFS and writes only demos and added map PK3s to `/userdata/base`.
-  The main-thread fallback still copies PK3s into MEMFS. `app/src/fs/assetCache.ts`
+  with WORKERFS and writes only demos and added map/dependency PK3s to
+  `/userdata/base`. The main-thread fallback still copies PK3s into MEMFS.
+  `app/src/fs/assetCache.ts`
   exists only for `clearLegacyAssetCache()`, which removes the old
   `jka-demo-player/assets` OPFS tree once on startup and from Settings; do not
   add a write path back. The asset-set comparison uses `assetSetKey` in
   `app/src/fs/signature.ts`, not a cache key.
+- A community map's PK3 can depend on models/textures from another map PK3.
+  The map step's file input is multiple and `addPk3Files` writes the whole
+  selection before one `JKA_RestartFS`. Do not restart the FS per file. Adding
+  PK3s after a background prepare must stop the warm demo first; otherwise
+  `JKA_PrepareDemo` sees the old `jka_preparedDemo` and skips the reload.
 - `r_gamma` is applied to the engine at boot only; runtime changes use the
   canvas gamma filter. Setting `r_gamma` live does not re-upload textures.
 - Remote follow cameras use the entity's yaw and pitch; the recorded POV client

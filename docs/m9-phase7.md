@@ -26,7 +26,8 @@ seek is documented as an untested edge case rather than optimized.
 
 ## Clean build
 
-From the pinned OpenJK commit with `0001`–`0009`, Emscripten 6.0.1:
+From the pinned OpenJK commit with `0001`–`0013` (the M9 audit began with
+`0001`–`0009`), Emscripten 6.0.1:
 
 ```bash
 rm -rf /tmp/jka-demo-player/{work,build,out}
@@ -102,7 +103,7 @@ browser exposes `webkitRelativePath`.
 ## Docs
 
 - `docs/m7.md` updated from the OPFS-era text to WORKERFS/no asset cache, the
-  `0001`–`0009` patch set, and the current known limitations.
+  `0001`–`0013` patch set, and the current known limitations.
 - Demo/map names in shared docs are generic.
 - README limitations now cover same-map-only warm seek, added-map demos and the
   first-snapshot HUD transient.
@@ -119,6 +120,28 @@ browser exposes `webkitRelativePath`.
   identity/remote, tag and push.
 - Re-test Watch again, Release and Settings cache clearing in the deployed
   build.
+
+## Map asset dependencies
+
+A community map PK3 can reference decorative `misc_model_static` models that
+ship in another map PK3 rather than in the four retail assets. The map step
+accepts several PK3s in one selection (and keeps an **Add extra .pk3** action
+after the map is found); they are written before a single `JKA_RestartFS`.
+Patch `0013` turns a missing static model into an engine warning and skips the
+prop, so a demo still plays when only the map PK3 is supplied.
+
+Both hosts also treat the engine's `recursive error after:` and a nonzero
+`program exited` line as fatal. Asyncify keeps the runtime alive, so
+`Module.onExit` never fires; without this the map-load overlay could spin
+forever after a `Com_Error`.
+
+Verified with the 3v3 demo on `ffa_gliese`:
+
+| Mounted PK3s | Result |
+|---|---|
+| `assets0..3` + `ffa_gliese.pk3` | Map loads, statue/streetlight warnings, demo plays |
+| `assets0..3` + `ffa_gliese.pk3` + `duel_bespin_pad.pk3` (one selection) | No model warnings, demo plays |
+| Add `duel_bespin_pad.pk3` after the background prepare | Warm map dropped, FS restarted, re-prepared, demo plays |
 
 ## Known limitations
 

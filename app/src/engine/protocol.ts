@@ -27,7 +27,7 @@ export type WorkerRequest =
   | { id: number; type: 'parse-map'; name: string }
   | { id: number; type: 'has-map'; map: string }
   | { id: number; type: 'add-demo'; name: string; file: File }
-  | { id: number; type: 'add-map'; name: string; file: File }
+  | { id: number; type: 'add-pk3s'; files: File[] }
   | { id: number; type: 'demo-info'; name: string }
   | { id: number; type: 'summary' }
   | { id: number; type: 'seek'; name: string; target: number }

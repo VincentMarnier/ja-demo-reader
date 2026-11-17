@@ -14,6 +14,8 @@ interface LauncherProps {
   mapName: string;
   mapMissing: boolean;
   mapError: string | null;
+  addedPk3s: string[];
+  addingPk3s: boolean;
   summary: DemoSummary | null;
   engineMode: EngineMode | null;
   enginePreparing: boolean;
@@ -194,21 +196,50 @@ export function Launcher(props: LauncherProps) {
             ) : mapMissing ? (
               <div className="selection">
                 <p className="muted">
-                  Add the PK3 that contains <code>maps/{mapName || '…'}.bsp</code>. It is added to
-                  the session's writable engine data; nothing is written to your GameData folder.
+                  Add the PK3 that contains <code>maps/{mapName || '…'}.bsp</code>. Community maps
+                  can also need models or textures from another map PK3; select those here too.
+                  They are added to the session's writable engine data; nothing is written to your
+                  GameData folder.
                 </p>
-                <button className="primary" onClick={() => props.mapInputRef.current?.click()}>
-                  Add map .pk3
+                <button
+                  className="primary"
+                  onClick={() => props.mapInputRef.current?.click()}
+                  disabled={props.addingPk3s || props.busy}
+                >
+                  {props.addingPk3s ? 'Adding game data…' : 'Add map / dependency .pk3'}
                 </button>
               </div>
             ) : (
-              <div className="row">
-                <button className="primary" onClick={props.onPlay} disabled={!mapName || props.busy}>
-                  {props.busy ? 'Preparing timeline…' : 'Play demo'}
-                </button>
-                <button className="ghost" onClick={() => props.onStep('demo')}>Choose another demo</button>
-              </div>
+              <>
+                <div className="row">
+                  <button className="primary" onClick={props.onPlay} disabled={!mapName || props.busy || props.addingPk3s}>
+                    {props.busy ? 'Preparing timeline…' : 'Play demo'}
+                  </button>
+                  <button
+                    className="ghost"
+                    onClick={() => props.mapInputRef.current?.click()}
+                    disabled={props.addingPk3s || props.busy || props.preparingDemo}
+                    title={
+                      props.preparingDemo
+                        ? 'Wait for the background map load to finish before changing the game data.'
+                        : undefined
+                    }
+                  >
+                    {props.addingPk3s ? 'Adding game data…' : 'Add extra .pk3'}
+                  </button>
+                  <button className="ghost" onClick={() => props.onStep('demo')}>Choose another demo</button>
+                </div>
+                <p className="fineprint">
+                  Missing props or textures? Add the other PK3s this map uses before Play.
+                </p>
+              </>
             )}
+
+            {props.addedPk3s.length ? (
+              <p className="fineprint">
+                Added this session: <code>{props.addedPk3s.join(', ')}</code>
+              </p>
+            ) : null}
 
             {props.engineActive ? (
               <div className="row">
@@ -274,6 +305,7 @@ export function Launcher(props: LauncherProps) {
         <input
           ref={props.mapInputRef}
           type="file"
+          multiple
           accept=".pk3"
           className="hidden-input"
           onChange={props.onMapFileInput}

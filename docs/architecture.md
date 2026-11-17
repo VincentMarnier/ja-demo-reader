@@ -217,7 +217,7 @@ and boot arguments.
 ```text
 select → File objects → postMessage (structured clone, no byte copy)
        → FS.mount(WORKERFS, { files }, '/jka/base')   (read-only)
-       → demo/added map PK3 → FS.writeFile('/userdata/base/...')  (MEMFS, writable)
+       → demo/added map or dependency PK3 → FS.writeFile('/userdata/base/...')  (MEMFS, writable)
 ```
 
 Rules:
@@ -225,7 +225,8 @@ Rules:
 - Create `/jka/base`, `/userdata`, `/userdata/base` and `/userdata/base/demos`
   before mounting.
 - Keep `/jka/base` read-only; write demos to `/userdata/base/demos` and added
-  map PK3s to `/userdata/base`.
+  map/dependency PK3s to `/userdata/base`. The map step accepts several PK3s
+  and writes them all before one `JKA_RestartFS`.
 - WORKERFS reads use `FileReaderSync`; it only works in the worker.
 - Do not write PK3s back to browser storage. There is no OPFS asset cache.
 
@@ -476,7 +477,7 @@ summaries. Older builds may have left an OPFS copy under
 | `DEMO_INVALID_EXT` | Not `.dm_26` | Select a JKA MP demo |
 | `DEMO_TRUNCATED` | Framing invalid | Re-download/re-record the demo |
 | `DEMO_PROTOCOL` | Not protocol 26 | Unsupported demo |
-| `DEMO_MOD_MISMATCH` | Missing mod/map PK3 | Supply the mod assets or use a base demo |
+| `DEMO_MOD_MISMATCH` | Missing mod/map/dependency PK3 | Add the PK3s in the map step or use a base demo |
 | `ENGINE_BOOT_FAILED` | Wasm/module load error | Check browser/WebGL; download logs |
 | `WEBGL_UNAVAILABLE` | No WebGL2/1 | Use a supported desktop browser |
 | `OUT_OF_MEMORY` | Tab allocation failure | Close tabs; use a desktop with more RAM |

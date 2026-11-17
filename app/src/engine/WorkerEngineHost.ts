@@ -510,11 +510,12 @@ export class WorkerEngineHost implements EngineHostApi {
     return !!(await this.call<boolean>('has-map', { map }));
   }
 
-  async addMapFile(file: File): Promise<void> {
-    if (!file.name.toLowerCase().endsWith('.pk3')) {
-      throw new Error('The map must be supplied as a .pk3 file.');
+  async addPk3Files(files: File[]): Promise<void> {
+    const pk3s = files.filter(file => file.name.toLowerCase().endsWith('.pk3'));
+    if (pk3s.length === 0) {
+      throw new Error('Game data must be supplied as .pk3 files.');
     }
-    await this.runAudioLoad(() => this.call<void>('add-map', { name: file.name, file }));
+    await this.runAudioLoad(() => this.call<void>('add-pk3s', { files: pk3s }));
   }
 
   async addDemoFile(file: LocalFile): Promise<void> {

@@ -1,0 +1,17 @@
+diff --git a/codemp/cgame/cg_spawn.c b/codemp/cgame/cg_spawn.c
+index c1088639..52045caa 100644
+--- a/codemp/cgame/cg_spawn.c
++++ b/codemp/cgame/cg_spawn.c
+@@ -206,7 +206,11 @@ void SP_misc_model_static( void ) {
+ 
+ 	modelIndex = trap->R_RegisterModel( model );
+ 	if( modelIndex == 0 ) {
+-		trap->Error( ERR_DROP, "misc_model_static failed to load model '%s'", model );
++		// Community maps often reuse a decorative model from another map PK3.
++		// A viewer that has the map but not that dependency must still be able
++		// to play the demo: skip the prop and report it instead of dropping the
++		// whole map/cgame.
++		trap->Print( "^3WARNING: misc_model_static skipped missing model '%s'\n", model );
+ 		return;
+ 	}
+ 

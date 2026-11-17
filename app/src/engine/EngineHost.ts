@@ -25,6 +25,9 @@ interface ModuleLike {
 // Keep the whole diagnostic build log; the old 5000-line cap could drop boot
 // timing lines before the user presses Download log.
 const LOG_LIMIT = 20000;
+// Asyncify keeps the runtime alive, so Module.onExit is not called when
+// Com_Error exits the wasm program.  Surface the engine's own fatal lines.
+const FATAL_LOG = /(?:recursive error after:|program exited \(with status: [1-9]\d*\))/i;
 
 /**
  * Degraded host: the whole engine runs on the main thread and the PK3s are
@@ -106,6 +109,9 @@ export class MainThreadEngineHost implements EngineHostApi {
           this.logs.push(line);
           if (this.logs.length > LOG_LIMIT) this.logs.splice(0, this.logs.length - LOG_LIMIT);
           this.callbacks.onLog(line);
+          if (FATAL_LOG.test(text)) {
+            fail(new Error(`The engine stopped: ${text}`));
+          }
         },
         onAbort: (what: unknown) => {
           fail(new Error(`Engine aborted: ${String(what)}`));
@@ -444,9 +450,10 @@ export class MainThreadEngineHost implements EngineHostApi {
     return !!this.module.ccall('JKA_HasMap', 'number', ['string'], [map]);
   }
 
-  async addMapFile(file: File): Promise<void> {
-    if (!file.name.toLowerCase().endsWith('.pk3')) {
-      throw new Error('The map must be supplied as a .pk3 file.');
+  async addPk3Files(files: File[]): Promise<void> {
+    const pk3s = files.filter(file => file.name.toLowerCase().endsWith('.pk3'));
+    if (pk3s.length === 0) {
+      throw new Error('Game data must be supplied as .pk3 files.');
     }
     const FS = (window as unknown as {
       FS?: {
@@ -457,15 +464,20 @@ export class MainThreadEngineHost implements EngineHostApi {
       };
     }).FS;
     if (!FS) throw new Error('Engine filesystem unavailable.');
-    const buffer = await file.arrayBuffer();
     await this.runAudioLoad(() => this.runExclusive(async () => {
-      // Re-adding the same map should replace it rather than fail with EEXIST.
-      try {
-        FS.unlink?.(`/jka/base/${file.name}`);
-      } catch {
-        // not staged yet
+      // Read and write one at a time: a selection of several map PK3s should
+      // not multiply the JS/wasm peak by holding every buffer at once.
+      for (const file of pk3s) {
+        const name = file.name.split(/[\\/]/).pop() || file.name;
+        const data = new Uint8Array(await file.arrayBuffer());
+        // Re-adding the same PK3 should replace it rather than fail with EEXIST.
+        try {
+          FS.unlink?.(`/jka/base/${name}`);
+        } catch {
+          // not staged yet
+        }
+        FS.createDataFile('/jka/base', name, data, true, false, true);
       }
-      FS.createDataFile('/jka/base', file.name, new Uint8Array(buffer), true, false, true);
       await this.module?.ccall?.('JKA_RestartFS', null, [], [], { async: true });
     }));
   }

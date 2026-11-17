@@ -155,7 +155,11 @@ own. See [docs/github-pages.md](docs/github-pages.md).
   that changes maps takes the full map/cgame load. No multi-map demo is
   included in the local test set, so that path is not release-validated.
 - Added-map PK3 demos are supported, but mods that keep extra cgame globals
-  across maps are not broadly tested.
+  across maps are not broadly tested. Community maps can also depend on models
+  or textures from another map PK3; the map step accepts several PK3s at once
+  and keeps an **Add extra .pk3** action. A missing decorative
+  `misc_model_static` model is skipped with an engine warning instead of
+  aborting the load.
 - A seek to the very first snapshot can briefly show that snapshot's gamestate
   score/timer until the next configstring updates arrive.
 - The first engine shader initialization can take several seconds on software

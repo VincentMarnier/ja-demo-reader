@@ -92,6 +92,11 @@ let statusTimer: ReturnType<typeof setInterval> | null = null;
 let scoreboardTimer: ReturnType<typeof setInterval> | null = null;
 let logBuffer: string[] = [];
 let logTimer: ReturnType<typeof setTimeout> | null = null;
+let fatalSent = false;
+// Emscripten keeps the runtime alive through Asyncify, so Module.onExit is not
+// called when cgame/Com_Error exits the wasm program.  These lines are the
+// reliable signal; surfacing them turns a stuck map load into an error panel.
+const FATAL_LOG = /(?:^ERR )?(?:recursive error after:|program exited \(with status: [1-9]\d*\))/i;
 let mountedBytes = 0;
 let mountedFiles = 0;
 let workerBootStart = 0;
@@ -182,6 +187,9 @@ function post(message: WorkerResponse, transfer?: Transferable[]): void {
 function sendLog(line: string): void {
   logBuffer.push(line);
   if (logBuffer.length > LOG_LIMIT) logBuffer.splice(0, logBuffer.length - LOG_LIMIT);
+  if (!fatalSent && FATAL_LOG.test(line)) {
+    fatal(`The engine stopped: ${line.replace(/^ERR /, '')}`);
+  }
   if (logTimer === null) {
     logTimer = setTimeout(flushLogs, 50);
   }
@@ -196,6 +204,8 @@ function flushLogs(): void {
 }
 
 function fatal(message: string): void {
+  if (fatalSent) return;
+  fatalSent = true;
   flushLogs();
   post({ type: 'fatal', message });
 }
@@ -600,11 +610,19 @@ async function handle(request: WorkerRequest): Promise<unknown> {
       FS.writeFile(`/userdata/base/demos/${name}`, new Uint8Array(buffer));
       return undefined;
     }
-    case 'add-map': {
+    case 'add-pk3s': {
       const FS = requireFs();
-      const name = baseName(request.name);
-      const buffer = await request.file.arrayBuffer();
-      FS.writeFile(`/userdata/base/${name}`, new Uint8Array(buffer));
+      for (const file of request.files) {
+        if (!file.name.toLowerCase().endsWith('.pk3')) {
+          throw new Error('Game data must be supplied as .pk3 files.');
+        }
+        const name = baseName(file.name);
+        const buffer = await file.arrayBuffer();
+        FS.writeFile(`/userdata/base/${name}`, new Uint8Array(buffer));
+      }
+      // One restart for the whole selection.  A community map can depend on
+      // models or textures from another PK3, so the map and its dependencies
+      // are added together.
       await ccallAsync('JKA_RestartFS', [], []);
       return undefined;
     }

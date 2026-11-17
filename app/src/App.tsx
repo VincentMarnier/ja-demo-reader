@@ -42,6 +42,8 @@ export default function App() {
   const [mapName, setMapName] = useState('');
   const [mapMissing, setMapMissing] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
+  const [addedPk3s, setAddedPk3s] = useState<string[]>([]);
+  const [addingPk3s, setAddingPk3s] = useState(false);
   const [checking, setChecking] = useState(false);
 
   const [phase, setPhase] = useState<Phase>('launcher');
@@ -778,29 +780,64 @@ export default function App() {
 
   const handleMapFileInput = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
+      const files = Array.from(event.target.files ?? []).filter(file => file.name.toLowerCase().endsWith('.pk3'));
       event.target.value = '';
-      if (!file || !engineRef.current || !demoFile) return;
-      if (!file.name.toLowerCase().endsWith('.pk3')) {
-        setMapError('The map must be supplied as a .pk3 file.');
+      const engine = engineRef.current;
+      if (!demoFile || !engine) return;
+      if (files.length === 0) {
+        setMapError('Select a .pk3 file.');
         return;
       }
+      setAddingPk3s(true);
+      setMapError(null);
       try {
-        await engineRef.current.addMapFile(file);
-        const map = await engineRef.current.parseDemoMap(demoBase(demoFile.name));
+        // FS_Restart must not run inside a map load.  A community map can also
+        // depend on models or textures from another PK3, so this accepts
+        // several files and restarts the search path once.
+        if (preparePromiseRef.current) {
+          await preparePromiseRef.current.catch(() => undefined);
+        }
+        // The warm map was loaded before these PK3s existed, and
+        // JKA_PrepareDemo would consider it prepared.  Tear it down so the next
+        // prepare/Play uses the new search path.
+        try {
+          await engine.stopDemo();
+        } catch {
+          // Nothing warm to stop.
+        }
+        preparedDemoRef.current = null;
+        await engine.addPk3Files(files);
+        // A background prepare can start while the files are being read and
+        // the search path is restarted; that warm map predates the new PK3s.
+        // Stop it so the prepare below reloads instead of reporting already-warm.
+        try {
+          await engine.stopDemo();
+        } catch {
+          // Nothing warm to stop.
+        }
+        preparedDemoRef.current = null;
+        setAddedPk3s(current => Array.from(new Set([...current, ...files.map(file => file.name)])));
+        const map = await engine.parseDemoMap(demoBase(demoFile.name));
         if (!map) {
           setMapError('Could not re-read the demo map after adding the PK3.');
           return;
         }
         setMapName(map);
-        const present = await engineRef.current.hasMap(map);
+        const present = await engine.hasMap(map);
         setMapMissing(!present);
-        setMapError(present ? null : `maps/${map}.bsp is still missing. Add the map PK3 that contains it.`);
+        if (!present) {
+          setMapError(`maps/${map}.bsp is still missing. Add the map PK3 that contains it.`);
+          return;
+        }
+        setPhase('launcher');
+        void ensurePrepared(engine, demoBase(demoFile.name));
       } catch (err) {
         setMapError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setAddingPk3s(false);
       }
     },
-    [demoFile]
+    [demoFile, ensurePrepared]
   );
 
   const togglePause = useCallback(async () => {
@@ -934,6 +971,8 @@ export default function App() {
     setEngineMode(null);
     setStatus(null);
     setScoreboard(null);
+    setAddedPk3s([]);
+    setAddingPk3s(false);
     // The transferred canvas cannot be reused, so replace the element for the
     // next boot.
     setCanvasGeneration(generation => generation + 1);
@@ -1065,6 +1104,8 @@ export default function App() {
                   mapName={mapName}
                   mapMissing={mapMissing}
                   mapError={mapError}
+                  addedPk3s={addedPk3s}
+                  addingPk3s={addingPk3s}
                   summary={demoSummary}
                   engineMode={engineMode}
                   enginePreparing={enginePreparing}
