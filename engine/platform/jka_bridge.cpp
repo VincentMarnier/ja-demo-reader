@@ -852,7 +852,7 @@ static int JKA_ScanDemo( const char *name, int targetTime, qboolean stopAtTarget
 			if ( FS_Read( &messageLength, 4, file ) != 4 ) {
 				break;
 			}
-			messageLength = LittleLong( messageLength );
+			// WASM is little-endian; FS_Read already gives the native value.
 			if ( messageLength == -1 ) {
 				break;
 			}

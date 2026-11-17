@@ -64,7 +64,7 @@ main-thread host, and remove the OPFS asset cache.
   `worker engine-ready ms=2210–2247`; host stage `sinceMs=2276–2344`. The first
   `FS_Startup` was **84.9 s** before the central-directory cache below and
   **~2.2 s** after it.
-- A custom `asms.pk3` added to `/userdata/base` and a 1.3 MB protocol-26 demo
+- A custom `added-map.pk3` added to `/userdata/base` and a 1.3 MB protocol-26 demo
   played in the worker: Check map (including the demo scan) **3.9 s**,
   `JKA_PlayDemo` **6.375 s** (`CL_InitCGame` 4.99 s, BSP 0.508 s, images
   1.41 s decode, cgame setup 1.996 s, graphics 1.579 s, clients 1.170 s).
@@ -122,7 +122,7 @@ showed:
   flight` in headful Chromium 149 and on the `?worker=0` fallback. It is a
   timing-sensitive teardown path; Phase 4's keep-warm Stop must not rely on
   it. The abort is not a Phase 3 regression.
-- **The custom `asms.pk3` demo produced no timeline.** The demo scan returned
+- **The custom `added-map.pk3` demo produced no timeline.** The demo scan returned
   `messages=0` (`gamestates=1`), so `demoInfo` had no duration and the seek bar
   was absent; playback itself still worked. The retail demo scanned normally
   (18,688 messages), so this is specific to the added map PK3/pure-list path.
@@ -150,7 +150,7 @@ does not contain the mounted PK3s. Both reserve the same 805 MB wasm heap
 ### Brave Task Manager (user run)
 
 Host: Brave 157 on the user’s desktop, retail-map demo
-`blacksun_vs_cerberus_r1.dm_26`, texture settings **picmip 0 / trilinear**
+`demo.dm_26`, texture settings **picmip 0 / trilinear**
 (the high-quality setting, not the fast default):
 
 | Point | Worker | `?worker=0` fallback |
@@ -188,7 +188,7 @@ profile) measured:
   map/cgame reload cost that Phase 5 must remove.
 - Stop **1.68 s**, no worker abort and no page error in this run; it still does
   the full `RE_Shutdown`/`R_Init` teardown.
-- The custom `asms.pk3` demo still has no timeline; the retail demo has one.
+- The custom `added-map.pk3` demo still has no timeline; the retail demo has one.
 
 ### WORKERFS central-directory cache
 
@@ -445,7 +445,7 @@ implemented yet.
 - **Headless Chromium on this host has no WebGL2** (main thread or worker).
   The gate and measurements use headful Chromium; a real desktop Brave/Chrome
   is the target.
-- **Custom map PK3s can break the demo scan.** An added `asms.pk3` was “not on
+- **Custom map PK3s can break the demo scan.** An added `added-map.pk3` was “not on
   the pure list”; the first gamestate's map/cgame load left the scan with
   `messages=0`, so no summary/duration/timeline. Playback worked. Phase 4/5
   must either keep the scan's demo handle valid across the warm map load or

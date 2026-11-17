@@ -105,14 +105,14 @@ IndexedDB. Later Check maps (`Stop` → map step) reuse the cached summary and
 the existing keyframes, so that path stays fast.
 
 The old custom-map demo scan failure (`messages=0`) was caused by the scan's
-map/cgame load. With parse-only scanning the same `asms.pk3` demo scans
+map/cgame load. With parse-only scanning the same `added-map.pk3` demo scans
 `messages=24359, snapshots=24352, keyframes=20, gamestates=2` and shows its two
 games in the summary.
 
 ## Measurements
 
 Headful Chromium 149 for Testing, Linux desktop, retail assets and
-`blacksun_vs_cerberus_r1.dm_26`, worker host:
+`demo.dm_26`, worker host:
 
 | Step | Measured |
 |---|---:|

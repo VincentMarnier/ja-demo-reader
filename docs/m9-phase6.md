@@ -17,7 +17,7 @@ phase does not add a second map cache.
 | Cgame reset | `CG_SeekReset` now receives the target server-command sequence and calls `CG_ExecuteNewServerCommands` after rebuilding clientinfo. |
 | Command order | `cgs.serverCommandSequence` advances to the target, so the snapshot transitions do not execute the same commands a second time. |
 | Telemetry | `jka_profile` logs the reason when a warm seek falls back (`no-keyframe`, `not-active`, `bad-game`, `map`, `replay-error`, `replay-eof`). |
-| Compatibility | The added-map PK3 demo (`asms.pk3`) is used as a real app flow: Check map, add the map, prepare, Play, backward/mid seek. |
+| Compatibility | The added-map PK3 demo (`added-map.pk3`) is used as a real app flow: Check map, add the map, prepare, Play, backward/mid seek. |
 
 ## Why apply commands early
 
@@ -50,12 +50,12 @@ Worker, retail demo:
 - Backward/forward seeks and Watch again produce no page errors and no
   `CG_ReadNextSnapshot: way out of range` warning.
 
-Worker, added-map PK3 demo (`asms.pk3` + `asmsdemo.dm_26`, two games):
+Worker, added-map PK3 demo (`added-map.pk3` + `demo.dm_26`, two games):
 
 | Step | Measured |
 |---|---:|
 | Check map (parse-only scan, 24,359 messages) | **0.25 s** |
-| Map missing → add `asms.pk3` → Play enabled | immediate |
+| Map missing → add `added-map.pk3` → Play enabled | immediate |
 | Background prepare | ~6 s |
 | Play | active |
 | Backward seek to the demo start | **1 ms** engine (`path=warm-inplace`) |

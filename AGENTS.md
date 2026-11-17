@@ -10,7 +10,8 @@
   `docs/m9-phase3.md` describes the worker engine, WORKERFS and OPFS removal,
   `docs/m9-phase4.md` covers background prepare, keep-warm Stop and Release,
   `docs/m9-phase5.md` covers warm seek, Restart and the scan-only Check map,
-  and `docs/m9-phase6.md` covers seek state fidelity and added-map demos.
+  `docs/m9-phase6.md` covers seek state fidelity and added-map demos, and
+  `docs/m9-phase7.md` is the release-hardening checklist.
 - The app is a single Vite/React app in `app/`. `App.tsx` owns the wizard and
   player state, `engine/WorkerEngineHost.ts` and `engine/EngineHost.ts` are the
   two implementations of the shared `engine/host.ts` interface, and `src/fs/`
@@ -205,6 +206,9 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
 - The engine build must keep `-sENVIRONMENT=web,worker,node` (node keeps
   `verify-boot-node.sh` working), `-lworkerfs.js`, exported
   `FS`/`addRunDependency`/`removeRunDependency`, and the runtime GL proc lookup.
+  The boot smoke needs the fixture-preload build
+  (`BUILD_REND2=1 BUILD_CGAME=1`, no `NO_PRELOAD=1`); the app's `NO_PRELOAD=1`
+  build has no `/jka/base/mpdefault.cfg` for a standalone boot.
   `-sOFFSCREENCANVAS_SUPPORT=1` is pthread-scoped and is not used; the whole
   module runs in the worker. `-sDISABLE_DEPRECATED_FIND_EVENT_TARGET_BEHAVIOR=0`
   is required so target 0 resolves to `Module.canvas` (the newer selector-only
@@ -221,7 +225,7 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
 - Keyframes store the full snapshot and `cl.gameState` after the scan has
   executed the message's `cs`/`bcs` commands. The scan is parse-only
   (`jka_scanOnly`) and must not trigger `CL_InitDownloads`; that is also what
-  fixed the added-map-PK3 scan (`asms.pk3`: 24,359 messages, 20 keyframes, two
+  fixed the added-map-PK3 scan (`added-map.pk3`: 24,359 messages, 20 keyframes, two
   games).
 - Game boundaries come from `svc_gamestate`, map changes, `map_restart` server
   commands and `CS_LEVEL_START_TIME` changes. A command restart opens the next
@@ -270,7 +274,8 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   locally (never commit them).
 - `scripts/verify-demo.mjs` requires `ASSETS_DIR` and `DEMO`/`DEMO_FILE` and the
   engine web harness, not the React app. `engine/scripts/verify-boot-node.sh`
-  checks a standalone engine build.
+  checks a standalone engine build; use the fixture-preload build described
+  above, not the app's `NO_PRELOAD=1` output.
 - Use one headless browser/profile at a time. Multiple Chromium instances with
   large wasm heaps (and the fallback MEMFS copy) can exhaust the host; clean
   temporary profiles and kill the process group when finished.

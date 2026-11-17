@@ -119,7 +119,14 @@ own. See [docs/github-pages.md](docs/github-pages.md).
 - Objective scores sent by mod-specific server commands are not parsed; the
   displayed score is the obituary kill count.
 - Keyframes are kept in memory for the current page session. After a reload,
-  the demo is scanned again before indexed seeks are available.
+  the parse-only scan rebuilds them; it does not reload the map.
+- Backward/forward seek and Restart are warm only within the same map. A demo
+  that changes maps takes the full map/cgame load. No multi-map demo is
+  included in the local test set, so that path is not release-validated.
+- Added-map PK3 demos are supported, but mods that keep extra cgame globals
+  across maps are not broadly tested.
+- A seek to the very first snapshot can briefly show that snapshot's gamestate
+  score/timer until the next configstring updates arrive.
 - The first engine shader initialization can take several seconds on software
   WebGL. Chrome's GPU shader cache helps on later runs.
 - A very long demo with more than 96 keyframes or very large snapshots falls

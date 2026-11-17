@@ -5,10 +5,10 @@ and the React app, then deploys `app/dist` to GitHub Pages.
 
 ## One-time repository setup
 
-1. Push `master` to GitHub.
+1. Push `main` to GitHub.
 2. Open **Settings → Pages** and set **Source** to **GitHub Actions**.
 3. Run the workflow manually once from **Actions → Build and deploy GitHub Pages
-   → Run workflow**, or push to `master`.
+   → Run workflow**, or push to `main`.
 
 The site is served at:
 
@@ -30,7 +30,7 @@ The Vite `base` is relative (`./`), so the same build works for both layouts.
 | `npm ci && npm run build` | Builds the static site in `app/dist` |
 | `upload-pages-artifact` / `deploy-pages` | Publishes the build |
 
-The workflow only triggers on `master` and manual dispatch. The `rd-vanilla`
+The workflow only triggers on `main` and manual dispatch. The `rd-vanilla`
 branch is not deployed; rebuild and deploy it separately if needed.
 
 ## Notes

@@ -123,7 +123,7 @@ needs a new Check map.
 ## Measurements
 
 Headful Chromium 149 for Testing, Linux desktop, retail assets and
-`blacksun_vs_cerberus_r1.dm_26` (18,688 messages, 75 keyframes), worker host:
+`demo.dm_26` (18,688 messages, 75 keyframes), worker host:
 
 | Step | Measured |
 |---|---:|
@@ -183,7 +183,7 @@ again). The reload is intentional, not an error path.
 ### Brave Task Manager (user run)
 
 Host: Brave 157 on the user's desktop, retail assets and
-`blacksun_vs_cerberus_r1.dm_26`, worker host, no page errors:
+`demo.dm_26`, worker host, no page errors:
 
 | Point | Tab memory |
 |---|---:|
