@@ -1,20 +1,39 @@
+import { useState } from 'react';
 import type { DemoSummary } from '../types';
 import { formatTime } from '../format';
+import { DemoTrendChart, TREND_METRICS } from './DemoTrendChart';
+import type { TrendMetric } from './DemoTrendChart';
 
 interface DemoSummaryViewProps {
   summary: DemoSummary | null;
 }
+
+type SummaryView = 'table' | TrendMetric;
 
 function stripColors(name: string): string {
   return name.replace(/\^[0-9a-zA-Z]/g, '').replace(/\^/g, '');
 }
 
 export function DemoSummaryView({ summary }: DemoSummaryViewProps) {
+  const [view, setView] = useState<SummaryView>('table');
+
   if (!summary || summary.games.length === 0) return null;
 
   return (
     <section className="demo-summary" aria-label="Demo summary">
-      <h3>Demo summary</h3>
+      <div className="demo-summary-head">
+        <h3>Demo summary</h3>
+        <select
+          value={view}
+          aria-label="Demo summary view"
+          onChange={event => setView(event.target.value as SummaryView)}
+        >
+          <option value="table">Summary table</option>
+          {TREND_METRICS.map(option => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
+      </div>
       {summary.games.map((game, index) => {
         const players = [...game.players]
           .filter(player => player.team !== 3 || player.kills > 0 || player.deaths > 0)
@@ -26,7 +45,9 @@ export function DemoSummaryView({ summary }: DemoSummaryViewProps) {
               <span>{formatTime(game.duration)} played</span>
               {game.levelTime > 0 ? <span className="muted">match clock {formatTime(game.levelTime)}</span> : null}
             </div>
-            {players.length === 0 ? (
+            {view !== 'table' ? (
+              <DemoTrendChart game={game} metric={view} />
+            ) : players.length === 0 ? (
               <p className="muted">No players were seen in this demo.</p>
             ) : (
               <table className="demo-summary-table">
