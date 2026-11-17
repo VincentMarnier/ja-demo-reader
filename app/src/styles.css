@@ -678,6 +678,13 @@ summary { cursor: pointer; color: var(--muted); }
   white-space: nowrap;
   pointer-events: none;
 }
+.seek-track {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
 .seek-bar input[type="range"] {
   flex: 1;
   min-width: 0;
@@ -685,6 +692,26 @@ summary { cursor: pointer; color: var(--muted); }
   accent-color: var(--accent);
   cursor: pointer;
 }
+/* Kill ticks: red attacker, blue attacker, primary when there are no teams. */
+.seek-marks {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 50%;
+  height: 0;
+  pointer-events: none;
+}
+.seek-mark {
+  position: absolute;
+  top: -12px;
+  width: 2px;
+  height: 8px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+.seek-mark.team-1 { background: var(--danger); }
+.seek-mark.team-2 { background: var(--accent-2); }
 .seek-time {
   min-width: 38px;
   text-align: right;

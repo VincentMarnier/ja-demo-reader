@@ -104,7 +104,9 @@ own. See [docs/github-pages.md](docs/github-pages.md).
 - **Demo selector** — when several demos are available it sits above the video
   and the scoreboard.
 - **Seek bar** — jump through the demo. Forward seeks use a keyframe; backward
-  seeks restart from the nearest keyframe.
+  seeks restart from the nearest keyframe. Each kill is marked above the track:
+  red for a red-team killer, blue for a blue-team killer, and the accent colour
+  when the demo has no teams.
 - **Follow** — first-person model camera for the recorded POV player, third-person
   model camera for other players.
 - **Free cam** — toggled from the scoreboard panel; WASD/Space/Ctrl movement,

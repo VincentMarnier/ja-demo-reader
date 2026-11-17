@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
+import type { KillMarker } from '../types';
 
 interface SeekBarProps {
   currentMs: number;
   durationMs: number;
+  killMarkers?: KillMarker[];
   disabled?: boolean;
   onSeek: (positionMs: number) => void;
 }
@@ -19,8 +21,16 @@ function format(ms: number): string {
 const THUMB_INSET = 8;
 /** Keep the floating label away from the seek bar's rounded ends. */
 const LABEL_MARGIN = 26;
+/** Kill markers closer than this share one tick instead of stacking. */
+const MARK_STEPS = 900;
 
-export function SeekBar({ currentMs, durationMs, disabled, onSeek }: SeekBarProps) {
+export function SeekBar({
+  currentMs,
+  durationMs,
+  killMarkers,
+  disabled,
+  onSeek
+}: SeekBarProps) {
   const [value, setValue] = useState(currentMs);
   const [hover, setHover] = useState<{ left: number; ms: number } | null>(null);
   const barRef = useRef<HTMLDivElement>(null);
@@ -33,6 +43,22 @@ export function SeekBar({ currentMs, durationMs, disabled, onSeek }: SeekBarProp
   useEffect(() => {
     if (disabled) setHover(null);
   }, [disabled]);
+
+  // Bucket the kills to about one tick per pixel so dense fights stay cheap.
+  const marks = useMemo(() => {
+    if (!killMarkers || killMarkers.length === 0 || durationMs <= 0) return [];
+    const buckets = new Map<number, number>();
+    for (const marker of killMarkers) {
+      const ratio = Math.min(1, Math.max(0, marker.at / durationMs));
+      const bucket = Math.round(ratio * MARK_STEPS);
+      if (!buckets.has(bucket)) buckets.set(bucket, marker.team);
+    }
+    return [...buckets.entries()].map(([bucket, team]) => ({
+      key: bucket,
+      left: (bucket / MARK_STEPS) * 100,
+      team
+    }));
+  }, [killMarkers, durationMs]);
 
   if (durationMs <= 0) return null;
 
@@ -68,31 +94,46 @@ export function SeekBar({ currentMs, durationMs, disabled, onSeek }: SeekBarProp
         </span>
       ) : null}
       <span className="seek-time">{format(value)}</span>
-      <input
-        type="range"
-        min={0}
-        max={Math.max(1, durationMs)}
-        step={250}
-        value={Math.min(value, durationMs)}
-        disabled={disabled}
-        aria-label="Seek demo time"
-        onPointerDown={event => {
-          dragging.current = true;
-          trackHover(event);
-        }}
-        onPointerMove={trackHover}
-        onPointerLeave={() => setHover(null)}
-        onChange={event => {
-          dragging.current = true;
-          setValue(Number(event.target.value));
-        }}
-        onPointerUp={commit}
-        onKeyUp={event => {
-          if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'Home' || event.key === 'End') {
-            commit();
-          }
-        }}
-      />
+      <div className="seek-track">
+        <input
+          type="range"
+          min={0}
+          max={Math.max(1, durationMs)}
+          step={250}
+          value={Math.min(value, durationMs)}
+          disabled={disabled}
+          aria-label="Seek demo time"
+          onPointerDown={event => {
+            dragging.current = true;
+            trackHover(event);
+          }}
+          onPointerMove={trackHover}
+          onPointerLeave={() => setHover(null)}
+          onChange={event => {
+            dragging.current = true;
+            setValue(Number(event.target.value));
+          }}
+          onPointerUp={commit}
+          onKeyUp={event => {
+            if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'Home' || event.key === 'End') {
+              commit();
+            }
+          }}
+        />
+        {marks.length > 0 ? (
+          <div className="seek-marks" aria-hidden="true">
+            {marks.map(mark => (
+              <span
+                key={mark.key}
+                className={
+                  mark.team === 1 ? 'seek-mark team-1' : mark.team === 2 ? 'seek-mark team-2' : 'seek-mark'
+                }
+                style={{ left: `${mark.left}%` }}
+              />
+            ))}
+          </div>
+        ) : null}
+      </div>
       <span className="seek-time duration">{format(durationMs)}</span>
     </div>
   );

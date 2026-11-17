@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Phase, ScoreboardData, ViewStats } from '../types';
+import type { KillMarker, Phase, ScoreboardData, ViewStats } from '../types';
 import { ScoreStrip } from './ScoreStrip';
 import { SeekBar } from './SeekBar';
 import { VitalsHud } from './VitalsHud';
@@ -18,6 +18,7 @@ interface PlayerProps {
   showTimer: boolean;
   currentMs: number;
   durationMs: number;
+  killMarkers: KillMarker[];
   onPause: () => void;
   onRestart: () => void;
   onStop: () => void;
@@ -267,6 +268,7 @@ export function Player(props: PlayerProps) {
           <SeekBar
             currentMs={props.currentMs}
             durationMs={props.durationMs}
+            killMarkers={props.killMarkers}
             disabled={ended}
             onSeek={props.onSeek}
           />

@@ -85,6 +85,14 @@ export interface DemoEvent {
   mod: number;
 }
 
+/** A kill on the seek bar: when it happened and the killer's team. */
+export interface KillMarker {
+  /** Milliseconds since the first snapshot of the demo. */
+  at: number;
+  /** Attacker team — 1 is red and 2 is blue; anything else uses the primary colour. */
+  team: number;
+}
+
 export interface DemoPlayerSummary {
   num: number;
   name: string;

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
-import type { AssetSelection, DemoInfo, DemoStatus, DemoSummary, FreeCamPose, LocalFile, Phase, ScoreboardData, StageProgress, ValidationResult } from './types';
+import type { AssetSelection, DemoInfo, DemoStatus, DemoSummary, FreeCamPose, KillMarker, LocalFile, Phase, ScoreboardData, StageProgress, ValidationResult } from './types';
 import { CA_ACTIVE } from './types';
 import { validateDemoFile, validateSelection } from './fs/validate';
 import {
@@ -959,6 +959,24 @@ export default function App() {
   const gammaExponent = (bootGammaRef.current || 1) / Math.max(0.5, Math.min(3, settings.rGamma));
   const gammaFilter = Math.abs(gammaExponent - 1) > 0.01 ? 'url(#jka-gamma)' : undefined;
   const demoPosition = demoInfo && status ? Math.max(0, status.serverTime - demoInfo.first) : 0;
+  // Obituary events with a real attacker are kills; colour them by the killer's
+  // team.  Environment deaths and self-kills have no killer and get no marker.
+  const killMarkers = useMemo<KillMarker[]>(() => {
+    if (!demoSummary || !demoInfo) return [];
+    const markers: KillMarker[] = [];
+    for (const game of demoSummary.games) {
+      if (game.events.length === 0) continue;
+      const teams = new Map<number, number>();
+      for (const player of game.players) teams.set(player.num, player.team);
+      for (const event of game.events) {
+        if (event.attacker < 0 || event.attacker === event.target) continue;
+        const at = event.time - demoInfo.first;
+        if (at < 0 || at > demoInfo.duration) continue;
+        markers.push({ at, team: teams.get(event.attacker) ?? 3 });
+      }
+    }
+    return markers;
+  }, [demoSummary, demoInfo]);
   const showWizard = phase === 'launcher' || phase === 'validating';
   const showPlayer = phase === 'playing' || phase === 'paused' || phase === 'ended';
   // A demo chosen from a file input may not be in the folder list.
@@ -1110,6 +1128,7 @@ export default function App() {
                   showTimer={settings.showTimer}
                   currentMs={demoPosition}
                   durationMs={demoInfo?.duration ?? 0}
+                  killMarkers={killMarkers}
                   onPause={togglePause}
                   onRestart={restart}
                   onStop={stop}
