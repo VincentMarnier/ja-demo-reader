@@ -32,7 +32,7 @@ load; that is the honest fallback, not a hidden timer.
 | Engine patch | New `0009-cgame-warm-seek.patch`: a `CG_SeekReset` cgame export, an in-place seek reset, the scan-only gamestate path, and an EOF guard. |
 | Keyframes | `JKA_SeekKeyframeWarm` restores the nearest keyframe, replays to the target and resets the cgame without `CL_Disconnect` or a map load. |
 | Keyframe selection | Keyframes are selected within the target game, not merely the nearest earlier keyframe across a game boundary. |
-| Cgame | `CG_SeekReset` clears entities, snapshots, per-demo state and cached saber trail segments while keeping the map, renderer, registered media and world item visuals. |
+| Cgame | `CG_SeekReset` clears entity/snapshot/per-demo state while keeping the map, renderer, registered media, world item visuals, client ghoul2 models, custom saber hilt instances and the default `g2WeaponInstances`. |
 | Scan | `JKA_ScanDemo` sets `jka_scanOnly`; `CL_ParseGamestate` rebuilds configstrings/snapshots but skips `CL_InitDownloads`, the map load and cgame init. |
 | Keyframe gameState | The scan executes `cs`/`bcs` server commands while scanning, so a keyframe's configstrings match live playback. |
 | App | Check map scans when this engine has no keyframes for the demo; Restart and Watch again use a warm seek to the first snapshot. |
@@ -50,13 +50,20 @@ load; that is the honest fallback, not a hidden timer.
    stops if the file position stops advancing (EOF, because
    `CL_DemoCompleted` leaves the file open in this build).
 4. `CG_SeekReset` clears `cg`, `cg_entities`, local entities, marks and the
-   FX/ROFF state. It keeps the map, collision map, registered media and world
-   item visuals resident, rebuilds `cgs.gameState`, serverinfo, config values,
-   clientinfo and permanent entities, clears each client's cached saber trail
-   (segment base/tip, timestamps and mark history), and starts the cgame at
-   the oldest snapshot still in the client ring. The trail is world-space
-   cached state; without clearing it a seek can leave a saber "laser" at the
-   position from before the jump.
+   FX/ROFF state. It keeps the map, collision map, registered media, world
+   item visuals, each client's ghoul2 body model and custom saber hilt
+   instances, and the default `g2WeaponInstances` resident. It rebuilds
+   `cgs.gameState`, serverinfo, config values, clientinfo and permanent
+   entities, clears each client's cached saber trail (segment base/tip,
+   timestamps and mark history), and starts the cgame at the oldest snapshot
+   still in the client ring.
+   The saber blade is placed with a bolt matrix on the **hilt model** copied
+   into the player ghoul2. Freeing the clientinfo body/hilt instances or
+   `g2WeaponInstances` and then rebuilding clientinfo does not recreate an
+   unchanged custom hilt, so the hilt index/bolt is missing and the blade
+   appears at the wrong place. The trail is separate world-space cached state;
+   without clearing it a seek can leave a saber "laser" at the pre-seek
+   position.
 5. `cl.serverTime` is set to the target snapshot and the main loop resumes.
    The cgame requests snapshots from the ring edge to the target, executes the
    retained server commands and draws normally.
@@ -146,8 +153,10 @@ Done in this checkout:
 6. The added-map-PK3 demo now scans 24,359 messages and 20 keyframes; its
    summary shows two games.
 7. No `CG_ReadNextSnapshot: way out of range` warning after warm seeks.
-8. Saber trail caches are cleared on reset; follow-camera seeks no longer
-   leave trail segments at the pre-seek position.
+8. Clientinfo ghoul2 body/saber-hilt instances survive the reset and
+   `CG_CopyG2WeaponInstance` can copy the hilt into the player model again;
+   saber trail caches are cleared, so the blade and trail use the target
+   position.
 
 Outstanding:
 
@@ -167,9 +176,16 @@ Outstanding:
 - **`CG_SeekReset` is a soft reset.** It must keep item visuals and cge media
   that are map-level while clearing entity/snapshot state. Do not replace it
   with `CG_Init` (map load) or `CG_Shutdown`-only (stale snapshots) without
-  re-testing new games, duels and view weapons. Saber trails are cached in
-  `clientInfo_t` and copied by `CG_NewClientInfo`; clear them after rebuilding
-  clientinfo or the trail can draw at the pre-seek position.
+  re-testing new games, duels and view weapons.
+- **Do not call `CG_KillCEntityG2` for client entities in the reset.** For a
+  client it also frees `clientInfo_t.ghoul2Model` and the custom
+  `ghoul2Weapons[]` hilt instances. `CG_NewClientInfo` keeps unchanged saber
+  info, so it will not recreate them; the saber blade then has no hilt bolt
+  and can render at the wrong position. Free only the client entity's
+  `ghoul2`/`grip_arm`/`frame_hold`; keep `g2WeaponInstances` too.
+- **Saber trails are cached in `clientInfo_t`** and copied by
+  `CG_NewClientInfo`; clear them after rebuilding clientinfo or the trail can
+  draw at the pre-seek position.
 - **EOF is not a disconnect here.** `CL_DemoCompleted` leaves `CA_ACTIVE` and
   the demo file open. `CL_SetCGameTime` must keep the `jka_demoEnded` break;
   removing it reintroduces an infinite read loop when the seek target is the

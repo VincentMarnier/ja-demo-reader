@@ -146,9 +146,15 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   for a different map and let the full keyframe path run. Keyframes are chosen
   within the target game, not across a game boundary.
 - `CG_SeekReset` must keep map-level media (renderer, BSP/collision map,
-  registered graphics, world item visuals) and clear only per-demo cgame
-  state. Do not replace it with `CG_Init` (reloads the map) or
-  `CG_Shutdown`-only (stale snapshots/entities).
+  registered graphics, world item visuals, `g2WeaponInstances`, client
+  `ghoul2Model`/`ghoul2Weapons`) and clear only per-demo cgame state. Do not
+  replace it with `CG_Init` (reloads the map) or `CG_Shutdown`-only (stale
+  snapshots/entities).
+- Do not call `CG_KillCEntityG2` for client entities in `CG_SeekReset` and do
+  not call `CG_ShutDownG2Weapons`. Both free map-level client/saber media that
+  `CG_NewClientInfo` will not recreate when the saber name is unchanged. The
+  blade's bolt matrix then has no hilt model and renders in the wrong place.
+  Saber trail caches in `clientInfo_t` must be cleared explicitly.
 - The scan executes `cs`/`bcs` commands while parsing so keyframe
   `cl.gameState` matches live playback (scores, level start, clientinfo).
   Keep that; a keyframe with only the initial gamestate restores wrong HUD

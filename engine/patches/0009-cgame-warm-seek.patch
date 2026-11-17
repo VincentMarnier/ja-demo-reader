@@ -1,8 +1,8 @@
 diff --git a/codemp/cgame/cg_main.c b/codemp/cgame/cg_main.c
-index 5588f581..5ffa7d55 100644
+index 5588f581..8dfa3817 100644
 --- a/codemp/cgame/cg_main.c
 +++ b/codemp/cgame/cg_main.c
-@@ -2728,6 +2728,88 @@ void CG_DestroyAllGhoul2(void)
+@@ -2728,6 +2728,112 @@ void CG_DestroyAllGhoul2(void)
  	CG_CleanJetpackGhoul2();
  }
  
@@ -25,12 +25,36 @@ index 5588f581..5ffa7d55 100644
 +	int i;
 +
 +	// Do not use CG_DestroyAllGhoul2 here: it also frees the registered world
-+	// item models, which stay valid across a seek.  Entities and weapon/jetpack
-+	// instances are per-demo; item visuals are map media.
++	// item models, which stay valid across a seek.  Do not call
++	// CG_ShutDownG2Weapons either: g2WeaponInstances holds the map-level
++	// default hilt/weapon models.
++	//
++	// CG_KillCEntityG2 on a client entity also frees that client's
++	// clientinfo ghoul2 model and custom saber hilt instances.  Those are
++	// map-level client media and CG_NewClientInfo will not recreate an
++	// unchanged custom hilt, which leaves the saber blade without its hilt
++	// model/bolt and puts the blade in the wrong place.  Clear only the
++	// per-entity instances for clients; NPCs own their clientinfo and can use
++	// the normal cleanup.
 +	for ( i = 0; i < MAX_GENTITIES; i++ ) {
-+		CG_KillCEntityG2( i );
++		centity_t *cent = &cg_entities[i];
++		if ( i >= MAX_CLIENTS ) {
++			CG_KillCEntityG2( i );
++			continue;
++		}
++		if ( cent->ghoul2 && trap->G2_HaveWeGhoul2Models( cent->ghoul2 ) ) {
++			trap->G2API_CleanGhoul2Models( &cent->ghoul2 );
++		}
++		cent->ghoul2 = NULL;
++		if ( cent->grip_arm && trap->G2_HaveWeGhoul2Models( cent->grip_arm ) ) {
++			trap->G2API_CleanGhoul2Models( &cent->grip_arm );
++		}
++		cent->grip_arm = NULL;
++		if ( cent->frame_hold && trap->G2_HaveWeGhoul2Models( cent->frame_hold ) ) {
++			trap->G2API_CleanGhoul2Models( &cent->frame_hold );
++		}
++		cent->frame_hold = NULL;
 +	}
-+	CG_ShutDownG2Weapons();
 +	CG_CleanJetpackGhoul2();
 +	trap->FX_FreeSystem();
 +	trap->ROFF_Clean();
@@ -91,7 +115,7 @@ index 5588f581..5ffa7d55 100644
  /*
  =================
  CG_Shutdown
-@@ -3037,6 +3119,7 @@ Q_EXPORT cgameExport_t* QDECL GetModuleAPI( int apiVersion, cgameImport_t *impor
+@@ -3037,6 +3143,7 @@ Q_EXPORT cgameExport_t* QDECL GetModuleAPI( int apiVersion, cgameImport_t *impor
  	cge.AutomapInput			= CG_AutomapInput;
  	cge.MiscEnt					= CG_MiscEnt;
  	cge.CameraShake				= CG_FX_CameraShake;
@@ -99,7 +123,7 @@ index 5588f581..5ffa7d55 100644
  
  	return &cge;
  }
-@@ -3171,6 +3254,10 @@ Q_EXPORT intptr_t vmMain( int command, intptr_t arg0, intptr_t arg1, intptr_t ar
+@@ -3171,6 +3278,10 @@ Q_EXPORT intptr_t vmMain( int command, intptr_t arg0, intptr_t arg1, intptr_t ar
  		CG_FX_CameraShake();
  		return 0;
  
