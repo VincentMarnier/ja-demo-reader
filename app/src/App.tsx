@@ -11,11 +11,12 @@ import {
 } from './fs/sources';
 import { loadDirectoryHandle, saveDirectoryHandle } from './fs/handles';
 import { loadDemoSummary, saveDemoSummary, clearDemoSummaries } from './fs/demoCache';
-import { assetCacheKey, clearAssetCache, loadCachedAssets, saveAssetFiles } from './fs/assetCache';
-import type { CachedAssets } from './fs/assetCache';
+import { assetSetKey } from './fs/signature';
+import { clearLegacyAssetCache } from './fs/assetCache';
 import { chooseGame, mergeScoreboard } from './summary';
 import { formatTime } from './format';
-import { EngineHost } from './engine/EngineHost';
+import { createEngineHost, WorkerUnsupportedError } from './engine/host';
+import type { EngineHostApi, EngineMode } from './engine/host';
 import { Launcher } from './components/Launcher';
 import { Player } from './components/Player';
 import { ProgressOverlay } from './components/ProgressOverlay';
@@ -55,8 +56,7 @@ export default function App() {
   const [scoreboard, setScoreboard] = useState<ScoreboardData | null>(null);
   const [demoInfo, setDemoInfo] = useState<DemoInfo | null>(null);
   const [demoSummary, setDemoSummary] = useState<DemoSummary | null>(null);
-  const [cachedAssets, setCachedAssets] = useState<CachedAssets | null>(null);
-  const [cacheStatus, setCacheStatus] = useState<string | null>(null);
+  const [engineMode, setEngineMode] = useState<EngineMode | null>(null);
   const [enginePreparing, setEnginePreparing] = useState(false);
   const [engineProgress, setEngineProgress] = useState<StageProgress | null>(null);
   const [freeCam, setFreeCam] = useState(false);
@@ -65,7 +65,7 @@ export default function App() {
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
-  const engineRef = useRef<EngineHost | null>(null);
+  const engineRef = useRef<EngineHostApi | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const assetInputRef = useRef<HTMLInputElement>(null);
   const demoInputRef = useRef<HTMLInputElement>(null);
@@ -75,17 +75,18 @@ export default function App() {
   const freeCamPoseRef = useRef<FreeCamPose | null>(null);
   const demoSummaryRef = useRef<DemoSummary | null>(null);
   const statusRef = useRef<DemoStatus | null>(null);
-  const cacheInFlightRef = useRef(false);
   const playbackActionRef = useRef(false);
-  const bootPromiseRef = useRef<Promise<EngineHost> | null>(null);
+  const bootPromiseRef = useRef<Promise<EngineHostApi> | null>(null);
   const bootForegroundRef = useRef(false);
   const bootedAssetKeyRef = useRef<string | null>(null);
   const bootGammaRef = useRef(1);
 
   useEffect(() => {
     loadDirectoryHandle().then(handle => setSavedHandle(handle));
-    loadCachedAssets().then(cached => {
-      if (cached) setCachedAssets(cached);
+    // M9 Phase 3: the OPFS asset copy is gone.  Remove the legacy tree once so
+    // existing users recover the ~1.14 GB it held.
+    void clearLegacyAssetCache().then(removed => {
+      if (removed) console.info('Removed the legacy OPFS asset cache.');
     });
   }, []);
 
@@ -141,15 +142,21 @@ export default function App() {
 
   useEffect(() => {
     if (phase !== 'playing' && phase !== 'paused' && phase !== 'ended') return;
+    let cancelled = false;
     const tick = () => {
-      const data = engineRef.current?.getScoreboard();
-      if (data) {
+      const engine = engineRef.current;
+      if (!engine) return;
+      void engine.getScoreboard().then(data => {
+        if (cancelled || !data) return;
         setScoreboard(mergeScoreboard(data, demoSummaryRef.current, statusRef.current?.serverTime ?? 0));
-      }
+      });
     };
     tick();
     const timer = window.setInterval(tick, 500);
-    return () => window.clearInterval(timer);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, [phase]);
 
   useEffect(() => {
@@ -276,7 +283,7 @@ export default function App() {
     }
   }, []);
 
-  const toggleFreeCam = useCallback(() => {
+  const toggleFreeCam = useCallback(async () => {
     const engine = engineRef.current;
     if (!engine) return;
     if (freeCam) {
@@ -285,7 +292,7 @@ export default function App() {
       setFreeCam(false);
       return;
     }
-    const pose = engine.enableFreeCam();
+    const pose = await engine.enableFreeCam();
     if (!pose) return;
     freeCamPoseRef.current = pose;
     setFollowClient(null);
@@ -315,7 +322,7 @@ export default function App() {
     setFollowClient(null);
   }, [freeCam]);
 
-  const bootEngine = useCallback(async (files: LocalFile[], foreground: boolean): Promise<EngineHost> => {
+  const bootEngine = useCallback(async (files: LocalFile[], foreground: boolean): Promise<EngineHostApi> => {
     if (bootPromiseRef.current) {
       if (foreground) {
         bootForegroundRef.current = true;
@@ -336,9 +343,9 @@ export default function App() {
     setEnginePreparing(!foreground);
     if (foreground) setPhase('staging');
 
-    const created = new EngineHost({
+    const callbacks = {
       onLog: () => undefined,
-      onProgress: next => {
+      onProgress: (next: StageProgress) => {
         setProgress(next);
         setEngineProgress(next);
         if (bootForegroundRef.current) {
@@ -347,7 +354,7 @@ export default function App() {
           setEnginePreparing(true);
         }
       },
-      onStatus: next => {
+      onStatus: (next: DemoStatus) => {
         statusRef.current = next;
         setStatus(next);
         if (playbackRequestedRef.current && next.state === CA_ACTIVE && next.demo === 1) {
@@ -358,23 +365,42 @@ export default function App() {
           setPaused(false);
         }
       },
-      onFatal: message => {
+      onFatal: (message: string) => {
         setError(message);
         setPhase('error');
       }
-    });
-    engineRef.current = created;
-    bootedAssetKeyRef.current = assetCacheKey(files.filter(file => /^assets[0-3]\.pk3$/i.test(file.name)));
+    };
 
-    const promise = created
-      .boot({
-        canvas,
-        files,
-        signal: controller.signal,
-        texturePicmip: settings.texturePicmip,
-        textureMipmaps: settings.textureMipmaps
-      })
-      .then(() => {
+    bootedAssetKeyRef.current = assetSetKey(files.filter(file => /^assets[0-3]\.pk3$/i.test(file.name)));
+
+    const bootHost = async (host: EngineHostApi): Promise<EngineHostApi> => {
+      engineRef.current = host;
+      setEngineMode(host.mode);
+      try {
+        await host.boot({
+          canvas,
+          files,
+          signal: controller.signal,
+          texturePicmip: settings.texturePicmip,
+          textureMipmaps: settings.textureMipmaps
+        });
+        return host;
+      } catch (error) {
+        // The worker preflight runs before transferControlToOffscreen, so a
+        // missing worker/script can still fall back in this page.
+        if (host.mode === 'worker' && error instanceof WorkerUnsupportedError) {
+          console.warn('Worker engine unavailable; using the main-thread fallback.', error.message);
+          host.destroy();
+          engineRef.current = null;
+          const fallback = createEngineHost(callbacks, 'main-thread');
+          return bootHost(fallback);
+        }
+        throw error;
+      }
+    };
+
+    const promise = bootHost(createEngineHost(callbacks))
+      .then(created => {
         bootGammaRef.current = settings.rGamma;
         created.setCvar('cg_fov', String(settings.cgFov));
         created.setCvar('r_gamma', String(settings.rGamma));
@@ -411,7 +437,7 @@ export default function App() {
       setDemoInfo(null);
       setDemoSummary(null);
       if (result.errors.length === 0) {
-        const key = assetCacheKey(result.assets);
+        const key = assetSetKey(result.assets);
         if (engineRef.current && bootedAssetKeyRef.current && key !== bootedAssetKeyRef.current) {
           setError('The wasm engine was preloaded with a different asset set. Reload the page to use the selected folder.');
           setPhase('error');
@@ -520,35 +546,11 @@ export default function App() {
     [selectDemo]
   );
 
-  const cacheAssets = useCallback(async (files: LocalFile[], label: string) => {
-    const assets = files.filter(file => /^assets[0-3]\.pk3$/i.test(file.name));
-    if (assets.length !== 4) return;
-    if (cacheInFlightRef.current) return;
-    if (cachedAssets && cachedAssets.key === assetCacheKey(assets)) return;
-    cacheInFlightRef.current = true;
-    setCacheStatus('Caching game data for faster reloads…');
-    try {
-      const saved = await saveAssetFiles(assets, label, progress => {
-        const percent = progress.total > 0 ? Math.round((progress.loaded / progress.total) * 100) : 0;
-        setCacheStatus(`Caching game data… ${percent}%`);
-      });
-      if (saved) setCachedAssets(saved);
-    } finally {
-      cacheInFlightRef.current = false;
-      setCacheStatus(null);
-    }
-  }, [cachedAssets]);
-
-  const useCachedAssets = useCallback(async () => {
-    if (!cachedAssets) return;
-    await applyAssets({ files: cachedAssets.files, demos: [], label: cachedAssets.label });
-  }, [cachedAssets]);
-
-  const clearCache = useCallback(async () => {
-    await clearAssetCache();
+  // Settings → Local data.  There is no asset cache any more; clear the parsed
+  // summaries (IndexedDB) and any leftover OPFS asset tree from older builds.
+  const clearLocalData = useCallback(async () => {
     await clearDemoSummaries();
-    setCachedAssets(null);
-    setCacheStatus(null);
+    await clearLegacyAssetCache();
   }, []);
 
   const checkMap = useCallback(async () => {
@@ -581,7 +583,7 @@ export default function App() {
 
     setPhase('launcher');
     const name = demoBase(demoFile.name);
-    const map = engine.parseDemoMap(name);
+    const map = await engine.parseDemoMap(name);
     if (!map) {
       setMapError('The demo did not expose a mapname in its first gamestate. The file may be truncated or not protocol 26.');
       setMapName('');
@@ -590,7 +592,7 @@ export default function App() {
       setChecking(false);
       return;
     }
-    const present = engine.hasMap(map);
+    const present = await engine.hasMap(map);
     setMapName(map);
     setMapMissing(!present);
     setStep('map');
@@ -616,7 +618,7 @@ export default function App() {
       engine.markStage('check-map:scan-start');
       info = await engine.demoInfo(name);
       if (info) {
-        summary = engine.demoSummary();
+        summary = await engine.demoSummary();
         if (summary) {
           await saveDemoSummary(cacheKey, summary);
         }
@@ -628,13 +630,12 @@ export default function App() {
     demoSummaryRef.current = summary;
     engine.markStage('check-map:done');
     setChecking(false);
-    void cacheAssets(assetValidation?.assets ?? [], 'Retail assets');
 
     if (present) {
       // Keep the engine warm; Play starts the actual demo.
       setPhase('launcher');
     }
-  }, [assetSelection, assetValidation, demoFile, cacheAssets, bootEngine]);
+  }, [assetSelection, assetValidation, demoFile, bootEngine]);
 
   const startPlay = useCallback(async () => {
     const engine = engineRef.current;
@@ -673,13 +674,13 @@ export default function App() {
       }
       try {
         await engineRef.current.addMapFile(file);
-        const map = engineRef.current.parseDemoMap(demoBase(demoFile.name));
+        const map = await engineRef.current.parseDemoMap(demoBase(demoFile.name));
         if (!map) {
           setMapError('Could not re-read the demo map after adding the PK3.');
           return;
         }
         setMapName(map);
-        const present = engineRef.current.hasMap(map);
+        const present = await engineRef.current.hasMap(map);
         setMapMissing(!present);
         setMapError(present ? null : `maps/${map}.bsp is still missing. Add the map PK3 that contains it.`);
       } catch (err) {
@@ -847,11 +848,9 @@ export default function App() {
               mapMissing={mapMissing}
               mapError={mapError}
               summary={demoSummary}
-              cachedAssets={cachedAssets}
-              cacheStatus={cacheStatus}
+              engineMode={engineMode}
               enginePreparing={enginePreparing}
               engineProgress={engineProgress}
-              onUseCachedAssets={useCachedAssets}
               savedHandle={savedHandle}
               busy={checking}
               onPickAssets={handlePickAssets}
@@ -932,7 +931,7 @@ export default function App() {
           settings={settings}
           onChange={updateSettings}
           onClose={() => setShowSettings(false)}
-          onClearCache={clearCache}
+          onClearLocalData={clearLocalData}
         />
       ) : null}
 

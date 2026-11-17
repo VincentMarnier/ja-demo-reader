@@ -68,6 +68,7 @@ echo "==> adding platform sources"
 cp "$ROOT/engine/platform/ref_stub.cpp" "$WORK/codemp/client/ref_stub.cpp"
 cp "$ROOT/engine/platform/gl_stubs.cpp" "$WORK/codemp/client/gl_stubs.cpp"
 cp "$ROOT/engine/platform/jka_bridge.cpp" "$WORK/codemp/client/jka_bridge.cpp"
+cp "$ROOT/engine/platform/win_emscripten.cpp" "$WORK/codemp/client/win_emscripten.cpp"
 
 # shellcheck disable=SC1090
 source "$EMSDK/emsdk_env.sh" >/dev/null 2>&1
@@ -95,7 +96,27 @@ if [ "$PROFILE" = "1" ]; then
   # JKA_PROFILE timing and shader-usage lines.
   PROFILE_FLAGS="-DJKA_PROFILE_BUILD=1"
 fi
-GL_FLAGS="-sALLOW_MEMORY_GROWTH=1 -sASSERTIONS=1 -sSTACK_SIZE=8388608 -sSTACK_OVERFLOW_CHECK=1 -sDISABLE_EXCEPTION_CATCHING=0 -sEXPORTED_RUNTIME_METHODS=ccall,cwrap"
+# M9 Phase 3: one module serves both hosts.  `worker` keeps the glue from
+# touching window/document when the whole module runs in a dedicated worker;
+# `web` keeps the degraded main-thread path working.  WORKERFS mounts the
+# retail PK3s read-only from the File objects the app already owns, so they are
+# never copied into MEMFS.  FS and the run-dependency hooks are used by both
+# hosts to mount/write before boot.
+#
+# OFFSCREENCANVAS_SUPPORT is intentionally not set: in Emscripten it is the
+# pthread canvas-transfer and explicit-swap-control support path.  Here the
+# whole module already runs inside the worker, and it creates the WebGL2
+# context on Module.canvas (an OffscreenCanvas) through the normal HTML5 WebGL
+# API with implicit swap.
+# `node` stays in the environment list so engine/scripts/verify-boot-node.sh
+# (and NODE_RAWF builds) can still boot the same output under Node.
+#
+# DISABLE_DEPRECATED_FIND_EVENT_TARGET_BEHAVIOR=0 restores the canvas lookup
+# that maps target 0 to Module.canvas.  The newer lookup only resolves DOM
+# selectors, which do not exist in a worker; emscripten_webgl_create_context(0)
+# and emscripten_get_canvas_element_size(0) would then fail to find the
+# transferred OffscreenCanvas.
+GL_FLAGS="-sALLOW_MEMORY_GROWTH=1 -sASSERTIONS=1 -sSTACK_SIZE=8388608 -sSTACK_OVERFLOW_CHECK=1 -sDISABLE_EXCEPTION_CATCHING=0 -sDISABLE_DEPRECATED_FIND_EVENT_TARGET_BEHAVIOR=0 -sENVIRONMENT=web,worker,node -sEXPORTED_RUNTIME_METHODS=ccall,cwrap,FS,addRunDependency,removeRunDependency"
 if [ "$BUILD_RENDERER" = "1" ]; then
   RENDERER=ON
   GL_FLAGS="$GL_FLAGS -sMIN_WEBGL_VERSION=1 -sMAX_WEBGL_VERSION=2 -sLEGACY_GL_EMULATION=1 -sGL_UNSAFE_OPTS=0"
@@ -108,8 +129,10 @@ if [ "$BUILD_REND2" = "1" ]; then
   REND2=ON
   # rd-rend2 uses modern GL; WebGL2/GLES3 is required and the legacy GL
   # emulation must not be linked. Asyncify lets the renderer yield between
-  # shader programs so map loading does not freeze the browser tab.
-  GL_FLAGS="$GL_FLAGS -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1 -sASYNCIFY=1 -sGL_UNSAFE_OPTS=0"
+  # shader programs so map loading does not freeze the browser tab.  The
+  # OffscreenCanvas window layer resolves GL entry points at runtime, so keep
+  # the get-proc-address path available.
+  GL_FLAGS="$GL_FLAGS -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1 -sASYNCIFY=1 -sGL_UNSAFE_OPTS=0 -sGL_ENABLE_GET_PROC_ADDRESS=1"
 fi
 if [ "$NODE_RAWF" = "1" ]; then
   GL_FLAGS="$GL_FLAGS -sNODERAWFS=1"
@@ -151,7 +174,7 @@ emcmake cmake -S "$WORK" -B "$BUILD" \
   -DCMAKE_BUILD_TYPE=${BUILD_TYPE:-Release} \
   -DCMAKE_C_FLAGS="-fno-strict-aliasing $PROFILE_FLAGS" \
   -DCMAKE_CXX_FLAGS="-fexceptions -fno-strict-aliasing $PROFILE_FLAGS" \
-  -DCMAKE_EXE_LINKER_FLAGS="$PRELOAD_ARGS -lidbfs.js $GL_FLAGS" \
+  -DCMAKE_EXE_LINKER_FLAGS="$PRELOAD_ARGS -lworkerfs.js $GL_FLAGS" \
   -DBuildMPEngine=ON -DBuildMPRdVanilla=$RENDERER -DBuildMPCGame=$CGAME -DBuildMPUI=OFF \
   -DBuildMPGame=OFF -DBuildMPDed=OFF -DBuildMPRend2=$REND2 \
   -DBuildSPEngine=OFF -DBuildSPGame=OFF -DBuildSPRdVanilla=OFF \
@@ -167,6 +190,8 @@ if [ -f "$BUILD/openjk.x86.data" ]; then
   cp "$BUILD"/openjk.x86.data "$OUT"/
 fi
 cp "$ROOT"/engine/platform/web/*.html "$OUT"/
+# The worker spike harness uses a separate classic worker script.
+cp "$ROOT"/engine/platform/web/*.js "$OUT"/
 
 printf '\nBuilt:\n'
 ls -l "$OUT/openjk.x86.js" "$OUT/openjk.x86.wasm"

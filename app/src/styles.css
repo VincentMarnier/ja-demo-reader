@@ -151,6 +151,13 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .lede { color: #c4ceda; line-height: 1.6; font-size: 15px; margin: 0 0 20px; }
 .muted { color: var(--muted); }
 .fineprint { color: #718196; font-size: 12px; line-height: 1.5; margin: 18px 0 0; }
+.fineprint.degraded-notice {
+  color: #e0b979;
+  background: rgba(224, 185, 121, 0.08);
+  border: 1px solid rgba(224, 185, 121, 0.25);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
 code { background: rgba(255, 255, 255, 0.06); padding: 1px 5px; border-radius: 5px; font-size: 0.9em; }
 
 .launcher-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }

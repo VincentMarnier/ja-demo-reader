@@ -54,7 +54,9 @@ export async function prepareAndStage(FS: EmscriptenFS, options: StageOptions): 
     FS.writeFile('/jka/base/mpdefault.cfg', new Uint8Array(0));
   }
 
-  // IDBFS is deferred; /userdata is a normal MEMFS directory for now.
+  // The main-thread fallback has no WORKERFS: everything is MEMFS.  /userdata
+  // stays a normal MEMFS directory (no IDBFS/OPFS copy).  The worker host
+  // mounts the PK3s read-only instead and uses the same /userdata layout.
 
   const total = options.files.reduce((sum, item) => sum + item.file.size, 0);
   let loaded = 0;

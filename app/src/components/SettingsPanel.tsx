@@ -6,7 +6,7 @@ interface SettingsPanelProps {
   settings: AppSettings;
   onChange: (patch: Partial<AppSettings>) => void;
   onClose: () => void;
-  onClearCache: () => void;
+  onClearLocalData: () => void;
 }
 
 function KeyBindButton(props: {
@@ -43,7 +43,7 @@ function KeyBindButton(props: {
   );
 }
 
-export function SettingsPanel({ settings, onChange, onClose, onClearCache }: SettingsPanelProps) {
+export function SettingsPanel({ settings, onChange, onClose, onClearLocalData }: SettingsPanelProps) {
   const setKey = (action: FreeCamAction, code: string) => {
     onChange({ freeCamKeys: { ...settings.freeCamKeys, [action]: code } });
   };
@@ -196,10 +196,11 @@ export function SettingsPanel({ settings, onChange, onClose, onClearCache }: Set
         <section className="settings-section">
           <h3>Local data</h3>
           <p className="muted settings-note">
-            Cached game data and parsed demo summaries stay on this device.
+            Parsed demo summaries stay on this device. Game assets are mounted read-only for the
+            session and are not cached, so no asset copy is written to browser storage.
           </p>
-          <button type="button" className="ghost" onClick={onClearCache}>
-            Clear cached game data
+          <button type="button" className="ghost" onClick={onClearLocalData}>
+            Clear cached summaries
           </button>
         </section>
 

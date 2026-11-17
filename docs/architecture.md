@@ -47,23 +47,24 @@
 │ Browser tab                                                          │
 │                                                                      │
 │  ┌─────────────────────────────┐      ┌───────────────────────────┐  │
-│  │ React + Vite + TypeScript   │      │ Emscripten module         │  │
+│  │ React + Vite + TypeScript   │      │ Dedicated Web Worker      │  │
 │  │                             │      │                           │  │
 │  │  Launcher / file picker     │─────▶│  OpenJK MP engine (wasm)  │  │
-│  │  Playback controls          │      │  + rd-vanilla renderer    │  │
-│  │  Camera / inspector UI      │◀─────│  + cgame / optional UI    │  │
-│  │  Error / progress           │      │                           │  │
+│  │  Playback controls          │ RPC  │  + rd-rend2 renderer      │  │
+│  │  Camera / inspector UI      │◀─────│  + cgame                  │  │
+│  │  Error / progress           │      │  renders to OffscreenCanvas│  │
 │  └──────────────┬──────────────┘      └─────────────┬─────────────┘  │
 │                 │                                   │                │
-│                 │  FS staging before boot           │ sync reads     │
+│                 │  File objects, no copy            │ sync reads     │
 │                 ▼                                   ▼                │
 │  ┌─────────────────────────────┐      ┌───────────────────────────┐  │
 │  │ Local file access           │      │ Emscripten VFS            │  │
-│  │  FSA directory handle       │      │  /jka/base  (MEMFS)       │  │
-│  │  <input type=file> fallback │      │  /jka/base/demos (MEMFS)  │  │
-│  │  IndexedDB asset cache      │      │  /userdata  (IDBFS)       │  │
+│  │  FSA directory handle       │      │  /jka/base  (WORKERFS RO) │  │
+│  │  <input type=file> fallback │      │  /userdata/base (MEMFS RW)│  │
+│  │  IndexedDB summaries only   │      │  demos + added map PK3s   │  │
 │  └─────────────────────────────┘      └───────────────────────────┘  │
 │                                                                      │
+│  Fallback: same wasm module on the main thread, PK3s in MEMFS.       │
 │  No backend. No asset upload. No game data in the repository.        │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -87,8 +88,8 @@ jka-demo-player/
 ├── app/                          # React + Vite + TypeScript shell
 │   ├── src/
 │   │   ├── components/           # Launcher, Player, Timeline, Inspector
-│   │   ├── engine/               # EngineHost, bridge, state machine
-│   │   ├── fs/                   # Local file sources, staging, validation
+│   │   ├── engine/               # worker + main-thread hosts, RPC, bridge
+│   │   ├── fs/                   # File sources, staging, validation, cleanup
 │   │   ├── playback/             # Controller, clock, camera commands
 │   │   └── lib/                  # errors, formatting, logging
 │   └── vite.config.ts
@@ -205,51 +206,77 @@ Checks before staging:
 
 Do not fully parse the demo in the main thread. A cheap header/framing check is enough for the launcher; deep validation happens in the engine.
 
-### 4.4 Staging layer
+### 4.4 Asset mounting and staging
 
-The staging layer is the bridge between asynchronous browser file APIs and the engine's synchronous VFS.
+There are two hosts and two filesystem strategies; they share the engine build
+and boot arguments.
+
+**Worker host (primary).** `app/src/engine/engine.worker.ts` mounts the PK3
+`File` objects with WORKERFS:
 
 ```text
-select → read File/Blob → exactly-sized Uint8Array → FS.createDataFile(..., canOwn=true)
+select → File objects → postMessage (structured clone, no byte copy)
+       → FS.mount(WORKERFS, { files }, '/jka/base')   (read-only)
+       → demo/added map PK3 → FS.writeFile('/userdata/base/...')  (MEMFS, writable)
 ```
 
 Rules:
 
-- Create `/jka`, `/jka/base`, `/jka/base/demos`, `/userdata`, `/userdata/base` before boot.
-- Stage PK3s into `/jka/base`.
-- Stage the demo into `/jka/base/demos/<safe-name>.dm_26`.
-- Mount IDBFS at `/userdata` only. OpenJK's `fs_homepath` writes config and saves under `/userdata/base`; the base path stays read-only.
-- Never mount IDBFS over `/jka/base` (it would try to persist the PK3s).
-- Do not use `FS.createLazyFile` on the main thread.
-- Track progress across all files, not per file, so the bar does not jump backwards.
-- Use `canOwn=true` to avoid a second copy of each PK3.
-- Release the original `ArrayBuffer` after staging where possible.
-- On cancellation, unmount/delete staged files and return to `Idle`.
+- Create `/jka/base`, `/userdata`, `/userdata/base` and `/userdata/base/demos`
+  before mounting.
+- Keep `/jka/base` read-only; write demos to `/userdata/base/demos` and added
+  map PK3s to `/userdata/base`.
+- WORKERFS reads use `FileReaderSync`; it only works in the worker.
+- Do not write PK3s back to browser storage. There is no OPFS asset cache.
 
-### 4.5 Engine host
+**Main-thread fallback.** `app/src/fs/stage.ts` still copies the PK3s into
+MEMFS with `FS.createDataFile(..., canOwn=true)` and writes the demo to
+`/jka/base/demos`. It is used when the worker/OffscreenCanvas/WebGL2 probe
+fails, or with `?worker=0`.
 
-`EngineHost` owns the Emscripten module lifecycle:
+### 4.5 Engine hosts
+
+`app/src/engine/host.ts` defines the shared `EngineHostApi`; both
+implementations are interchangeable and the UI never branches on the host.
 
 ```ts
-class EngineHost {
-  async load(options: EngineLoadOptions): Promise<void>;
-  async startDemo(name: string): Promise<void>;
-  pause(): void;
-  resume(): void;
-  restart(): void;
-  setSpeed(rate: number): void;
-  getStatus(): DemoStatus;
-  destroy(): void;
+interface EngineHostApi {
+  readonly mode: 'worker' | 'main-thread';
+  boot(options: BootOptions): Promise<void>;
+  playDemo(name: string): Promise<void>;
+  setPaused(paused: boolean): Promise<void>;
+  stopDemo(): Promise<void>;
+  demoInfo(name: string): Promise<DemoInfo | null>;
+  demoSummary(): Promise<DemoSummary | null>;
+  seekDemo(name: string, targetMs: number): Promise<void>;
+  getScoreboard(): Promise<ScoreboardData | null>;
+  // cvar, follow, free-cam and log helpers
 }
 ```
 
-It should:
+`WorkerEngineHost` owns a classic worker and an RPC protocol
+(`app/src/engine/protocol.ts`):
 
-- Load the engine `.js`/`.wasm` with a fixed `locateFile`.
+- Boot preflights a worker-side WebGL2 probe, then transfers the canvas once
+  with `transferControlToOffscreen`.
+- The worker serializes every wasm call (`runExclusive`); `play` is
+  single-flight. Status and scoreboard are pushed from the worker and cached on
+  the main thread because the UI reads them synchronously.
+- The worker wraps WORKERFS `read` to cache each PK3's central directory in
+  memory. Without it, minizip's per-entry central-directory walk makes the first
+  `FS_Startup` take ~85 s with four retail PK3s; the cache brings it to ~2 s.
+  File data remains lazy.
+- The worker batches `print`/`printErr` lines and forwards them; `markStage`
+  also requests a worker-side memory sample.
+- `?worker=0` forces `MainThreadEngineHost`. A preflight failure also falls
+  back in the same page; a failure after the canvas transfer needs a reload.
+
+Both hosts:
+
+- Load the engine `.js`/`.wasm` with a fixed `locateFile` (absolute base URL).
 - Register `preRun` for FS setup and `onRuntimeInitialized` for readiness.
 - Capture `print`/`printErr` into a ring buffer for diagnostics.
-- Expose engine errors as typed `EngineError`s.
-- Avoid blocking the React render loop; the engine has its own `emscripten_set_main_loop`.
+- Keep the Asyncify/single-flight rules from the bridge.
 - Use a single engine instance per tab. Reload the page to reset completely.
 
 ### 4.6 Engine ABI
@@ -430,13 +457,15 @@ Later:
 | Data | Storage | Size | Notes |
 |---|---|---|---|
 | Directory handle | IndexedDB | tiny | Re-permission on load |
-| Cached PK3 blobs | IndexedDB | up to ~1.2 GB | Optional; quota-checked; clearable |
+| PK3 assets | none | 0 | Mounted read-only for the session; no cache |
 | Last demo name | `localStorage` | tiny | Convenience only |
-| Engine config | IDBFS `/userdata/base` | KB | `jampconfig.cfg` / `mpdefault.cfg` |
-| Savegames | IDBFS `/userdata/base/saves` | MB | Separate from PK3s |
+| Engine config | MEMFS `/userdata/base` | KB | Session only; `jampconfig.cfg` / `mpdefault.cfg` |
+| Savegames | MEMFS `/userdata/base/saves` | MB | Not persisted across reloads |
 | Logs | memory ring | bounded | Downloadable on error |
 
-Do not cache PK3s by default without asking. A 1.2 GB cache can evict other site data and may fail quota. Offer "Remember these files on this device" as an explicit opt-in.
+The only persistent browser storage is the directory handle and parsed demo
+summaries. Older builds may have left an OPFS copy under
+`jka-demo-player/assets`; it is removed once on startup and from Settings.
 
 ### 4.13 Error taxonomy
 
@@ -461,16 +490,18 @@ Errors should include a technical detail panel, not just a toast. The engine's l
 - Target: desktop Chrome/Edge/Brave, 2020+ hardware, 16 GB RAM.
 - Initial wasm heap: 768 MB (matches `jka-web`'s SP measurement). Measure MP separately; adjust.
 - Maximum wasm memory: 4 GB.
-- PK3s: MEMFS, JS heap, ~1.22 GB for retail.
+- Worker path: PK3s stay in the browser's File objects and are read through
+  WORKERFS, so there is no 1.22 GB MEMFS copy and no OPFS copy.
+- Fallback path: PK3s are copied into MEMFS, JS heap, ~1.22 GB for retail.
 - Frame budget: 16.6 ms. The renderer is the likely bottleneck; profile before optimizing.
-- Startup: staging 1.22 GB can take seconds; show progress and keep the UI responsive.
-- Do not enable threads/SharedArrayBuffer for MVP; it adds COOP/COEP deployment requirements.
-- If memory is a problem, the upgrade path is worker + WORKERFS (see research §4.5).
+- Startup: the worker mount is cheap; the fallback still copies 1.22 GB.
+- Do not enable threads/SharedArrayBuffer for MVP; it adds COOP/COEP deployment requirements. The worker path does not need them.
+- Runtime changes that apply only at boot (texture cvars) say so in Settings; other changes apply live through cvars/canvas filters.
 
 ### 4.15 Security and privacy
 
 - No backend, no upload, no analytics by default.
-- CSP: `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'`.
+- CSP: `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'`.
   - `wasm-unsafe-eval` is required for WebAssembly compilation.
   - `connect-src 'self'` is needed because the engine `.wasm` is fetched from the app's own origin. There is no external endpoint and no upload code; keep it same-origin only. Do not set `connect-src 'none'` unless the wasm is embedded differently, or the engine will fail to load.
 - Do not log file contents, player names, or chat by default.
@@ -480,12 +511,16 @@ Errors should include a technical detail panel, not just a toast. The engine's l
 
 ### 4.16 Browser support
 
-| Browser | MVP | Notes |
+| Browser | Path | Notes |
 |---|---|---|
-| Chrome / Edge / Brave (desktop) | Yes | FSA, WebGL2, best performance |
-| Firefox (desktop) | Fallback | File input; WebGL; performance unverified |
-| Safari (desktop) | Fallback | File input; WebGL; memory/perf unverified |
+| Chrome / Edge / Brave (desktop) | Worker | FSA, OffscreenCanvas, WebGL2; lowest memory and off-main-thread engine |
+| Firefox (desktop) | Fallback | File input; worker/OffscreenCanvas support varies; performance unverified |
+| Safari (desktop) | Fallback | File input; worker/WebGL2 support varies; memory/perf unverified |
 | Mobile | No | Memory, input, and FSA limitations |
+
+The fallback is also forceable with `?worker=0` for comparison. Both paths use
+the same engine build and playback behaviour; only the filesystem backing and
+thread differ.
 
 ### 4.17 Deployment
 
@@ -511,8 +546,9 @@ Errors should include a technical detail panel, not just a toast. The engine's l
 6. User selects a demo (or drags one in).
 7. Validate demo extension/framing.
 8. User clicks "Play".
-9. Stage PK3s + demo into MEMFS with progress.
-10. Boot engine; wait for onRuntimeInitialized.
+9. Assets are mounted read-only with WORKERFS (worker) or staged into MEMFS
+   (fallback); Check map copies the demo into `/userdata/base/demos`.
+10. Boot engine in the worker (or main-thread fallback); wait for readiness.
 11. JKA_PlayDemo(name).
 12. Engine loads map/cgame; canvas shows the first frame.
 13. UI switches to Playing; controls enabled.
@@ -660,11 +696,11 @@ Seek(targetMs):
 **Rationale:** Fewer moving parts; avoids a second dynamic module during bring-up; keeps the first render target simple.
 **Consequences:** If static linking conflicts with the engine, the renderer becomes another side module and another failure point.
 
-### ADR-005: MEMFS staging for MVP
+### ADR-005: MEMFS staging for the fallback
 
-**Decision:** Stage PK3s and the demo into MEMFS before boot.
-**Rationale:** Synchronous reads; proven by `jka-web`; simple; no COOP/COEP; no worker rewrite.
-**Consequences:** ~1.22 GB in JS heap; desktop-only; startup copy cost. Worker + WORKERFS is the later scaling path.
+**Decision:** Use worker + WORKERFS as the primary path; keep MEMFS staging as the main-thread fallback.
+**Rationale:** WORKERFS avoids the retail PK3 copy and moves engine work off the UI thread. The fallback preserves browsers without Worker/OffscreenCanvas/WebGL2 and is a safety net if the engine cannot boot in a worker.
+**Consequences:** Two hosts, one shared interface and engine build. The worker path adds an RPC layer and an irreversible canvas transfer; the fallback retains ~1.22 GB in the JS heap and the startup copy cost. There is no OPFS asset cache in either path.
 
 ### ADR-006: No backend
 
@@ -701,7 +737,7 @@ Seek(targetMs):
 | Renderer/WebGL bring-up fails | Medium | High | Static-link first; side-module fallback; small render target before full map |
 | Renderer/cgame/UI module loading fails | Medium | High | Side-module shim; static-link fallback; test each module separately |
 | Demo/cgame/mod mismatch | High | Medium | Base-only MVP; `cl_allowDownload 0`; explicit compatibility errors; test mod demos later |
-| Memory exhaustion | Medium | High | Desktop target; memory warnings; worker/WORKERFS later |
+| Memory exhaustion | Medium | High | Desktop target; worker/WORKERFS path avoids the PK3 copy; fallback warns |
 | No seek | High | Medium | Elapsed-time MVP; replay-based seek later |
 | OpenAL audio port | Medium | Medium | SDL audio or a stub; audio is not on the demo-critical path |
 | Browser support gaps | High | Low | Chromium-first; file-input fallback |

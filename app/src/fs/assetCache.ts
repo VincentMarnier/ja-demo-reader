@@ -1,203 +1,50 @@
-import type { LocalFile } from '../types';
+/**
+ * M9 Phase 3: the OPFS asset cache is gone.  This module only removes the
+ * tree left by older builds (`jka-demo-player/assets/<key>/...`, about 1.14 GB
+ * for the retail PK3s) so existing users recover the storage once.  Parsed
+ * demo summaries live in IndexedDB and are handled by demoCache.ts.
+ */
 
-const ROOT = 'jka-demo-player';
-const ASSETS = 'assets';
-const MANIFEST = 'manifest.json';
-
-interface AssetManifest {
-  key: string;
-  label: string;
-  savedAt: number;
-  files: Array<{ name: string; size: number; lastModified: number }>;
-}
-
-export interface CachedAssets {
-  key: string;
-  label: string;
-  savedAt: number;
-  files: LocalFile[];
-}
+const LEGACY_ROOT = 'jka-demo-player';
+const LEGACY_ASSETS = 'assets';
 
 function storage(): StorageManager | null {
   if (typeof navigator === 'undefined' || !navigator.storage) return null;
   return navigator.storage;
 }
 
-async function opfsRoot(): Promise<FileSystemDirectoryHandle | null> {
+/**
+ * Deletes the legacy OPFS asset tree.  Returns true when a tree was present
+ * and removed.  Never creates the directory.
+ */
+export async function clearLegacyAssetCache(): Promise<boolean> {
   const manager = storage();
-  if (!manager || typeof manager.getDirectory !== 'function') return null;
+  if (!manager || typeof manager.getDirectory !== 'function') return false;
+
+  let root: FileSystemDirectoryHandle;
   try {
-    return await manager.getDirectory();
+    root = await manager.getDirectory();
   } catch {
-    return null;
-  }
-}
-
-export function assetCacheKey(files: LocalFile[]): string {
-  return files
-    .map(file => `${file.name}:${file.file.size}:${file.file.lastModified}`)
-    .sort()
-    .join('|');
-}
-
-async function assetsRoot(create: boolean): Promise<FileSystemDirectoryHandle | null> {
-  const root = await opfsRoot();
-  if (!root) return null;
-  try {
-    const cache = await root.getDirectoryHandle(ROOT, { create });
-    return await cache.getDirectoryHandle(ASSETS, { create });
-  } catch {
-    return null;
-  }
-}
-
-function childHandles(dir: FileSystemDirectoryHandle): AsyncIterableIterator<FileSystemDirectoryHandle> {
-  return (dir as unknown as {
-    values(): AsyncIterableIterator<FileSystemDirectoryHandle>;
-  }).values();
-}
-
-async function readManifest(dir: FileSystemDirectoryHandle): Promise<AssetManifest | null> {
-  try {
-    const handle = await dir.getFileHandle(MANIFEST);
-    const file = await handle.getFile();
-    const parsed = JSON.parse(await file.text()) as AssetManifest;
-    if (!parsed || !Array.isArray(parsed.files) || typeof parsed.key !== 'string') return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-export async function loadCachedAssets(): Promise<CachedAssets | null> {
-  const root = await assetsRoot(false);
-  if (!root) return null;
-  let best: { dir: FileSystemDirectoryHandle; manifest: AssetManifest } | null = null;
-  try {
-    for await (const handle of childHandles(root)) {
-      if (handle.kind !== 'directory') continue;
-      const manifest = await readManifest(handle);
-      if (!manifest) continue;
-      if (!best || manifest.savedAt > best.manifest.savedAt) {
-        best = { dir: handle, manifest };
-      }
-    }
-  } catch {
-    return null;
-  }
-  if (!best) return null;
-
-  const files: LocalFile[] = [];
-  try {
-    for (const entry of best.manifest.files) {
-      const handle = await best.dir.getFileHandle(entry.name);
-      const file = await handle.getFile();
-      if (file.size !== entry.size) return null;
-      files.push({ name: entry.name, file });
-    }
-  } catch {
-    return null;
-  }
-  return {
-    key: best.manifest.key,
-    label: best.manifest.label,
-    savedAt: best.manifest.savedAt,
-    files
-  };
-}
-
-export interface CacheProgress {
-  loaded: number;
-  total: number;
-}
-
-export async function saveAssetFiles(
-  files: LocalFile[],
-  label: string,
-  onProgress?: (progress: CacheProgress) => void
-): Promise<CachedAssets | null> {
-  const root = await assetsRoot(true);
-  if (!root) return null;
-
-  const key = assetCacheKey(files);
-  const total = files.reduce((sum, file) => sum + file.file.size, 0);
-  let loaded = 0;
-
-  const manager = storage();
-  if (manager?.estimate) {
-    try {
-      const estimate = await manager.estimate();
-      if (estimate.quota && estimate.usage && estimate.quota - estimate.usage < total * 1.2) {
-        return null;
-      }
-      await manager.persist?.().catch(() => undefined);
-    } catch {
-      // Quota information is best-effort.
-    }
+    return false;
   }
 
-  let target: FileSystemDirectoryHandle;
+  let cache: FileSystemDirectoryHandle;
   try {
-    target = await root.getDirectoryHandle(key, { create: true });
+    cache = await root.getDirectoryHandle(LEGACY_ROOT);
   } catch {
-    return null;
+    return false;
   }
 
-  const manifest: AssetManifest = {
-    key,
-    label,
-    savedAt: Date.now(),
-    files: files.map(file => ({
-      name: file.name,
-      size: file.file.size,
-      lastModified: file.file.lastModified
-    }))
-  };
-
   try {
-    for (const file of files) {
-      const handle = await target.getFileHandle(file.name, { create: true });
-      const writable = await handle.createWritable();
-      await writable.write(file.file);
-      await writable.close();
-      loaded += file.file.size;
-      onProgress?.({ loaded, total });
-    }
-    const handle = await target.getFileHandle(MANIFEST, { create: true });
-    const writable = await handle.createWritable();
-    await writable.write(JSON.stringify(manifest));
-    await writable.close();
+    await cache.getDirectoryHandle(LEGACY_ASSETS);
   } catch {
-    return null;
+    return false;
   }
 
-  // Keep the new set and drop older ones only after the manifest is complete.
   try {
-    for await (const handle of childHandles(root)) {
-      if (handle.kind === 'directory' && handle.name !== key) {
-        await root.removeEntry(handle.name, { recursive: true }).catch(() => undefined);
-      }
-    }
+    await cache.removeEntry(LEGACY_ASSETS, { recursive: true });
+    return true;
   } catch {
-    // Old cache entries are harmless.
-  }
-
-  return {
-    key,
-    label,
-    savedAt: manifest.savedAt,
-    files
-  };
-}
-
-export async function clearAssetCache(): Promise<void> {
-  const manager = storage();
-  const root = await opfsRoot();
-  if (!manager || !root) return;
-  try {
-    const cache = await root.getDirectoryHandle(ROOT);
-    await cache.removeEntry(ASSETS, { recursive: true });
-  } catch {
-    // Nothing cached.
+    return false;
   }
 }

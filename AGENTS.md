@@ -5,11 +5,14 @@
 - `README.md` is the product/build overview; `docs/m7.md` is the release audit;
   `docs/m8.md` describes the demo summary, cache and seek internals;
   `docs/m9-phase0.md` is the diagnostics build and baseline checklist,
-  `docs/m9-phase0-results.md` records the measured baseline, and
-  `docs/m9-phase1.md` describes the hybrid shader compile and texture profile.
+  `docs/m9-phase0-results.md` records the measured baseline,
+  `docs/m9-phase1.md` describes the hybrid shader compile and texture profile,
+  and `docs/m9-phase3.md` describes the worker engine, WORKERFS and OPFS
+  removal.
 - The app is a single Vite/React app in `app/`. `App.tsx` owns the wizard and
-  player state, `engine/EngineHost.ts` owns the wasm bridge, and `src/fs/` owns
-  file validation/staging/caching.
+  player state, `engine/WorkerEngineHost.ts` and `engine/EngineHost.ts` are the
+  two implementations of the shared `engine/host.ts` interface, and `src/fs/`
+  owns file validation/staging (plus the legacy cache cleanup).
 - The engine is upstream OpenJK `codemp/` plus `engine/platform/` and the
   patches in `engine/patches/`. `references/OpenJK` is a pinned read-only
   submodule at `260c59c2907187af555a676fe0cc798893bf7757`; never edit it or
@@ -46,6 +49,10 @@ engine/scripts/build-mp-wasm.sh
 
 # Copy the built engine into the app. An explicit OUT is required.
 scripts/stage-engine.sh /tmp/jka-demo-player/out
+
+# Worker/OffscreenCanvas spike harness (gate for the worker host):
+# (cd /tmp/jka-demo-player/out && python3 -m http.server 8123)
+# http://localhost:8123/worker-smoke.html?assets=1&demo=<name>
 ```
 
 - Node 22+ is required for the app. The engine build requires Emscripten 6.0.1,
@@ -64,12 +71,18 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
 - `engine/platform/jka_bridge.cpp` is copied into `codemp/client/` by the build
   script; editing it needs no patch change.
 - Changes to upstream/cgame/client source belong in a patch. The current patch
-  set is `0001`–`0007`; `0004` contains the linked cgame/rend2 changes,
+  set is `0001`–`0008`; `0004` contains the linked cgame/rend2 changes,
   `0005` keeps the last frame when a demo ends, `0006` adds M9 `jka_profile`
-  diagnostics (timings, image counters, shader usage), and `0007` adds the
-  hybrid eager/lazy shader compile. Prefer a new patch over editing a large
-  existing one. Verify every patch with a clean worktree: apply all patches
-  from the pin and compare the affected files.
+  diagnostics (timings, image counters, shader usage), `0007` adds the hybrid
+  eager/lazy shader compile, and `0008` selects the OffscreenCanvas window
+  layer and skips DOM input in the worker. Prefer a new patch over editing a
+  large existing one. Verify every patch with a clean worktree: apply all
+  patches from the pin and compare the affected files.
+- `engine/platform/win_emscripten.cpp` is copied into `codemp/client/` by the
+  build script, like `jka_bridge.cpp`; editing it needs no patch change. It is
+  selected only when `Module.canvas` is an OffscreenCanvas, so the SDL
+  main-thread path stays intact. Keep the two paths' six `WIN_*` entry points
+  in sync when the renderer interface changes.
 - `jka_profile` is diagnostic only. The renderer creates it lazily, the
   `PROFILE=1` build defaults it on, and `?diagnostics=1` enables it on a normal
   build. Do not make rendering or cgame behaviour depend on it.
@@ -90,9 +103,11 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
 ## Async bridge rules
 
 - Every long wasm call (`play`, `pause`, `stop`, `seek`, `JKA_DemoInfo`,
-  filesystem restart, map load) is serialized by `EngineHost.runExclusive`.
-  Keep it that way; overlapping `ccall(..., { async: true })` calls abort with
-  “We cannot start an async operation when one is already in flight”.
+  filesystem restart, map load) is serialized by the host's `runExclusive`:
+  `MainThreadEngineHost` on the main thread and the worker's own queue inside
+  `engine.worker.ts`. Keep both; overlapping `ccall(..., { async: true })` calls
+  abort with “We cannot start an async operation when one is already in
+  flight”.
 - `playDemo` is single-flight. Replay/Restart must not start a second map load;
   the Watch again/Restart UI handlers also share a guard.
 - Status polling skips while an async call is running. Do not add another poll
@@ -102,6 +117,48 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
 - `CL_DemoCompleted` in the Emscripten branch intentionally leaves the last
   frame in place. Disconnecting there leaves renderer/map teardown in flight and
   breaks Replay. Stop still does a full disconnect.
+- Worker host (`app/src/engine/engine.worker.ts`): every long/async wasm call
+  goes through the worker's own `runExclusive` queue, and `play` stays
+  single-flight on both sides. Short synchronous calls (status/scoreboard
+  polls, cvar, follow, free-cam) are only made while no async call is in
+  flight. Do not add a call path that can enter wasm during an Asyncify
+  suspension.
+- `JKA_DemoInfo` pauses the loop, disconnects and map-loads while scanning, so
+  it must be an **async** ccall in both hosts. The worker uses
+  `ccallAsyncString`; a synchronous call aborts with Emscripten's
+  “The call to JKA_DemoInfo is running asynchronously” assertion.
+- `WORKERFS` mount details: the `files` option takes File/Blob objects (it
+  reads `.size`/`.slice`); `{ name, data }` wrappers belong to `blobs`. Do not
+  create `mpdefault.cfg` in `/userdata/base`: the homepath is searched before
+  the PK3s, so an empty file shadows the real one in `assets2.pk3` and
+  `FS_InitFilesystem` aborts.
+- Keep the central-directory cache in `engine.worker.ts`. WORKERFS reads use
+  `FileReaderSync`; minizip's per-entry central-directory walk otherwise took
+  ~85 s to boot four retail PK3s. The cache brings boot to ~2.2 s. File data
+  remains lazy.
+- The main thread must not call into wasm while the worker host is active. The
+  app reads a cached status/scoreboard from `WorkerEngineHost`; free-cam, cvar
+  and follow calls are fire-and-forget messages that the worker drops while a
+  long call is running.
+- The OffscreenCanvas transfer is irreversible. `WorkerEngineHost.boot` only
+  preflights a worker/WebGL2 probe before transferring; keep any new fallback
+  check before `transferControlToOffscreen`.
+- Worker mode must stay DOM-free: SDL video/input is not initialised, `IN_Frame`
+  and the SDL quit path are skipped, and `JKA_SetWorkerMode(1)` disables
+  `emscripten_sleep` in the scan/seek loops. Do not add `document`/`window`
+  access to `win_emscripten.cpp` or the worker.
+- `engine.worker.ts` keeps `CA_ACTIVE` inline (equal to `app/src/types.ts`).
+  Vite dev serves a classic worker unbundled, so a runtime import would become
+  an ESM `import` and the worker would fail to parse. Keep worker imports
+  type-only; verify with the dev-server `?worker_file&type=classic` output or
+  `grep '^import '` on the built worker chunk.
+- The engine build must keep `-sENVIRONMENT=web,worker,node` (node keeps
+  `verify-boot-node.sh` working), `-lworkerfs.js`, exported
+  `FS`/`addRunDependency`/`removeRunDependency`, and the runtime GL proc lookup.
+  `-sOFFSCREENCANVAS_SUPPORT=1` is pthread-scoped and is not used; the whole
+  module runs in the worker. `-sDISABLE_DEPRECATED_FIND_EVENT_TARGET_BEHAVIOR=0`
+  is required so target 0 resolves to `Module.canvas` (the newer selector-only
+  lookup cannot find an OffscreenCanvas in a worker).
 
 ## Demo model
 
@@ -128,9 +185,13 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
 - Summary cache keys are versioned (`v3:name:size:lastModified`). Bump the
   version when the summary shape or game-boundary logic changes; otherwise old
   one-game summaries are reused. The IndexedDB cache self-heals a missing store.
-- OPFS caches the four retail PK3s (about 1.14 GB); IndexedDB caches summaries.
-  Settings can clear both. Do not preload OPFS assets at page load; the engine
-  starts staging after the user chooses assets to avoid a 1.14 GB memory spike.
+- There is no asset cache. The worker host mounts the retail/mod PK3s read-only
+  with WORKERFS and writes only demos and added map PK3s to `/userdata/base`.
+  The main-thread fallback still copies PK3s into MEMFS. `app/src/fs/assetCache.ts`
+  exists only for `clearLegacyAssetCache()`, which removes the old
+  `jka-demo-player/assets` OPFS tree once on startup and from Settings; do not
+  add a write path back. The asset-set comparison uses `assetSetKey` in
+  `app/src/fs/signature.ts`, not a cache key.
 - `r_gamma` is applied to the engine at boot only; runtime changes use the
   canvas gamma filter. Setting `r_gamma` live does not re-upload textures.
 - Remote follow cameras use the entity's yaw and pitch; the recorded POV client
@@ -145,8 +206,12 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   engine web harness, not the React app. `engine/scripts/verify-boot-node.sh`
   checks a standalone engine build.
 - Use one headless browser/profile at a time. Multiple Chromium instances with
-  1.14 GB OPFS assets and wasm heaps can exhaust the host; clean temporary
-  profiles and kill the process group when finished.
+  large wasm heaps (and the fallback MEMFS copy) can exhaust the host; clean
+  temporary profiles and kill the process group when finished.
+- `engine/platform/web/worker-smoke.html` and `engine-worker.js` are the Phase 3
+  GL-in-worker gate. Run the smoke page before claiming the worker path works;
+  `?assets=1&demo=<name>` needs local game files beside the page (never
+  committed). The React app's fallback is `?worker=0`.
 - Never commit `*.pk3`, `*.dm_26`, maps, models, sounds, screenshots, logs,
   wasm artifacts or local browser profiles. Check with `git ls-files` before
   release.

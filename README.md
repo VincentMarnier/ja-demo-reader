@@ -21,8 +21,11 @@ Academy and select your own `assets0..3.pk3` and demo files. Nothing is uploaded
   original recorded demo camera.
 - Custom Health/Armor/saber HUD, score strip, timer and scoreboard.
 - Playback speed (`0.25×`–`2.5×`) and gamma controls.
-- Optional local caches: retail PK3s in OPFS and parsed summaries in IndexedDB.
-  Cached data can be cleared in Settings.
+- The engine runs in a dedicated Web Worker and renders to an OffscreenCanvas.
+  Retail PK3s are mounted read-only with WORKERFS instead of being copied into
+  memory; only parsed demo summaries are cached (IndexedDB).
+- A degraded main-thread fallback keeps browsers without worker/OffscreenCanvas
+  support working (with the older memory cost and a visible notice).
 - No account, no upload endpoint, no analytics.
 
 ## Requirements
@@ -63,9 +66,11 @@ npm --prefix app run dev
 Open <http://127.0.0.1:5173>, select your `GameData` folder (or its `base`
 folder), choose a demo, check the map, and press **Play demo**.
 
-The first map check stages roughly 1.1 GB of retail PK3s into the browser
-filesystem and initializes the renderer. Later visits can reuse cached assets
-from the assets step.
+After you choose the retail assets, they are mounted read-only for the session
+and the renderer starts in the background. Nothing is copied into browser
+storage; on later visits, **Use last folder** (or the file picker) re-selects
+the same files. If an older build left an OPFS asset copy, it is removed
+automatically once.
 
 ### GitHub Pages
 
@@ -83,18 +88,20 @@ own. See [docs/github-pages.md](docs/github-pages.md).
 - **Free cam** — WASD/Space/Ctrl movement, arrow keys or pointer-lock mouse look.
   Bindings can be changed in Settings.
 - **Speed** — opens the playback-speed popover.
-- **Settings** — FOV, gamma, HUD toggles, free-cam bindings and local cache
-  clearing.
+- **Settings** — FOV, gamma, texture quality, HUD toggles, free-cam bindings and
+  local summary clearing.
 
 ## Privacy and game data
 
 - Files are read through the browser file picker / File System Access API and
-  staged only in memory and local browser storage.
+  mounted read-only for the session. They are never uploaded.
 - There is no upload path, telemetry or external asset request.
 - The engine's networking is disabled in the Emscripten build.
-- OPFS caching stores retail PK3s on your device (about 1.14 GB) only after you
-  choose them; clear it from **Settings → Local data**.
-- The parsed demo summary is stored in IndexedDB on your device.
+- No asset cache is written. A one-time cleanup removes the old
+  `jka-demo-player/assets` OPFS tree (about 1.14 GB) left by earlier builds;
+  **Settings → Local data** can run it again.
+- The parsed demo summary is stored in IndexedDB on your device and can be
+  cleared from **Settings → Local data**.
 
 ## Limitations
 
@@ -110,7 +117,11 @@ own. See [docs/github-pages.md](docs/github-pages.md).
   WebGL. Chrome's GPU shader cache helps on later runs.
 - A very long demo with more than 96 keyframes or very large snapshots falls
   back to replay for the uncovered range.
-- Browser memory limits apply: staging the retail assets is the dominant cost.
+- Browser memory limits apply. The worker path mounts the PK3s read-only and
+  uses the least memory; the main-thread fallback still copies them into MEMFS.
+- The worker path needs Worker, OffscreenCanvas, `transferControlToOffscreen`
+  and WebGL2 (current Chrome, Edge and Brave). Other browsers get the fallback;
+  `?worker=0` forces it for testing.
 
 ## License and credits
 

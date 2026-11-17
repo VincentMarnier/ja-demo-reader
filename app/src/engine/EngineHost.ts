@@ -1,6 +1,7 @@
-import type { DemoInfo, DemoStatus, DemoSummary, FreeCamPose, LocalFile, ScoreboardData, StageProgress } from '../types';
-import type { TextureMipmapMode } from '../settings';
+import type { DemoInfo, DemoStatus, DemoSummary, FreeCamPose, LocalFile, ScoreboardData } from '../types';
 import { prepareAndStage } from '../fs/stage';
+import type { BootOptions, EngineCallbacks, EngineHostApi } from './shared';
+import { buildEngineArgs, ENGINE_BASE } from './shared';
 
 interface FsNode {
   contents?: Uint8Array | Record<string, FsNode>;
@@ -19,27 +20,17 @@ interface ModuleLike {
   FS?: unknown;
 }
 
-export interface EngineCallbacks {
-  onLog(line: string): void;
-  onStatus(status: DemoStatus): void;
-  onProgress(progress: StageProgress): void;
-  onFatal(message: string): void;
-}
-
-export interface BootOptions {
-  canvas: HTMLCanvasElement;
-  files: LocalFile[];
-  signal: AbortSignal;
-  texturePicmip?: number;
-  textureMipmaps?: TextureMipmapMode;
-}
-
-const ENGINE_BASE = `${import.meta.env.BASE_URL}engine/`;
 // Keep the whole diagnostic build log; the old 5000-line cap could drop boot
 // timing lines before the user presses Download log.
 const LOG_LIMIT = 20000;
 
-export class EngineHost {
+/**
+ * Degraded host: the whole engine runs on the main thread and the PK3s are
+ * copied into MEMFS.  Kept for browsers without Worker/OffscreenCanvas or
+ * WebGL2-in-worker, and forceable with ?worker=0.
+ */
+export class MainThreadEngineHost implements EngineHostApi {
+  readonly mode = 'main-thread' as const;
   private module: ModuleLike | null = null;
   private statusTimer: number | null = null;
   private ready = false;
@@ -63,7 +54,7 @@ export class EngineHost {
   }
 
   async boot(options: BootOptions): Promise<void> {
-    const { canvas, files, signal, texturePicmip = 2, textureMipmaps = 'off' } = options;
+    const { canvas, files, signal } = options;
     this.markStage('boot-start');
 
     return new Promise<void>((resolve, reject) => {
@@ -82,70 +73,15 @@ export class EngineHost {
         reject(error instanceof Error ? error : new Error(message));
       };
 
-      const args = [
-          '+set', 'cl_renderer', 'rd-rend2',
-          '+set', 'fs_basepath', '/jka',
-          '+set', 'fs_homepath', '/userdata',
-          '+set', 'cl_allowDownload', '0',
-          '+set', 's_initsound', '0',
-          '+set', 'com_bootlogo', '0',
-          '+set', 'r_fullscreen', '0',
-          '+set', 'r_mode', '4',
-          '+set', 'r_hdr', '0',
-          '+set', 'r_cubeMapping', '0',
-          '+set', 'r_ssao', '0',
-          '+set', 'cg_shadows', '0',
-          '+set', 'r_ext_compressed_textures', '0',
-          '+set', 'cg_fov', '97',
-          '+set', 'cg_externalHud', '1',
-          '+set', 'cg_drawScores', '0',
-          '+set', 'cg_drawTimer', '0',
-          '+set', 'cg_drawRadar', '0',
-          '+set', 'cg_drawStatus', '0',
-          '+set', 'cg_hudFiles', '0',
-          '+set', 'cg_drawCrosshair', '0',
-          '+set', 'com_maxfps', '60',
-          '+set', 'logfile', '0'
-      ];
+      const engineArgs = buildEngineArgs(options);
+      const args = engineArgs.args;
 
-      // Texture cvars are latched: they must be set before the renderer
-      // starts, so a texture change applies on the next engine boot/reload.
-      const picmip = Math.min(16, Math.max(0, Math.round(texturePicmip)));
-      const textureMode =
-        textureMipmaps === 'trilinear'
-          ? 'GL_LINEAR_MIPMAP_LINEAR'
-          : textureMipmaps === 'bilinear'
-            ? 'GL_LINEAR_MIPMAP_NEAREST'
-            : 'GL_LINEAR';
-      args.push('+set', 'r_picmip', String(picmip), '+set', 'r_textureMode', textureMode);
-
-      const params = new URLSearchParams(window.location.search);
-      const diagnostics = params.get('diagnostics') === '1';
-      const fastProfile = params.get('profile') === 'fast';
-      if (params.get('norefresh') === '1') {
-        args.push('+set', 'r_norefresh', '1');
-      }
-      if (params.get('quality') === 'low') {
-        // Software rasterisers / low-end GPUs: fewer texture pixels and a
-        // lower frame cap, while keeping the same rd-rend2 path.
-        args.push(
-          '+set', 'r_mode', '4',
-          '+set', 'r_picmip', '3',
-          '+set', 'com_maxfps', '10',
-          '+set', 'r_swapInterval', '0'
-        );
-      }
-      if (fastProfile) {
-        // M9 baseline session 2: no picmip mip pyramid, linear filtering.
-        args.push('+set', 'r_picmip', '2', '+set', 'r_textureMode', 'GL_LINEAR');
-      }
-      if (diagnostics) {
-        // A release engine build keeps jka_profile off; ?diagnostics=1 turns
-        // the same M9 timing/usage lines on without a PROFILE=1 build.
-        args.push('+set', 'jka_profile', '1');
-      }
-
-      this.logBrowserProfile(fastProfile, diagnostics, picmip, textureMipmaps);
+      this.logBrowserProfile(
+        engineArgs.fastProfile,
+        engineArgs.diagnostics,
+        engineArgs.picmip,
+        engineArgs.textureMipmaps
+      );
 
       const module: ModuleLike = {
         arguments: args,
@@ -251,7 +187,7 @@ export class EngineHost {
     fastProfile: boolean,
     diagnostics: boolean,
     picmip: number,
-    textureMipmaps: TextureMipmapMode
+    textureMipmaps: BootOptions['textureMipmaps']
   ): void {
     let webgl2 = false;
     try {
@@ -268,12 +204,12 @@ export class EngineHost {
       typeof HTMLCanvasElement !== 'undefined' && 'transferControlToOffscreen' in HTMLCanvasElement.prototype;
     const deviceMemory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
     this.profile(
-      `browser worker=${hasWorker ? 1 : 0} offscreen=${hasOffscreen ? 1 : 0} transfer=${hasTransfer ? 1 : 0} ` +
-        `webgl2=${webgl2 ? 1 : 0} cores=${navigator.hardwareConcurrency ?? 'n/a'} deviceMemory=${deviceMemory ?? 'n/a'} ` +
-        `ua=${navigator.userAgent}`
+      `browser path=main-thread worker=${hasWorker ? 1 : 0} offscreen=${hasOffscreen ? 1 : 0} ` +
+        `transfer=${hasTransfer ? 1 : 0} webgl2=${webgl2 ? 1 : 0} cores=${navigator.hardwareConcurrency ?? 'n/a'} ` +
+        `deviceMemory=${deviceMemory ?? 'n/a'} ua=${navigator.userAgent}`
     );
     this.profile(
-      `session texture=${fastProfile ? 'fast (url)' : `picmip${picmip}/${textureMipmaps}`} ` +
+      `session texture=${fastProfile ? 'fast (url)' : `picmip${picmip}/${textureMipmaps ?? 'off'}`} ` +
         `diagnostics=${diagnostics ? 1 : 0}`
     );
   }
@@ -434,13 +370,13 @@ export class EngineHost {
     return this.currentDemo;
   }
 
-  parseDemoMap(name: string): string | null {
+  async parseDemoMap(name: string): Promise<string | null> {
     if (!this.module?.ccall) return null;
     const map = this.module.ccall('JKA_ParseDemoMap', 'string', ['string'], [name]) as string;
     return map && map.length ? map : null;
   }
 
-  hasMap(map: string): boolean {
+  async hasMap(map: string): Promise<boolean> {
     if (!this.module?.ccall) return false;
     return !!this.module.ccall('JKA_HasMap', 'number', ['string'], [map]);
   }
@@ -528,7 +464,7 @@ export class EngineHost {
     }
   }
 
-  demoSummary(): DemoSummary | null {
+  async demoSummary(): Promise<DemoSummary | null> {
     if (!this.module?.ccall || this.asyncInFlight) return null;
     try {
       const raw = this.module.ccall('JKA_DemoSummaryJson', 'string', [], []) as string;
@@ -555,7 +491,7 @@ export class EngineHost {
     this.module.ccall('JKA_SetCvar', null, ['string', 'string'], [name, value]);
   }
 
-  getScoreboard(): ScoreboardData | null {
+  async getScoreboard(): Promise<ScoreboardData | null> {
     if (!this.module?.ccall || this.asyncInFlight) return null;
     try {
       const raw = this.module.ccall('JKA_ScoreboardJson', 'string', [], []) as string;
@@ -573,7 +509,7 @@ export class EngineHost {
     this.module.ccall('JKA_FollowClient', null, ['number'], [clientNum]);
   }
 
-  enableFreeCam(): FreeCamPose | null {
+  async enableFreeCam(): Promise<FreeCamPose | null> {
     if (!this.module?.ccall || this.asyncInFlight) return null;
     try {
       const raw = this.module.ccall('JKA_EnableFreeCam', 'string', [], []) as string;

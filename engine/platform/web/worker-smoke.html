@@ -1,0 +1,149 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>OpenJK MP — worker OffscreenCanvas spike (M9 Phase 3)</title>
+  <style>
+    body { background: #111; color: #ddd; font: 14px/1.4 monospace; margin: 16px; }
+    canvas { display: block; width: 800px; height: 600px; background: #000;
+             border: 1px solid #333; }
+    #state { margin: 12px 0; color: #9cf; }
+    #state.pass { color: #8f8; }
+    #state.fail { color: #f88; }
+    #log { white-space: pre-wrap; max-width: 1100px; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas" width="800" height="600"></canvas>
+  <div id="state">starting…</div>
+  <pre id="log"></pre>
+  <script>
+    // Phase 3 spike harness.  This is deliberately independent of the React
+    // app: it proves that the exact engine build can boot, mount assets with
+    // WORKERFS and render rd-rend2 into a transferred OffscreenCanvas.
+    //
+    //   python3 -m http.server 8123        # in the build output directory
+    //   open http://localhost:8123/worker-smoke.html
+    //
+    // Optional (game files are never committed):
+    //   ?assets=1                fetch /assets0..3.pk3 into the worker
+    //   ?demo=<name>             fetch /demos/<name>.dm_26 and play it
+    var params = new URLSearchParams(location.search);
+    var wantAssets = params.get('assets') === '1';
+    var pakList = (params.get('paks') || 'assets0.pk3,assets1.pk3,assets2.pk3,assets3.pk3')
+      .split(',').filter(Boolean);
+    var demo = params.get('demo') || '';
+    var state = document.getElementById('state');
+    var logEl = document.getElementById('log');
+
+    function log(line) {
+      logEl.textContent += line + '\n';
+      console.log(line);
+    }
+
+    function setState(text, cls) {
+      state.textContent = text;
+      state.className = cls || '';
+    }
+
+    window.addEventListener('error', function (event) {
+      setState('page error: ' + event.message, 'fail');
+    });
+
+    var canvas = document.getElementById('canvas');
+    if (!canvas.transferControlToOffscreen) {
+      setState('transferControlToOffscreen is unavailable in this browser.', 'fail');
+      throw new Error('no transferControlToOffscreen');
+    }
+    if (typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined') {
+      setState('Worker or OffscreenCanvas is unavailable in this browser.', 'fail');
+      throw new Error('no worker/offscreen');
+    }
+
+    var worker = new Worker('engine-worker.js');
+    worker.onerror = function (event) {
+      setState('worker error: ' + (event.message || 'unknown'), 'fail');
+      log('WORKER ERROR ' + (event.message || event) + ' @ ' +
+        (event.filename || '?') + ':' + (event.lineno || '?') + ':' + (event.colno || '?'));
+      if (event.error && event.error.stack) log(event.error.stack);
+      event.preventDefault();
+    };
+    worker.onmessage = function (event) {
+      var msg = event.data || {};
+      if (msg.type === 'log') {
+        log(msg.line);
+      } else if (msg.type === 'state') {
+        setState(msg.text, msg.cls);
+      } else if (msg.type === 'status') {
+        setState(msg.text, msg.cls);
+      }
+    };
+
+    async function collectFiles() {
+      var files = [];
+      if (wantAssets) {
+        for (var i = 0; i < pakList.length; i++) {
+          var name = pakList[i];
+          var response = await fetch('/' + name);
+          if (!response.ok) {
+            throw new Error(name + ': HTTP ' + response.status);
+          }
+          files.push(new File([await response.blob()], name));
+        }
+      }
+      if (demo) {
+        var demoResponse = await fetch('/demos/' + encodeURIComponent(demo) + '.dm_26');
+        if (!demoResponse.ok) {
+          throw new Error('demo: HTTP ' + demoResponse.status);
+        }
+        files.push(new File([await demoResponse.blob()], demo + '.dm_26'));
+      }
+      return files;
+    }
+
+    collectFiles().then(async function (files) {
+      // Refuse to transfer the canvas to a pre-Phase-3 engine: it has no
+      // WORKERFS and its SDL window layer cannot run in a worker.
+      try {
+        var engineResponse = await fetch('openjk.x86.js');
+        var engineText = await engineResponse.text();
+        if (!engineText.includes('WORKERFS')) {
+          setState('This engine build has no WORKERFS. Rebuild it with the Phase 3 flags.', 'fail');
+          return;
+        }
+      } catch (engineError) {
+        setState('could not read openjk.x86.js: ' + engineError, 'fail');
+        return;
+      }
+
+      try {
+        var probe = new OffscreenCanvas(1, 1);
+        var probeGl = probe.getContext('webgl2');
+        if (!probeGl) {
+          setState('WebGL2 is not available in this worker. Headless Chromium may need a headful session.', 'fail');
+          return;
+        }
+        probeGl.getExtension('WEBGL_lose_context')?.loseContext();
+      } catch (probeError) {
+        setState('Worker WebGL2 probe failed: ' + probeError, 'fail');
+        return;
+      }
+
+      log('WORKER boot files=' + files.length + ' assets=' + (wantAssets ? 1 : 0) +
+        ' demo=' + (demo || 'none'));
+      var offscreen = canvas.transferControlToOffscreen();
+      worker.postMessage({
+        type: 'boot',
+        canvas: offscreen,
+        base: new URL('./', location.href).href,
+        files: files,
+        demo: demo,
+        assets: wantAssets
+      }, [offscreen]);
+    }).catch(function (error) {
+      setState('prepare failed: ' + error.message, 'fail');
+      log('PREPARE FAILED ' + error);
+    });
+  </script>
+</body>
+</html>

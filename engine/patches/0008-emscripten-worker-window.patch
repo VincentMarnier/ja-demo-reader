@@ -1,0 +1,166 @@
+diff --git a/codemp/CMakeLists.txt b/codemp/CMakeLists.txt
+index 35dbf209..166774fd 100644
+--- a/codemp/CMakeLists.txt
++++ b/codemp/CMakeLists.txt
+@@ -555,11 +555,13 @@ if(BuildMPEngine)
+ 	set(MPEngineFiles ${MPEngineFiles} ${MPEngineSysFiles})
+ 
+ 	if(EMSCRIPTEN)
+-		# M1 boot stub, M2 WebGL compatibility shims, M3 status bridge.
++		# M1 boot stub, M2 WebGL compatibility shims, M3 status bridge, and the
++		# M9 Phase 3 OffscreenCanvas window layer used by the worker host.
+ 		set(MPEngineFiles ${MPEngineFiles}
+ 			"${MPDir}/client/ref_stub.cpp"
+ 			"${MPDir}/client/gl_stubs.cpp"
+-			"${MPDir}/client/jka_bridge.cpp")
++			"${MPDir}/client/jka_bridge.cpp"
++			"${MPDir}/client/win_emscripten.cpp")
+ 	endif()
+ 	source_group("sys" FILES ${MPEngineSysFiles})
+ 
+diff --git a/codemp/client/cl_main.cpp b/codemp/client/cl_main.cpp
+index 05eef801..650822f7 100644
+--- a/codemp/client/cl_main.cpp
++++ b/codemp/client/cl_main.cpp
+@@ -2443,6 +2443,19 @@ extern "C" refexport_t *GetRefAPI( int version, refimport_t *rimp );
+ extern "C" refexport_t *GetRefAPIStub( int version, refimport_t *rimp );
+ #endif
+ 
++#ifdef __EMSCRIPTEN__
++// M9 Phase 3: OffscreenCanvas window layer (win_emscripten.cpp).  Declared at
++// namespace scope because C++ does not allow a linkage specification inside a
++// block, and the renderer table is assigned inside CL_InitRef.
++extern "C" qboolean JKA_WorkerWindowActive( void );
++extern "C" window_t JKA_WIN_Init( const windowDesc_t *desc, glconfig_t *glConfig );
++extern "C" void JKA_WIN_Shutdown( void );
++extern "C" void JKA_WIN_Present( window_t *window );
++extern "C" void JKA_WIN_SetGamma( glconfig_t *glConfig, byte red[256], byte green[256], byte blue[256] );
++extern "C" void *JKA_WIN_GL_GetProcAddress( const char *proc );
++extern "C" qboolean JKA_WIN_GL_ExtensionSupported( const char *extension );
++#endif
++
+ void CL_InitRef( void ) {
+ 	static refimport_t ri;
+ 	refexport_t	*ret;
+@@ -2559,12 +2572,36 @@ void CL_InitRef( void ) {
+ 	ri.CGVMLoaded = CGVMLoaded;
+ 	ri.CGVM_RagCallback = CGVM_RagCallback;
+ 
+-    ri.WIN_Init = WIN_Init;
++#ifdef __EMSCRIPTEN__
++	// M9 Phase 3: prefer the OffscreenCanvas window layer when the module runs
++	// in a dedicated worker.  SDL's browser video backend needs the DOM and is
++	// kept for the main-thread fallback.
++	{
++		if ( JKA_WorkerWindowActive() ) {
++			Com_Printf( "Using Emscripten OffscreenCanvas window layer\n" );
++			ri.WIN_Init = JKA_WIN_Init;
++			ri.WIN_SetGamma = JKA_WIN_SetGamma;
++			ri.WIN_Shutdown = JKA_WIN_Shutdown;
++			ri.WIN_Present = JKA_WIN_Present;
++			ri.GL_GetProcAddress = JKA_WIN_GL_GetProcAddress;
++			ri.GL_ExtensionSupported = JKA_WIN_GL_ExtensionSupported;
++		} else {
++			ri.WIN_Init = WIN_Init;
++			ri.WIN_SetGamma = WIN_SetGamma;
++			ri.WIN_Shutdown = WIN_Shutdown;
++			ri.WIN_Present = WIN_Present;
++			ri.GL_GetProcAddress = WIN_GL_GetProcAddress;
++			ri.GL_ExtensionSupported = WIN_GL_ExtensionSupported;
++		}
++	}
++#else
++	ri.WIN_Init = WIN_Init;
+ 	ri.WIN_SetGamma = WIN_SetGamma;
+-    ri.WIN_Shutdown = WIN_Shutdown;
+-    ri.WIN_Present = WIN_Present;
++	ri.WIN_Shutdown = WIN_Shutdown;
++	ri.WIN_Present = WIN_Present;
+ 	ri.GL_GetProcAddress = WIN_GL_GetProcAddress;
+ 	ri.GL_ExtensionSupported = WIN_GL_ExtensionSupported;
++#endif
+ 
+ 	ri.CM_GetCachedMapDiskImage = CM_GetCachedMapDiskImage;
+ 	ri.CM_SetCachedMapDiskImage = CM_SetCachedMapDiskImage;
+diff --git a/codemp/qcommon/common.cpp b/codemp/qcommon/common.cpp
+index 1ea4575b..2bed52db 100644
+--- a/codemp/qcommon/common.cpp
++++ b/codemp/qcommon/common.cpp
+@@ -29,6 +29,11 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
+ #include "qcommon/game_version.h"
+ #include "../server/NPCNav/navigator.h"
+ #include "../shared/sys/sys_local.h"
++#ifdef __EMSCRIPTEN__
++// Set by the OffscreenCanvas window layer.  The worker path has no DOM input
++// backend; free-cam input is driven from JS through the bridge instead.
++extern "C" qboolean JKA_WorkerWindowActive( void );
++#endif
+ #if defined(_WIN32)
+ #define WIN32_LEAN_AND_MEAN
+ #include <windows.h>
+@@ -1561,7 +1566,13 @@ void Com_Frame( void ) {
+ 				NET_Sleep(timeVal - 1);
+ 		} while( (timeVal = Com_TimeVal(minMsec)) != 0 );
+ #endif
++#ifdef __EMSCRIPTEN__
++		if ( !JKA_WorkerWindowActive() ) {
++			IN_Frame();
++		}
++#else
+ 		IN_Frame();
++#endif
+ 
+ 		lastTime = com_frameTime;
+ 		com_frameTime = Com_EventLoop();
+diff --git a/shared/sys/sys_main.cpp b/shared/sys/sys_main.cpp
+index e3485af0..37f9c64e 100644
+--- a/shared/sys/sys_main.cpp
++++ b/shared/sys/sys_main.cpp
+@@ -40,6 +40,12 @@ extern "C" void *GetModuleAPI( int apiVersion, void *import );
+ #include "sys_public.h"
+ #include "con_local.h"
+ 
++#ifdef __EMSCRIPTEN__
++// M9 Phase 3: the worker window layer has no SDL video/input state to shut
++// down.  Calling IN_Shutdown/SDL_Quit there would touch the DOM.
++extern "C" qboolean JKA_WorkerWindowActive( void );
++#endif
++
+ static char binaryPath[ MAX_OSPATH ] = { 0 };
+ static char installPath[ MAX_OSPATH ] = { 0 };
+ 
+@@ -178,9 +184,18 @@ void Sys_Init( void ) {
+ }
+ 
+ static void NORETURN Sys_Exit( int ex ) {
++#ifdef __EMSCRIPTEN__
++	if ( !JKA_WorkerWindowActive() ) {
++		IN_Shutdown();
++#ifndef DEDICATED
++		SDL_Quit();
++#endif
++	}
++#else
+ 	IN_Shutdown();
+ #ifndef DEDICATED
+ 	SDL_Quit();
++#endif
+ #endif
+ 
+ 	NET_Shutdown();
+@@ -198,6 +213,15 @@ static void NORETURN Sys_Exit( int ex ) {
+ #if !defined(DEDICATED)
+ static void Sys_ErrorDialog( const char *error )
+ {
++#ifdef __EMSCRIPTEN__
++	if ( JKA_WorkerWindowActive() ) {
++		// The worker has no DOM for SDL_ShowSimpleMessageBox; Sys_Error already
++		// printed the message through the engine log.
++		fprintf( stderr, "%s\n", error );
++		fflush( stderr );
++		return;
++	}
++#endif
+ 	time_t rawtime;
+ 	char timeStr[32] = {}; // should really only reach ~19 chars
+ 	char crashLogPath[MAX_OSPATH];

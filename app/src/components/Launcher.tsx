@@ -1,6 +1,6 @@
 import type { ChangeEvent, RefObject } from 'react';
 import type { AssetSelection, DemoSummary, LocalFile, StageProgress, ValidationResult } from '../types';
-import type { CachedAssets } from '../fs/assetCache';
+import type { EngineMode } from '../engine/host';
 import { DemoSummaryView } from './DemoSummaryView';
 
 type WizardStep = 'assets' | 'demo' | 'map';
@@ -15,11 +15,9 @@ interface LauncherProps {
   mapMissing: boolean;
   mapError: string | null;
   summary: DemoSummary | null;
-  cachedAssets: CachedAssets | null;
-  cacheStatus: string | null;
+  engineMode: EngineMode | null;
   enginePreparing: boolean;
   engineProgress: StageProgress | null;
-  onUseCachedAssets: () => void;
   savedHandle: FileSystemDirectoryHandle | null;
   busy: boolean;
   onPickAssets: () => void;
@@ -67,22 +65,7 @@ export function Launcher(props: LauncherProps) {
               {props.savedHandle ? (
                 <button className="ghost" onClick={props.onSaved} disabled={props.busy}>Use last folder</button>
               ) : null}
-              {props.cachedAssets ? (
-                <button className="ghost" onClick={props.onUseCachedAssets} disabled={props.busy}>Use cached assets</button>
-              ) : null}
             </div>
-
-            {props.cacheStatus ? (
-              <p className="scan-status">
-                <span className="spinner" aria-hidden="true" />
-                <span>{props.cacheStatus}</span>
-              </p>
-            ) : null}
-            {props.cachedAssets ? (
-              <p className="fineprint">
-                Cached game data is stored on this device ({props.cachedAssets.files.length} PK3s).
-              </p>
-            ) : null}
 
             {assetSelection ? (
               <div className="selection">
@@ -155,8 +138,8 @@ export function Launcher(props: LauncherProps) {
               {props.busy ? 'Staging and parsing…' : 'Check map'}
             </button>
             <p className="fineprint">
-              Staging the assets is required once; the demo is parsed by the engine's own
-              gamestate reader.
+              Game data is mounted read-only for this session; the demo is parsed by the engine's
+              own gamestate reader.
             </p>
           </>
         ) : null}
@@ -192,13 +175,6 @@ export function Launcher(props: LauncherProps) {
 
             <DemoSummaryView summary={props.summary} />
 
-            {props.cacheStatus ? (
-              <p className="scan-status">
-                <span className="spinner" aria-hidden="true" />
-                <span>{props.cacheStatus}</span>
-              </p>
-            ) : null}
-
             {!mapName && !mapMissing ? (
               <div className="row">
                 <button className="primary" onClick={() => props.onStep('demo')}>Choose another demo</button>
@@ -206,8 +182,8 @@ export function Launcher(props: LauncherProps) {
             ) : mapMissing ? (
               <div className="selection">
                 <p className="muted">
-                  Add the PK3 that contains <code>maps/{mapName || '…'}.bsp</code>. It will be staged
-                  alongside the retail assets; nothing is written to your GameData folder.
+                  Add the PK3 that contains <code>maps/{mapName || '…'}.bsp</code>. It is added to
+                  the session's writable engine data; nothing is written to your GameData folder.
                 </p>
                 <button className="primary" onClick={() => props.mapInputRef.current?.click()}>
                   Add map .pk3
@@ -236,6 +212,14 @@ export function Launcher(props: LauncherProps) {
                       : ''
                   }`}
             </span>
+          </p>
+        ) : null}
+
+        {props.engineMode === 'main-thread' ? (
+          <p className="fineprint degraded-notice">
+            Compatibility mode: this browser cannot run the engine in a worker. Game data is copied
+            into memory, so the tab uses more RAM and the first load is slower. Chrome, Edge or Brave
+            with WebGL2 get the fast path.
           </p>
         ) : null}
 
