@@ -950,12 +950,17 @@ static void JKA_SetVitals( int now, int num, int health, int armor, int source )
 
 	// Only count a loss once this slot has a real observation; the 100/25
 	// spawn state is a fallback and would invent damage on a demo that starts
-	// mid-game.
+	// mid-game.  Health and armor above max decay by one point per second with
+	// no attacker, so a single-point drop above 100 is not damage.
 	if ( wasKnown && !respawned ) {
-		if ( health < oldHealth ) {
+		if ( oldHealth > 100 && health == oldHealth - 1 ) {
+			// over-max health decay
+		} else if ( health < oldHealth ) {
 			lost += oldHealth - health;
 		}
-		if ( armor >= 0 && armor < oldArmor ) {
+		if ( oldArmor > 100 && armor == oldArmor - 1 ) {
+			// over-max armor decay
+		} else if ( armor >= 0 && armor < oldArmor ) {
 			lost += oldArmor - armor;
 		}
 	}
