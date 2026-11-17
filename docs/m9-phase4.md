@@ -1,11 +1,13 @@
 # M9 Phase 4: prewarm, keep-warm Stop, Release
 
-**Status:** Implemented in both hosts and measured in headful Chromium 149.
-Check map still costs ~8 s, but the demo now loads in the background while the
-map step is visible, so the first **Play is immediate**. **Stop** suspends the
-loaded demo instead of tearing it down (0 s), and **Release memory** performs
-the full teardown and returns the app to the Demo step. Brave Task Manager
-measurements for the keep-warm state are still outstanding.
+**Status:** Implemented in both hosts and measured in headful Chromium 149 and
+Brave 157. Check map still costs ~8 s, but the demo now loads in the background
+while the map step is visible, so the first **Play is immediate**. **Stop**
+suspends the loaded demo instead of tearing it down (0 s), and **Release
+memory** performs the full teardown and returns the app to the Demo step. In
+Brave the tab was **45 MB** after page load, **125 MB** after engine boot/Check
+map (before the background prepare completes), **275 MB** playing, **280 MB**
+after keep-warm Stop and **95 MB** after Release; the user reported no errors.
 
 **Scope:** Remove the repeated map/cgame load from Play and Stop, without
 changing the engine's Asyncify/single-flight rules. Backward seek (Phase 5)
@@ -19,9 +21,9 @@ and the demo-scan pure-list issue are out of scope.
 | First Play ≤ 10 s | 8.0–8.3 s | **0.0 s** UI, after the background prepare | met |
 | Play after Stop ≤ 1 s | 8.0 s (full reload) | **0.0 s** | met |
 | Stop ≤ 0.5 s | 1.5–1.7 s full teardown | **0.0 s** suspend | met |
-| Release memory | n/a | **2.0 s** teardown, back to Demo step | met |
+| Release memory | n/a | **1.8–2.0 s** teardown, back to Demo step; **95 MB** after (Brave) | met |
 | Restart ≤ 0.5 s | 7.8–10.8 s | still full reload | not met; later phase |
-| Map-loaded ≤ 800 MB | 290–298 MB (Brave) | warm state stays loaded until Release | Phase 3 target retained |
+| Map-loaded ≤ 800 MB | 290–298 MB (Brave) | **275–280 MB** playing/keep-warm (Brave) | met |
 
 The first Play number is a UI-level result: the ~8 s map/cgame load still
 happens, but it overlaps the map step and the user's reading of the summary.
@@ -174,10 +176,28 @@ The fallback Release reloads the page before attempting the in-place teardown;
 asset and demo selection are cleared (the Assets step shows its file inputs
 again). The reload is intentional, not an error path.
 
-These are Chromium numbers; Brave Task Manager values for idle, loaded,
-suspended and released states are still needed from the user. Phase 3 measured
-130 MB idle and 290–298 MB loaded in Brave; Phase 4 changes when the loaded
-state is released, not the loaded footprint.
+### Brave Task Manager (user run)
+
+Host: Brave 157 on the user's desktop, retail assets and
+`blacksun_vs_cerberus_r1.dm_26`, worker host, no page errors:
+
+| Point | Tab memory |
+|---|---:|
+| Page loaded | **45 MB** |
+| Engine ready (assets mounted) | **125 MB** |
+| After Check map, before the background prepare completes | **125 MB** |
+| Playing | **275 MB** |
+| Stopped (keep-warm) | **280 MB** |
+| After Release memory | **95 MB** |
+
+The 125 MB after Check map was read on the map step while the background
+prepare was still running, so it is the engine-boot footprint, not the loaded
+map. The map/cgame load appears in the playing figure. Stop keeps that loaded
+footprint (275 → 280 MB, within run-to-run noise), and Release returns the tab
+to 95 MB, close to the 45 MB page baseline plus browser allocations.
+
+Phase 3 measured 130 MB idle and 290–298 MB loaded in Brave; Phase 4 changes
+when that loaded state is released, not its size.
 
 ## Verification status
 
@@ -194,11 +214,11 @@ Done in this checkout:
    prepare ~3.0 s, prepared Play 0.0 s, Stop 0.0 s, warm Play 0.0 s, Release
    reloads once to the Assets step, no page errors.
 5. No `FS_Startup` between suspend and the next Play.
+6. Brave 157: prepared Play, Stop, warm Play and Release; Task Manager
+   **45 / 125 / 275 / 280 / 95 MB**; no errors.
 
 Outstanding:
 
-- Brave 157: prepared Play, Stop, Release and Task Manager memory at idle,
-  after Play, after Stop and after Release.
 - Mod demo with an added map PK3; the Phase 3 scan/pure-list issue still needs
   the next phase.
 - Restart is still the full-reload path (7.8–10.8 s).
@@ -206,9 +226,9 @@ Outstanding:
 ## Known risks
 
 - **Keep-warm memory is resident.** Stop no longer frees the map/cgame or
-  textures. The loaded worker footprint (290–298 MB in Brave, Phase 3) stays
-  until Release or a page reload. The UI shows **Release memory** whenever the
-  engine is active.
+  textures. The loaded worker footprint (**275–280 MB in Brave**) stays until
+  Release or a page reload. The UI shows **Release memory** whenever the engine
+  is active and disables it while a background prepare is running.
 - **Prepare uses the only engine.** Background prepare and Check map are
   serialized by the app; a second demo cannot be scanned while the first is
   loading. If prepare fails, Play falls back to a normal load.
@@ -216,7 +236,9 @@ Outstanding:
   irreversibly bound to the old worker. Release remounts the `<canvas>`; any
   future boot must use the new element.
 - **Main-thread Release reloads the page.** It cannot unload a wasm module in
-  place, so asset/demo selection is not preserved on that host.
+  place, and the in-place teardown can stall while the keep-warm loop is paused,
+  so the fallback reloads immediately; asset/demo selection is not preserved on
+  that host.
 - **Ended demos are not resumable.** Play after the end uses `playDemo`; only a
   demo that is still active can resume.
 - **No explicit `FS_Startup` after suspend** relies on the engine keeping the

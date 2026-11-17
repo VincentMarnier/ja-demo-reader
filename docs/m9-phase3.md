@@ -9,6 +9,10 @@ are met; the fallback is ~1.3–1.4 GB. Restart and backward seek still use full
 reloads (Phase 4/5), and Stop still performs a full teardown instead of
 keep-warm.
 
+**Update:** Phase 4 replaced Stop with keep-warm suspend and added background
+prepare and Release; see `docs/m9-phase4.md`. Restart and backward seek remain
+as described below.
+
 **Scope:** Run the same engine build in a dedicated Web Worker against an
 OffscreenCanvas, mount retail PK3s read-only with WORKERFS, keep a degraded
 main-thread host, and remove the OPFS asset cache.
