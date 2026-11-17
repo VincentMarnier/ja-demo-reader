@@ -24,6 +24,9 @@ Academy and select your own `assets0..3.pk3` and demo files. Nothing is uploaded
 - The engine runs in a dedicated Web Worker and renders to an OffscreenCanvas.
   Retail PK3s are mounted read-only with WORKERFS instead of being copied into
   memory; only parsed demo summaries are cached (IndexedDB).
+- The demo loads in the background on the map step, so Play resumes instantly;
+  Stop keeps the scene warm and the next Play is immediate. **Release memory**
+  performs the full teardown when the memory is needed back.
 - A degraded main-thread fallback keeps browsers without worker/OffscreenCanvas
   support working (with the older memory cost and a visible notice).
 - No account, no upload endpoint, no analytics.

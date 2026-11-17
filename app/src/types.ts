@@ -21,6 +21,8 @@ export interface DemoStatus {
   map: string;
   ended: number;
   ready?: number;
+  prepared?: number;
+  suspended?: number;
 }
 
 export interface StageProgress {

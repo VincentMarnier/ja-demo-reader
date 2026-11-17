@@ -16,6 +16,10 @@ export type WorkerRequest =
       files: BootFile[];
     }
   | { id: number; type: 'play'; name: string }
+  | { id: number; type: 'prepare'; name: string }
+  | { id: number; type: 'resume' }
+  | { id: number; type: 'suspend' }
+  | { id: number; type: 'release' }
   | { id: number; type: 'pause'; paused: boolean }
   | { id: number; type: 'stop' }
   | { id: number; type: 'parse-map'; name: string }

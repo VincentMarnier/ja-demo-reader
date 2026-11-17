@@ -7,8 +7,9 @@
   `docs/m9-phase0.md` is the diagnostics build and baseline checklist,
   `docs/m9-phase0-results.md` records the measured baseline,
   `docs/m9-phase1.md` describes the hybrid shader compile and texture profile,
-  and `docs/m9-phase3.md` describes the worker engine, WORKERFS and OPFS
-  removal.
+  `docs/m9-phase3.md` describes the worker engine, WORKERFS and OPFS removal,
+  and `docs/m9-phase4.md` covers background prepare, keep-warm Stop and
+  Release.
 - The app is a single Vite/React app in `app/`. `App.tsx` owns the wizard and
   player state, `engine/WorkerEngineHost.ts` and `engine/EngineHost.ts` are the
   two implementations of the shared `engine/host.ts` interface, and `src/fs/`
@@ -108,8 +109,24 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   `engine.worker.ts`. Keep both; overlapping `ccall(..., { async: true })` calls
   abort with “We cannot start an async operation when one is already in
   flight”.
-- `playDemo` is single-flight. Replay/Restart must not start a second map load;
-  the Watch again/Restart UI handlers also share a guard.
+- `playDemo` and `prepareDemo` are single-flight. Replay/Restart must not start
+  a second map load; the Watch again/Restart UI handlers also share a guard.
+  Check map awaits an in-flight background prepare before scanning, and Play
+  joins that prepare instead of issuing a second `demo` command.
+- Phase 4 keeps a loaded demo warm: `JKA_PrepareDemo` loads it with
+  `r_m2_pause=1`, `JKA_ResumeDemo` resumes the same map, `JKA_Suspend` pauses
+  the main loop for keep-warm Stop, and `JKA_Release` is the only full
+  teardown. Do not call `CL_Disconnect` from Stop; it reintroduces the Phase 3
+  teardown/Asyncify race. Play after `ended=1` must use `playDemo`, not
+  `resumeDemo`.
+- Release in the worker host terminates the worker after `JKA_Release` and
+  increments the canvas key: the transferred OffscreenCanvas cannot be reused.
+  The main-thread host reloads the page instead. Keep both paths in the app's
+  Release handler.
+- `JKA_DemoInfo` resumes the main loop when it finishes. After keep-warm Stop
+  it therefore wakes the suspended frame loop while it disconnects/scans the
+  demo; that is intentional for Check map, so do not leave the loop paused
+  across a scan.
 - Status polling skips while an async call is running. Do not add another poll
   or synchronous cgame call that can run during a map load.
 - `JKA_DemoInfo` pauses the main loop, disconnects and scans the whole demo. Do

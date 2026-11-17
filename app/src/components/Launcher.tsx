@@ -17,6 +17,9 @@ interface LauncherProps {
   summary: DemoSummary | null;
   engineMode: EngineMode | null;
   enginePreparing: boolean;
+  preparingDemo: boolean;
+  engineActive: boolean;
+  onReleaseMemory: () => void;
   engineProgress: StageProgress | null;
   savedHandle: FileSystemDirectoryHandle | null;
   busy: boolean;
@@ -175,6 +178,13 @@ export function Launcher(props: LauncherProps) {
 
             <DemoSummaryView summary={props.summary} />
 
+            {props.preparingDemo ? (
+              <p className="scan-status">
+                <span className="spinner" aria-hidden="true" />
+                <span>Preparing the player in the background. Play will continue when it is ready.</span>
+              </p>
+            ) : null}
+
             {!mapName && !mapMissing ? (
               <div className="row">
                 <button className="primary" onClick={() => props.onStep('demo')}>Choose another demo</button>
@@ -197,6 +207,19 @@ export function Launcher(props: LauncherProps) {
                 <button className="ghost" onClick={() => props.onStep('demo')}>Choose another demo</button>
               </div>
             )}
+
+            {props.engineActive ? (
+              <div className="row">
+                <button
+                  className="ghost"
+                  onClick={props.onReleaseMemory}
+                  disabled={props.preparingDemo}
+                  title={props.preparingDemo ? 'The background load is still running.' : undefined}
+                >
+                  Release memory
+                </button>
+              </div>
+            ) : null}
           </>
         ) : null}
 

@@ -40,6 +40,10 @@ export interface EngineHostApi {
   boot(options: BootOptions): Promise<void>;
   markStage(stage: string): void;
   playDemo(name: string): Promise<void>;
+  prepareDemo(name: string): Promise<void>;
+  resumeDemo(): Promise<void>;
+  suspendDemo(): Promise<void>;
+  releaseEngine(): Promise<void>;
   setPaused(paused: boolean): Promise<void>;
   stopDemo(): Promise<void>;
   parseDemoMap(name: string): Promise<string | null>;

@@ -31,6 +31,10 @@ static qboolean jka_workerMode = qfalse;
 static int jka_scanMessages;
 static int jka_scanMs;
 
+// M9 Phase 4: keep one loaded demo warm and paused behind the wizard.
+static char jka_preparedDemo[128];
+static qboolean jka_suspended = qfalse;
+
 static qboolean JKA_BridgeProfileEnabled( void )
 {
 	return Cvar_VariableIntegerValue( "jka_profile" ) ? qtrue : qfalse;
@@ -87,7 +91,8 @@ EMSCRIPTEN_KEEPALIVE const char *JKA_StatusJson( void )
 
 	Com_sprintf( buffer, sizeof( buffer ),
 		"{\"state\":%d,\"demo\":%d,\"serverTime\":%d,\"snapTime\":%d,"
-		"\"clientNum\":%d,\"map\":\"%s\",\"ended\":%d,\"ready\":%d}",
+		"\"clientNum\":%d,\"map\":\"%s\",\"ended\":%d,\"ready\":%d,"
+		"\"prepared\":%d,\"suspended\":%d}",
 		(int)cls.state,
 		clc.demoplaying ? 1 : 0,
 		cl.serverTime,
@@ -95,37 +100,113 @@ EMSCRIPTEN_KEEPALIVE const char *JKA_StatusJson( void )
 		clc.clientNum,
 		map ? map : "",
 		jka_demoEnded ? 1 : 0,
-		jka_engineReady ? 1 : 0 );
+		jka_engineReady ? 1 : 0,
+		jka_preparedDemo[0] ? 1 : 0,
+		jka_suspended ? 1 : 0 );
 
 	return buffer;
 }
 
-EMSCRIPTEN_KEEPALIVE void JKA_PlayDemo( const char *name )
+EMSCRIPTEN_KEEPALIVE void JKA_StopDemo( void );
+
+static qboolean JKA_ValidDemoName( const char *name )
 {
 	const char *p;
-	int profileStart = Sys_Milliseconds();
 
 	if ( !name || !name[0] ) {
-		return;
+		return qfalse;
 	}
 	// The engine's console tokenizer splits on spaces; quote the name and
 	// reject characters that could break out of the quoted argument.
 	for ( p = name; *p; p++ ) {
 		if ( *p == '"' || *p == '\n' || *p == '\r' || *p == ';' ) {
 			Com_Printf( "JKA_PlayDemo: invalid demo name\n" );
-			return;
+			return qfalse;
 		}
 	}
+	return qtrue;
+}
+
+static void JKA_StartDemo( const char *name )
+{
 	Cvar_Set( "cl_allowDownload", "0" );
 	Cbuf_AddText( va( "demo \"%s\"\n", name ) );
 	Cbuf_Execute();
+}
+
+EMSCRIPTEN_KEEPALIVE void JKA_PlayDemo( const char *name )
+{
+	int profileStart = Sys_Milliseconds();
+
+	if ( !JKA_ValidDemoName( name ) ) {
+		return;
+	}
+	JKA_StartDemo( name );
+	jka_preparedDemo[0] = 0;
+	jka_suspended = qfalse;
 	JKA_BridgeProfileLog( "play name=%s ms=%d", name, Sys_Milliseconds() - profileStart );
+}
+
+// M9 Phase 4: load the demo and pause it on the first active frame.  r_m2_pause
+// is consumed by the client frame loop once CA_ACTIVE/cgame is reached, so the
+// map/cgame and the first frame stay warm behind the wizard.
+EMSCRIPTEN_KEEPALIVE void JKA_PrepareDemo( const char *name )
+{
+	int profileStart = Sys_Milliseconds();
+
+	if ( !JKA_ValidDemoName( name ) ) {
+		return;
+	}
+	if ( !Q_stricmp( jka_preparedDemo, name ) && clc.demoplaying && cls.state == CA_ACTIVE ) {
+		JKA_BridgeProfileLog( "prepare name=%s already-warm", name );
+		return;
+	}
+
+	Cvar_Set( "r_m2_pause", "1" );
+	JKA_StartDemo( name );
+	Q_strncpyz( jka_preparedDemo, name, sizeof( jka_preparedDemo ) );
+	jka_suspended = qfalse;
+	emscripten_resume_main_loop();
+	JKA_BridgeProfileLog( "prepare name=%s ms=%d", name, Sys_Milliseconds() - profileStart );
+}
+
+EMSCRIPTEN_KEEPALIVE void JKA_ResumeDemo( void )
+{
+	Cvar_Set( "r_m2_pause", "0" );
+	jka_suspended = qfalse;
+	emscripten_resume_main_loop();
+	JKA_BridgeProfileLog( "resume-demo name=%s", jka_preparedDemo );
+}
+
+// Keep the scene loaded but stop rendering/advancing it.  This is the Stop
+// path: no CL_Disconnect, no renderer restart, no duplicate map load.
+EMSCRIPTEN_KEEPALIVE void JKA_Suspend( void )
+{
+	Cvar_Set( "r_m2_pause", "0" );
+	jka_suspended = qtrue;
+	emscripten_pause_main_loop();
+	JKA_BridgeProfileLog( "suspend name=%s", jka_preparedDemo );
+}
+
+// Explicit "Release memory": the only path that performs the full teardown.
+EMSCRIPTEN_KEEPALIVE void JKA_Release( void )
+{
+	int profileStart = Sys_Milliseconds();
+
+	JKA_StopDemo();
+	jka_preparedDemo[0] = 0;
+	jka_suspended = qfalse;
+	Cvar_Set( "r_m2_pause", "0" );
+	JKA_BridgeProfileLog( "release ms=%d", Sys_Milliseconds() - profileStart );
 }
 
 EMSCRIPTEN_KEEPALIVE void JKA_StopDemo( void )
 {
 	char message[] = "Server disconnected";
 	int profileStart = Sys_Milliseconds();
+
+	jka_preparedDemo[0] = 0;
+	jka_suspended = qfalse;
 
 	// The console "disconnect" command routes through Com_Error(), which
 	// throws an int on ERR_DISCONNECT. That throw has no C++ catch frame when
@@ -149,6 +230,7 @@ EMSCRIPTEN_KEEPALIVE void JKA_SetPaused( int paused )
 
 EMSCRIPTEN_KEEPALIVE void JKA_Resume( void )
 {
+	jka_suspended = qfalse;
 	emscripten_resume_main_loop();
 }
 

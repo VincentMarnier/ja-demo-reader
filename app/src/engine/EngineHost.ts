@@ -41,6 +41,7 @@ export class MainThreadEngineHost implements EngineHostApi {
   private asyncInFlight = false;
   private queue: Promise<unknown> = Promise.resolve();
   private playInFlight: Promise<void> | null = null;
+  private prepareInFlight: Promise<void> | null = null;
   private runtimeReady = false;
   private stagedBytes = 0;
   private lastMarkAt = 0;
@@ -342,6 +343,40 @@ export class MainThreadEngineHost implements EngineHostApi {
       this.playInFlight = null;
     });
     return this.playInFlight;
+  }
+
+  async prepareDemo(name: string): Promise<void> {
+    if (this.prepareInFlight) return this.prepareInFlight;
+    if (!this.module?.ccall) return;
+    this.currentDemo = name;
+    this.prepareInFlight = this.runExclusive(async () => {
+      await this.module?.ccall?.('JKA_PrepareDemo', null, ['string'], [name], { async: true });
+    }).finally(() => {
+      this.prepareInFlight = null;
+    });
+    return this.prepareInFlight;
+  }
+
+  async resumeDemo(): Promise<void> {
+    if (!this.module?.ccall) return;
+    await this.runExclusive(async () => {
+      await this.module?.ccall?.('JKA_ResumeDemo', null, [], [], { async: true });
+    });
+  }
+
+  async suspendDemo(): Promise<void> {
+    if (!this.module?.ccall) return;
+    await this.runExclusive(async () => {
+      await this.module?.ccall?.('JKA_Suspend', null, [], [], { async: true });
+    });
+  }
+
+  async releaseEngine(): Promise<void> {
+    if (!this.module?.ccall) return;
+    await this.runExclusive(async () => {
+      await this.module?.ccall?.('JKA_Release', null, [], [], { async: true });
+    });
+    this.currentDemo = null;
   }
 
   async setPaused(paused: boolean): Promise<void> {

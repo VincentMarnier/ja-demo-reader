@@ -57,6 +57,9 @@ export default function App() {
   const [demoInfo, setDemoInfo] = useState<DemoInfo | null>(null);
   const [demoSummary, setDemoSummary] = useState<DemoSummary | null>(null);
   const [engineMode, setEngineMode] = useState<EngineMode | null>(null);
+  const [engineActive, setEngineActive] = useState(false);
+  const [preparingDemo, setPreparingDemo] = useState<string | null>(null);
+  const [canvasGeneration, setCanvasGeneration] = useState(0);
   const [enginePreparing, setEnginePreparing] = useState(false);
   const [engineProgress, setEngineProgress] = useState<StageProgress | null>(null);
   const [freeCam, setFreeCam] = useState(false);
@@ -80,6 +83,8 @@ export default function App() {
   const bootForegroundRef = useRef(false);
   const bootedAssetKeyRef = useRef<string | null>(null);
   const bootGammaRef = useRef(1);
+  const preparePromiseRef = useRef<Promise<boolean> | null>(null);
+  const preparedDemoRef = useRef<string | null>(null);
 
   useEffect(() => {
     loadDirectoryHandle().then(handle => setSavedHandle(handle));
@@ -360,7 +365,7 @@ export default function App() {
         if (playbackRequestedRef.current && next.state === CA_ACTIVE && next.demo === 1) {
           setPhase(current => (current === 'paused' ? current : 'playing'));
         }
-        if (next.ended === 1) {
+        if (next.ended === 1 && playbackRequestedRef.current) {
           setPhase('ended');
           setPaused(false);
         }
@@ -368,6 +373,7 @@ export default function App() {
       onFatal: (message: string) => {
         setError(message);
         setPhase('error');
+        setEngineActive(false);
       }
     };
 
@@ -384,6 +390,7 @@ export default function App() {
           texturePicmip: settings.texturePicmip,
           textureMipmaps: settings.textureMipmaps
         });
+        setEngineActive(true);
         return host;
       } catch (error) {
         // The worker preflight runs before transferControlToOffscreen, so a
@@ -421,6 +428,34 @@ export default function App() {
     settings.texturePicmip,
     settings.textureMipmaps
   ]);
+
+  const ensurePrepared = useCallback(async (engine: EngineHostApi, name: string): Promise<boolean> => {
+    if (preparedDemoRef.current === name) return true;
+    // Join any load already in progress.  If it prepared a different demo, the
+    // loop starts the one the user actually asked for.
+    while (preparePromiseRef.current) {
+      await preparePromiseRef.current.catch(() => undefined);
+      if (preparedDemoRef.current === name) return true;
+    }
+    setPreparingDemo(name);
+    const promise = engine
+      .prepareDemo(name)
+      .then(() => {
+        preparedDemoRef.current = name;
+        return true;
+      })
+      .catch(error => {
+        console.warn('Could not prepare the demo in the background.', error);
+        preparedDemoRef.current = null;
+        return false;
+      })
+      .finally(() => {
+        preparePromiseRef.current = null;
+        setPreparingDemo(null);
+      });
+    preparePromiseRef.current = promise;
+    return promise;
+  }, []);
 
   const applyAssets = useCallback(async (next: AssetSelection, persistHandle?: FileSystemDirectoryHandle) => {
     setChecking(true);
@@ -520,14 +555,16 @@ export default function App() {
       // Switching demos while the player is open must go back through the
       // map check: the new demo may need a different map PK3.
       if (engineRef.current && (phase === 'playing' || phase === 'paused' || phase === 'ended')) {
-        engineRef.current.disableFreeCam();
-        engineRef.current.followClient(-1);
+        const engine = engineRef.current;
+        playbackRequestedRef.current = false;
+        engine.disableFreeCam();
+        engine.followClient(-1);
         setFreeCam(false);
         setFollowClient(null);
         setScoreboard(null);
         setPhase('stopping');
-        await engineRef.current.stopDemo();
-        playbackRequestedRef.current = false;
+        await engine.suspendDemo();
+        preparedDemoRef.current = null;
         setPaused(false);
         setPhase('launcher');
         setStep('demo');
@@ -570,6 +607,12 @@ export default function App() {
         return;
       }
     }
+
+    // A background prepare from the previous demo must not race the scan.
+    if (preparePromiseRef.current) {
+      await preparePromiseRef.current.catch(() => undefined);
+    }
+    preparedDemoRef.current = null;
 
     engine.markStage('check-map:start');
     try {
@@ -632,27 +675,41 @@ export default function App() {
     setChecking(false);
 
     if (present) {
-      // Keep the engine warm; Play starts the actual demo.
+      // Keep the wizard visible while the demo loads in the background.  Play
+      // joins this promise instead of starting a second map load.
       setPhase('launcher');
+      void ensurePrepared(engine, name);
     }
-  }, [assetSelection, assetValidation, demoFile, bootEngine]);
+  }, [assetSelection, assetValidation, demoFile, bootEngine, ensurePrepared]);
 
   const startPlay = useCallback(async () => {
-    const engine = engineRef.current;
-    if (!engine || !demoFile || mapMissing) return;
+    if (!demoFile || mapMissing || !canvasRef.current) return;
     if (playbackActionRef.current) return;
     playbackActionRef.current = true;
-    engine.disableFreeCam();
-    engine.followClient(-1);
+    playbackRequestedRef.current = true;
+    setPaused(false);
     setFreeCam(false);
     setFollowClient(null);
     setScoreboard(null);
-    playbackRequestedRef.current = true;
-    setPaused(false);
     setPhase('loading');
-    engine.markStage('play:start');
     try {
-      await engine.playDemo(demoBase(demoFile.name));
+      let engine = engineRef.current;
+      if (!engine) {
+        engine = await bootEngine(assetValidation?.assets ?? [], true);
+      }
+      engine.disableFreeCam();
+      engine.followClient(-1);
+      engine.markStage('play:start');
+      const name = demoBase(demoFile.name);
+      // Stop after the demo ended must restart it, not resume the last frame.
+      const ended = statusRef.current?.ended === 1;
+      const prepared = !ended && (await ensurePrepared(engine, name));
+      if (prepared) {
+        await engine.resumeDemo();
+      } else {
+        await engine.playDemo(name);
+      }
+      preparedDemoRef.current = name;
       engine.markStage('play:command-done');
       setPhase('playing');
     } catch (err) {
@@ -661,7 +718,7 @@ export default function App() {
     } finally {
       playbackActionRef.current = false;
     }
-  }, [demoFile, mapMissing]);
+  }, [assetValidation, bootEngine, demoFile, ensurePrepared, mapMissing]);
 
   const handleMapFileInput = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
@@ -719,7 +776,9 @@ export default function App() {
     setPhase('loading');
     engine.markStage('restart:start');
     try {
-      await engine.playDemo(demoBase(demoFile.name));
+      const name = demoBase(demoFile.name);
+      await engine.playDemo(name);
+      preparedDemoRef.current = name;
       engine.markStage('restart:done');
       setPhase('playing');
     } catch (err) {
@@ -751,6 +810,7 @@ export default function App() {
       // Seeking from a paused player should resume the engine first.
       await engine.setPaused(false);
       await engine.seekDemo(demoBase(demoFile.name), target);
+      preparedDemoRef.current = demoBase(demoFile.name);
       engine.markStage('seek:done');
       setPhase('playing');
     } catch (err) {
@@ -761,6 +821,9 @@ export default function App() {
 
   const stop = useCallback(async () => {
     const engine = engineRef.current;
+    // Clear this before suspending so a late active status cannot put the UI
+    // back into playback while the wizard is showing.
+    playbackRequestedRef.current = false;
     engine?.disableFreeCam();
     engine?.followClient(-1);
     setFreeCam(false);
@@ -769,17 +832,52 @@ export default function App() {
     setPhase('stopping');
     engine?.markStage('stop:start');
     try {
-      await engine?.stopDemo();
+      // Keep-warm Stop: pause the loop, keep the map/cgame/frame loaded.
+      await engine?.suspendDemo();
       engine?.markStage('stop:done');
     } catch (error) {
-      // The UI should still return to the map step even if the engine call
-      // misbehaves; the next Play reuses or reloads the engine.
-      console.warn('Could not stop the demo cleanly.', error);
+      console.warn('Could not suspend the demo cleanly.', error);
     }
-    playbackRequestedRef.current = false;
     setPaused(false);
     setPhase('launcher');
     setStep('map');
+  }, []);
+
+  const releaseMemory = useCallback(async () => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    if (engine.mode === 'main-thread') {
+      // The main-thread module cannot be unloaded reliably, and its teardown
+      // can stall while the keep-warm loop is paused.  A reload is the only
+      // honest way to return the wasm/MEMFS memory to the browser.
+      window.location.reload();
+      return;
+    }
+    playbackRequestedRef.current = false;
+    setPhase('stopping');
+    try {
+      await engine.releaseEngine();
+    } catch (error) {
+      console.warn('Could not release the engine cleanly.', error);
+    }
+    engine.destroy();
+    engineRef.current = null;
+    bootPromiseRef.current = null;
+    bootedAssetKeyRef.current = null;
+    preparedDemoRef.current = null;
+    preparePromiseRef.current = null;
+    setPreparingDemo(null);
+    setEngineActive(false);
+    setEngineMode(null);
+    setStatus(null);
+    setScoreboard(null);
+    // The transferred canvas cannot be reused, so replace the element for the
+    // next boot.
+    setCanvasGeneration(generation => generation + 1);
+    setPhase('launcher');
+    // The new engine has no demo/map staged.  Send the user back through the
+    // demo/map check instead of offering a Play that would fail.
+    setStep('demo');
   }, []);
 
   const fullscreen = useCallback(() => {
@@ -835,7 +933,14 @@ export default function App() {
               </feComponentTransfer>
             </filter>
           </svg>
-          <canvas ref={canvasRef} width={800} height={600} className="screen" style={{ filter: gammaFilter }} />
+          <canvas
+            key={canvasGeneration}
+            ref={canvasRef}
+            width={800}
+            height={600}
+            className="screen"
+            style={{ filter: gammaFilter }}
+          />
 
           {showWizard ? (
             <Launcher
@@ -850,6 +955,9 @@ export default function App() {
               summary={demoSummary}
               engineMode={engineMode}
               enginePreparing={enginePreparing}
+              preparingDemo={!!preparingDemo}
+              engineActive={engineActive}
+              onReleaseMemory={releaseMemory}
               engineProgress={engineProgress}
               savedHandle={savedHandle}
               busy={checking}

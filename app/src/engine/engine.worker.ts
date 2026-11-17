@@ -471,6 +471,22 @@ async function handle(request: WorkerRequest): Promise<unknown> {
       await ccallAsync('JKA_PlayDemo', ['string'], [request.name]);
       return undefined;
     }
+    case 'prepare': {
+      await ccallAsync('JKA_PrepareDemo', ['string'], [request.name]);
+      return undefined;
+    }
+    case 'resume': {
+      await ccallAsync('JKA_ResumeDemo', [], []);
+      return undefined;
+    }
+    case 'suspend': {
+      await ccallAsync('JKA_Suspend', [], []);
+      return undefined;
+    }
+    case 'release': {
+      await ccallAsync('JKA_Release', [], []);
+      return undefined;
+    }
     case 'pause': {
       await ccallAsync('JKA_SetPaused', ['number'], [request.paused ? 1 : 0]);
       if (!request.paused) {

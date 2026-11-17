@@ -53,6 +53,7 @@ export class WorkerEngineHost implements EngineHostApi {
   private scoreboard: ScoreboardData | null = null;
   private currentDemo: string | null = null;
   private playInFlight: Promise<void> | null = null;
+  private prepareInFlight: Promise<void> | null = null;
   private ready = false;
   private fatal = false;
   private bootResolve: (() => void) | null = null;
@@ -391,6 +392,28 @@ export class WorkerEngineHost implements EngineHostApi {
       this.playInFlight = null;
     });
     return this.playInFlight;
+  }
+
+  async prepareDemo(name: string): Promise<void> {
+    if (this.prepareInFlight) return this.prepareInFlight;
+    this.currentDemo = name;
+    this.prepareInFlight = this.call<void>('prepare', { name }).finally(() => {
+      this.prepareInFlight = null;
+    });
+    return this.prepareInFlight;
+  }
+
+  async resumeDemo(): Promise<void> {
+    await this.call<void>('resume');
+  }
+
+  async suspendDemo(): Promise<void> {
+    await this.call<void>('suspend');
+  }
+
+  async releaseEngine(): Promise<void> {
+    await this.call<void>('release');
+    this.currentDemo = null;
   }
 
   async setPaused(paused: boolean): Promise<void> {
