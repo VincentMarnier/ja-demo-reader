@@ -44,6 +44,10 @@ export interface ScoreboardPlayer {
   health?: number;
   /** Armor at the polled server time; -1 when the source carried none. */
   armor?: number;
+  /** Total attributed damage dealt by this player in the current game. */
+  damageDealt?: number;
+  /** Total attributed damage received from other players in the current game. */
+  damageReceived?: number;
 }
 
 export interface ViewStats {
@@ -119,6 +123,21 @@ export interface DemoStanceSample {
   stance: number;
 }
 
+/**
+ * One observed damage instance. `attacker` is -1 when the demo does not identify
+ * the attacker (hitscan guns, force, environment, hits outside the POV's PVS).
+ * The app keeps the full attacker→target matrix even though the scoreboard only
+ * shows totals.
+ */
+export interface DemoDamageEvent {
+  time: number;
+  target: number;
+  attacker: number;
+  damage: number;
+  /** 0 unknown, 1 saber, 2 missile, 3 POV outgoing, 4 POV incoming, 5 kill. */
+  source: number;
+}
+
 /** A kill on the seek bar: when it happened and the killer's team. */
 export interface KillMarker {
   /** Milliseconds since the first snapshot of the demo. */
@@ -150,12 +169,15 @@ export interface DemoGameSummary {
   eventOverflow?: boolean;
   vitalsOverflow?: boolean;
   stancesOverflow?: boolean;
+  damageOverflow?: boolean;
   players: DemoPlayerSummary[];
   events: DemoEvent[];
   /** Health/armor timeline scraped during the scan. Absent on older caches. */
   vitals?: DemoVitalsSample[];
   /** Saber-stance timeline scraped during the scan. Absent on older caches. */
   stances?: DemoStanceSample[];
+  /** Attributed and unattributed damage instances. Absent on older caches. */
+  damages?: DemoDamageEvent[];
 }
 
 export interface DemoSummary {

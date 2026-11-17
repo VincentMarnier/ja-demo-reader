@@ -27,6 +27,10 @@ Academy and select your own `assets0..3.pk3` and demo files. Nothing is uploaded
 - The TypeScript HUD shows the followed player's HP/AP from the parsed
   timeline and their saber stance (dual/staff corrected from clientinfo), so
   following anyone keeps real values instead of `—`.
+- Attributed damage dealt/received totals on the scoreboard, with the full
+  attacker→target matrix parsed and kept for later analysis. Base demos only
+  identify attackers for saber/missile hits, the recorded client and killing
+  blows; other damage stays in the unknown bucket.
 - Follow camera for any player, a free-fly camera with mouse look, and the
   original recorded demo camera.
 - Custom Health/Armor/saber HUD, score strip, timer and scoreboard.

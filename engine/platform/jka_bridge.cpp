@@ -272,7 +272,7 @@ EMSCRIPTEN_KEEPALIVE const char *JKA_MemoryJson( void )
 #define JKA_MAX_RECORDS     96
 #define JKA_MAX_EVENTS      16000
 #define JKA_MAX_VITALS      20000
-#define JKA_SUMMARY_SIZE    (8 * 1024 * 1024)
+#define JKA_SUMMARY_SIZE    (12 * 1024 * 1024)
 
 typedef struct {
 	int			num;
@@ -331,6 +331,33 @@ typedef struct {
 	short	stance;
 } jkaStance_t;
 
+#define JKA_MAX_DAMAGES	12000
+
+// One observed damage instance.  attacker is -1 when the demo gives no
+// attribution (hitscan guns, force, world damage and unseen hits).
+typedef struct {
+	int		time;
+	short	target;
+	short	attacker;
+	short	damage;
+	unsigned char	source;
+} jkaDamage_t;
+
+#define JKA_DAMAGE_UNKNOWN	0
+#define JKA_DAMAGE_SABER	1
+#define JKA_DAMAGE_MISSILE	2
+#define JKA_DAMAGE_POV_OUT	3
+#define JKA_DAMAGE_POV_IN	4
+#define JKA_DAMAGE_KILL		5
+
+#define JKA_MAX_PENDING_HITS	24
+
+typedef struct {
+	int		time;
+	short	attacker;
+	unsigned char	source;
+} jkaPendingHit_t;
+
 #define JKA_MAX_KEYFRAMES 96
 
 typedef struct {
@@ -366,6 +393,9 @@ typedef struct {
 	jkaStance_t	stances[JKA_MAX_STANCES];
 	int			stanceCount;
 	qboolean	stanceOverflow;
+	jkaDamage_t	damages[JKA_MAX_DAMAGES];
+	int			damageCount;
+	qboolean	damageOverflow;
 } jkaGame_t;
 
 static jkaGame_t	jka_games[JKA_MAX_GAMES];
@@ -397,7 +427,13 @@ static int			jka_slotHealth[MAX_CLIENTS];
 static int			jka_slotArmor[MAX_CLIENTS];
 static int			jka_slotStance[MAX_CLIENTS];
 static qboolean		jka_slotDead[MAX_CLIENTS];
+static qboolean		jka_slotKnown[MAX_CLIENTS];
 static qboolean		jka_predictablePain[MAX_CLIENTS];
+static jkaPendingHit_t	jka_pendingHits[MAX_CLIENTS][JKA_MAX_PENDING_HITS];
+static int			jka_pendingHitCount[MAX_CLIENTS];
+static int			jka_missileEventValue[MAX_GENTITIES];
+static int			jka_lastDamageIndex[MAX_CLIENTS];
+static int			jka_lastPovHits;
 static char			jka_summary[JKA_SUMMARY_SIZE];
 static qboolean		jka_summaryValid = qfalse;
 
@@ -473,9 +509,12 @@ static void JKA_ResetSummary( void )
 	jka_snapshotSerial = 0;
 	jka_keyframeCount = 0;
 	jka_lastKeyframeTime = 0;
+	jka_lastPovHits = -1;
 	Com_Memset( jka_eventEntitySeen, 0, sizeof( jka_eventEntitySeen ) );
 	Com_Memset( jka_eventEntityValue, 0, sizeof( jka_eventEntityValue ) );
 	Com_Memset( jka_predictablePain, 0, sizeof( jka_predictablePain ) );
+	Com_Memset( jka_missileEventValue, 0, sizeof( jka_missileEventValue ) );
+	Com_Memset( jka_pendingHitCount, 0, sizeof( jka_pendingHitCount ) );
 	jka_summary[0] = 0;
 	jka_summaryValid = qfalse;
 	for ( int i = 0; i < MAX_CLIENTS; i++ ) {
@@ -485,6 +524,8 @@ static void JKA_ResetSummary( void )
 		jka_slotArmor[i] = 25;
 		jka_slotStance[i] = -1;
 		jka_slotDead[i] = qfalse;
+		jka_slotKnown[i] = qfalse;
+		jka_lastDamageIndex[i] = -1;
 		jka_entityEventValue[i] = 0;
 	}
 }
@@ -506,6 +547,9 @@ static void JKA_ResetSlotVitals( int slot )
 	jka_slotArmor[slot] = 25;
 	jka_slotStance[slot] = -1;
 	jka_slotDead[slot] = qfalse;
+	jka_slotKnown[slot] = qfalse;
+	jka_pendingHitCount[slot] = 0;
+	jka_lastDamageIndex[slot] = -1;
 	jka_entityEventValue[slot] = 0;
 }
 
@@ -656,6 +700,197 @@ static void JKA_TrackPlayerStance( int now, entityState_t *state )
 	JKA_EmitStance( game, now, num, stance );
 }
 
+static void JKA_ClearPendingHits( int target )
+{
+	if ( target >= 0 && target < MAX_CLIENTS ) {
+		jka_pendingHitCount[target] = 0;
+	}
+}
+
+static void JKA_EmitDamage( jkaGame_t *game, int now, int target, int attacker, int damage, int source )
+{
+	jkaDamage_t *sample;
+
+	if ( !game || target < 0 || target >= MAX_CLIENTS || damage <= 0 ) {
+		return;
+	}
+	if ( damage > 9999 ) {
+		damage = 9999;
+	}
+	if ( game->damageCount >= JKA_MAX_DAMAGES ) {
+		game->damageOverflow = qtrue;
+		return;
+	}
+	sample = &game->damages[game->damageCount++];
+	sample->time = now;
+	sample->target = (short)target;
+	sample->attacker = (short)attacker;
+	sample->damage = (short)damage;
+	sample->source = (unsigned char)source;
+	jka_lastDamageIndex[target] = game->damageCount - 1;
+}
+
+static void JKA_AddPendingHit( int now, int target, int attacker, int source )
+{
+	int count;
+	int write;
+	int i;
+
+	if ( target < 0 || target >= MAX_CLIENTS || attacker < 0 || attacker >= MAX_CLIENTS ||
+		target == attacker ) {
+		return;
+	}
+	count = jka_pendingHitCount[target];
+	write = 0;
+	for ( i = 0; i < count; i++ ) {
+		if ( now - jka_pendingHits[target][i].time <= 2000 ) {
+			jka_pendingHits[target][write++] = jka_pendingHits[target][i];
+		}
+	}
+	count = write;
+	if ( count >= JKA_MAX_PENDING_HITS ) {
+		for ( i = 1; i < count; i++ ) {
+			jka_pendingHits[target][i - 1] = jka_pendingHits[target][i];
+		}
+		count = JKA_MAX_PENDING_HITS - 1;
+	}
+	jka_pendingHits[target][count].time = now;
+	jka_pendingHits[target][count].attacker = (short)attacker;
+	jka_pendingHits[target][count].source = (unsigned char)source;
+	jka_pendingHitCount[target] = count + 1;
+}
+
+// Records one observed health/armor loss.  The POV's own incoming damage is
+// attributed exactly with PERS_ATTACKER; other targets use the saber/missile
+// hit events and POV hit counter collected for this snapshot.  When several
+// attackers are pending the loss is split by their hit counts, and when nobody
+// is pending it is kept as unknown.
+static void JKA_RecordDamage( jkaGame_t *game, int now, int target, int damage )
+{
+	int counts[MAX_CLIENTS];
+	int sources[MAX_CLIENTS];
+	int i;
+	int count;
+	int total = 0;
+	int remaining;
+	int lastAttacker = -1;
+
+	if ( !game || damage <= 0 || target < 0 || target >= MAX_CLIENTS ) {
+		return;
+	}
+
+	if ( target == cl.snap.ps.clientNum ) {
+		int attacker = cl.snap.ps.persistant[PERS_ATTACKER];
+		if ( attacker < 0 || attacker >= MAX_CLIENTS || attacker == target ) {
+			attacker = -1;
+		}
+		JKA_EmitDamage( game, now, target, attacker, damage,
+			attacker >= 0 ? JKA_DAMAGE_POV_IN : JKA_DAMAGE_UNKNOWN );
+		JKA_ClearPendingHits( target );
+		return;
+	}
+
+	Com_Memset( counts, 0, sizeof( counts ) );
+	Com_Memset( sources, 0, sizeof( sources ) );
+	count = jka_pendingHitCount[target];
+	for ( i = 0; i < count; i++ ) {
+		int attacker;
+		if ( now - jka_pendingHits[target][i].time > 2000 ) {
+			continue;
+		}
+		attacker = jka_pendingHits[target][i].attacker;
+		if ( attacker < 0 || attacker >= MAX_CLIENTS ) {
+			continue;
+		}
+		if ( !counts[attacker] ) {
+			sources[attacker] = jka_pendingHits[target][i].source;
+		}
+		counts[attacker]++;
+		total++;
+	}
+
+	if ( !total ) {
+		JKA_EmitDamage( game, now, target, -1, damage, JKA_DAMAGE_UNKNOWN );
+		JKA_ClearPendingHits( target );
+		return;
+	}
+
+	for ( i = 0; i < MAX_CLIENTS; i++ ) {
+		if ( counts[i] ) {
+			lastAttacker = i;
+		}
+	}
+	remaining = damage;
+	for ( i = 0; i < MAX_CLIENTS; i++ ) {
+		int share;
+		if ( !counts[i] ) {
+			continue;
+		}
+		if ( i == lastAttacker ) {
+			share = remaining;
+		} else {
+			share = (int)( (long long)damage * counts[i] / total );
+			if ( share > remaining ) {
+				share = remaining;
+			}
+		}
+		remaining -= share;
+		JKA_EmitDamage( game, now, target, i, share, sources[i] );
+	}
+	JKA_ClearPendingHits( target );
+}
+
+// The POV's playerState carries PERS_HITS (a hit counter) and
+// PERS_ATTACKEE_ARMOR (the target's health/armor before the hit).  Match that
+// state against the tracked vitals to identify whom the recorded player hit;
+// this is the only attribution available for hitscan weapons.
+static void JKA_TrackPovDamage( int now )
+{
+	int povNum = cl.snap.ps.clientNum;
+	int hits = cl.snap.ps.persistant[PERS_HITS];
+	int extra;
+	int packed;
+	int preHealth;
+	int preArmor;
+	int candidates = 0;
+	int target = -1;
+	int i;
+
+	if ( povNum < 0 || povNum >= MAX_CLIENTS || JKA_IsSpectator( povNum ) ) {
+		jka_lastPovHits = hits;
+		return;
+	}
+	if ( jka_lastPovHits < 0 ) {
+		jka_lastPovHits = hits;
+		return;
+	}
+	if ( hits <= jka_lastPovHits ) {
+		jka_lastPovHits = hits;
+		return;
+	}
+	extra = hits - jka_lastPovHits;
+	jka_lastPovHits = hits;
+
+	packed = cl.snap.ps.persistant[PERS_ATTACKEE_ARMOR];
+	preHealth = packed >> 8;
+	preArmor = packed & 0xff;
+	for ( i = 0; i < MAX_CLIENTS; i++ ) {
+		if ( i == povNum || !jka_slotKnown[i] || jka_slotDead[i] ||
+			JKA_IsSpectator( i ) ) {
+			continue;
+		}
+		if ( jka_slotHealth[i] == preHealth && jka_slotArmor[i] == preArmor ) {
+			candidates++;
+			target = i;
+		}
+	}
+	if ( candidates == 1 ) {
+		for ( i = 0; i < extra && i < 8; i++ ) {
+			JKA_AddPendingHit( now, target, povNum, JKA_DAMAGE_POV_OUT );
+		}
+	}
+}
+
 // Applies one observed/derived vitals value for a client.  Positive health
 // after a tracked death starts a new life; EV_PAIN and duel samples carry no
 // armor, so a health drop is taken as "the armor was used up" (base JKA armor
@@ -665,6 +900,8 @@ static void JKA_SetVitals( int now, int num, int health, int armor, int source )
 	jkaGame_t *game = JKA_CurrentGame();
 	int oldHealth;
 	int oldArmor;
+	int lost = 0;
+	qboolean wasKnown;
 	qboolean respawned = qfalse;
 
 	if ( !game || num < 0 || num >= MAX_CLIENTS || JKA_IsSpectator( num ) ) {
@@ -674,11 +911,26 @@ static void JKA_SetVitals( int now, int num, int health, int armor, int source )
 
 	oldHealth = jka_slotHealth[num];
 	oldArmor = jka_slotArmor[num];
+	wasKnown = jka_slotKnown[num];
 
 	if ( health <= 0 ) {
+		if ( wasKnown ) {
+			if ( oldHealth > 0 ) {
+				lost += oldHealth;
+			}
+			if ( oldArmor > 0 ) {
+				lost += oldArmor;
+			}
+		}
 		jka_slotHealth[num] = 0;
 		jka_slotArmor[num] = 0;
 		jka_slotDead[num] = qtrue;
+		jka_slotKnown[num] = qtrue;
+		if ( lost > 0 ) {
+			JKA_RecordDamage( game, now, num, lost );
+		} else {
+			JKA_ClearPendingHits( num );
+		}
 		if ( oldHealth != 0 || oldArmor != 0 ) {
 			JKA_EmitVitals( game, now, num, 0, 0, JKA_VITALS_DEATH );
 		}
@@ -691,12 +943,30 @@ static void JKA_SetVitals( int now, int num, int health, int armor, int source )
 		if ( armor < 0 ) {
 			armor = 25;
 		}
+		JKA_ClearPendingHits( num );
 	} else if ( armor < 0 ) {
 		armor = ( health < oldHealth ) ? 0 : oldArmor;
 	}
 
+	// Only count a loss once this slot has a real observation; the 100/25
+	// spawn state is a fallback and would invent damage on a demo that starts
+	// mid-game.
+	if ( wasKnown && !respawned ) {
+		if ( health < oldHealth ) {
+			lost += oldHealth - health;
+		}
+		if ( armor >= 0 && armor < oldArmor ) {
+			lost += oldArmor - armor;
+		}
+	}
+
 	jka_slotHealth[num] = health;
 	jka_slotArmor[num] = armor;
+	jka_slotKnown[num] = qtrue;
+
+	if ( lost > 0 ) {
+		JKA_RecordDamage( game, now, num, lost );
+	}
 
 	if ( respawned || health != oldHealth || armor != oldArmor ) {
 		JKA_EmitVitals( game, now, num, health, armor, source );
@@ -822,6 +1092,9 @@ static void JKA_StartGame( int now, int gamestateId )
 	Com_Memset( jka_eventEntitySeen, 0, sizeof( jka_eventEntitySeen ) );
 	Com_Memset( jka_eventEntityValue, 0, sizeof( jka_eventEntityValue ) );
 	Com_Memset( jka_predictablePain, 0, sizeof( jka_predictablePain ) );
+	Com_Memset( jka_missileEventValue, 0, sizeof( jka_missileEventValue ) );
+	Com_Memset( jka_pendingHitCount, 0, sizeof( jka_pendingHitCount ) );
+	jka_lastPovHits = -1;
 
 	JKA_UpdatePlayers( now );
 }
@@ -860,7 +1133,22 @@ static void JKA_TrackObituary( int now, int target, int attacker, int mod )
 		record->deaths++;
 		record->lastSeen = now;
 	}
+	// The killing blow is the last attribution we can add without a damage log.
+	JKA_AddPendingHit( now, target, attacker, JKA_DAMAGE_KILL );
 	JKA_SetVitals( now, target, 0, 0, JKA_VITALS_DEATH );
+
+	// If the fatal health loss was recorded before this obituary and stayed
+	// unattributed, credit the killer now.
+	if ( attacker >= 0 && attacker < MAX_CLIENTS && attacker != target ) {
+		int index = jka_lastDamageIndex[target];
+		if ( index >= 0 && index < game->damageCount ) {
+			jkaDamage_t *damage = &game->damages[index];
+			if ( damage->attacker < 0 && now - damage->time <= 1500 ) {
+				damage->attacker = (short)attacker;
+				damage->source = JKA_DAMAGE_KILL;
+			}
+		}
+	}
 
 	if ( attacker >= 0 && attacker < MAX_CLIENTS && attacker != target ) {
 		JKA_EnsureRecord( game, attacker, now );
@@ -870,6 +1158,24 @@ static void JKA_TrackObituary( int now, int target, int attacker, int mod )
 			record->lastSeen = now;
 		}
 	}
+}
+
+// A freestanding temp entity can stay in several snapshots.  Mirror cgame's
+// per-entity previousEvent with the previous-snapshot check so one event is
+// counted once.
+static qboolean JKA_TempEventSeen( entityState_t *state, int event )
+{
+	if ( state->number < 0 || state->number >= MAX_GENTITIES ) {
+		return qfalse;
+	}
+	if ( jka_eventEntitySeen[state->number] == jka_snapshotSerial - 1 &&
+		jka_eventEntityValue[state->number] == event ) {
+		jka_eventEntitySeen[state->number] = jka_snapshotSerial;
+		return qtrue;
+	}
+	jka_eventEntitySeen[state->number] = jka_snapshotSerial;
+	jka_eventEntityValue[state->number] = event;
+	return qfalse;
 }
 
 static const char *JKA_ParseIntToken( const char *s, int *out )
@@ -1037,7 +1343,7 @@ static void JKA_TrackPlayerVitals( int now, entityState_t *state )
 		}
 	} else if ( jka_slotDead[num] ) {
 		// A respawn: back to the spawn defaults until a sample says otherwise.
-		JKA_SetVitals( now, num, 100, 25, JKA_VITALS_SPAWN );
+		JKA_SpawnSlot( now, num );
 	}
 
 	if ( state->event && state->event != jka_entityEventValue[num] ) {
@@ -1126,6 +1432,9 @@ static void JKA_ProcessSnapshot( int now, int resumeOffset )
 
 	game->endTime = now;
 	JKA_UpdatePlayers( now );
+	// The POV hit counter must be matched before any vitals source updates the
+	// target this snapshot, otherwise the pre-hit health/armor no longer match.
+	JKA_TrackPovDamage( now );
 	JKA_TrackSelfVitals( now );
 	JKA_TrackDuelHealth( now );
 
@@ -1186,42 +1495,60 @@ static void JKA_ProcessSnapshot( int now, int resumeOffset )
 		}
 	}
 
+	// Attribution events and obituaries run before the player vitals so a
+	// saber/missile hit and the health change it caused land in the same
+	// snapshot.  Missile hits ride on the missile entity's own event field.
 	for ( i = 0; i < cl.snap.numEntities && i < MAX_PARSE_ENTITIES; i++ ) {
 		entityState_t *state = &cl.parseEntities[( cl.snap.parseEntitiesNum + i ) & ( MAX_PARSE_ENTITIES - 1 )];
 		int event;
 
 		if ( state->eType < ET_EVENTS ) {
-			// Events riding on a player entity (EV_PAIN carries the health
-			// left in eventParm) and the dead/alive transition.
-			JKA_TrackPlayerVitals( now, state );
+			if ( state->event &&
+				( state->event & ~EV_EVENT_BITS ) == EV_MISSILE_HIT &&
+				state->number >= 0 && state->number < MAX_GENTITIES &&
+				jka_missileEventValue[state->number] != state->event ) {
+				jka_missileEventValue[state->number] = state->event;
+				JKA_AddPendingHit( now, state->otherEntityNum, state->owner, JKA_DAMAGE_MISSILE );
+			}
 			continue;
 		}
 		// Freestanding event entities carry the event in eType, not event.
 		event = state->eType - ET_EVENTS;
+		if ( event == EV_SABER_HIT ) {
+			if ( !JKA_TempEventSeen( state, event ) ) {
+				JKA_AddPendingHit( now, state->otherEntityNum, state->otherEntityNum2, JKA_DAMAGE_SABER );
+			}
+			continue;
+		}
 		if ( event == EV_PLAYER_TELEPORT_IN ) {
 			// Spawn-in effect; only a respawn when the slot is tracked dead
 			// (teleport pads fire this for living players).
 			if ( state->clientNum >= 0 && state->clientNum < MAX_CLIENTS &&
 				jka_slotDead[state->clientNum] ) {
-				JKA_SetVitals( now, state->clientNum, 100, 25, JKA_VITALS_SPAWN );
+				JKA_SpawnSlot( now, state->clientNum );
 			}
 			continue;
 		}
 		if ( event != EV_OBITUARY ) {
 			continue;
 		}
-		// The server repeats a temp entity for a few snapshots.  cgame keeps
-		// a per-entity previousEvent; mirror that so one obituary is one kill.
-		if ( state->number >= 0 && state->number < MAX_GENTITIES ) {
-			if ( jka_eventEntitySeen[state->number] == jka_snapshotSerial - 1 &&
-				jka_eventEntityValue[state->number] == event ) {
-				jka_eventEntitySeen[state->number] = jka_snapshotSerial;
-				continue;
-			}
-			jka_eventEntitySeen[state->number] = jka_snapshotSerial;
-			jka_eventEntityValue[state->number] = event;
+		if ( !JKA_TempEventSeen( state, event ) ) {
+			JKA_TrackObituary( now, state->otherEntityNum, state->otherEntityNum2, state->eventParm );
 		}
-		JKA_TrackObituary( now, state->otherEntityNum, state->otherEntityNum2, state->eventParm );
+	}
+
+	// The recorded player's hit counter identifies hitscan targets.  This has
+	// already been read at the top of the snapshot; keep the event pass here
+	// only for the damage-attribution events.
+
+	for ( i = 0; i < cl.snap.numEntities && i < MAX_PARSE_ENTITIES; i++ ) {
+		entityState_t *state = &cl.parseEntities[( cl.snap.parseEntitiesNum + i ) & ( MAX_PARSE_ENTITIES - 1 )];
+
+		if ( state->eType < ET_EVENTS ) {
+			// Events riding on a player entity (EV_PAIN carries the health
+			// left in eventParm) and the dead/alive transition.
+			JKA_TrackPlayerVitals( now, state );
+		}
 	}
 }
 
@@ -1465,8 +1792,15 @@ static void JKA_BuildSummary( void )
 			JKA_Append( &out, &left, "%s{\"time\":%d,\"num\":%d,\"stance\":%d}",
 				i ? "," : "", stance->time, stance->num, stance->stance );
 		}
-		JKA_Append( &out, &left, "],\"stancesOverflow\":%s}",
-			game->stanceOverflow ? "true" : "false" );
+		JKA_Append( &out, &left, "],\"stancesOverflow\":%s,", game->stanceOverflow ? "true" : "false" );
+		JKA_Append( &out, &left, "\"damages\":[" );
+		for ( i = 0; i < game->damageCount; i++ ) {
+			jkaDamage_t *damage = &game->damages[i];
+			JKA_Append( &out, &left, "%s{\"time\":%d,\"target\":%d,\"attacker\":%d,\"damage\":%d,\"source\":%d}",
+				i ? "," : "", damage->time, damage->target, damage->attacker, damage->damage, damage->source );
+		}
+		JKA_Append( &out, &left, "],\"damageOverflow\":%s}",
+			game->damageOverflow ? "true" : "false" );
 		firstGame = qfalse;
 	}
 

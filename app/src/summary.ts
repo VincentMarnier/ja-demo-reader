@@ -62,6 +62,55 @@ export function stanceAt(game: DemoGameSummary, serverTime: number): Map<number,
   return stances;
 }
 
+export interface PlayerDamage {
+  /** Damage this player dealt to other players (attributed only). */
+  dealt: number;
+  /** Damage this player received from other players (attributed only). */
+  received: number;
+  /** Damage this player received from unknown/world sources. */
+  receivedUnknown: number;
+  /** Per-target matrix, kept for the later per-player breakdown. */
+  dealtTo: Map<number, number>;
+  /** Per-attacker matrix, kept for the later per-player breakdown. */
+  receivedFrom: Map<number, number>;
+}
+
+/** Replays the scanned damage instances up to `serverTime`. */
+export function damageAt(game: DemoGameSummary, serverTime: number): Map<number, PlayerDamage> {
+  const result = new Map<number, PlayerDamage>();
+  const ensure = (num: number): PlayerDamage => {
+    let value = result.get(num);
+    if (!value) {
+      value = {
+        dealt: 0,
+        received: 0,
+        receivedUnknown: 0,
+        dealtTo: new Map(),
+        receivedFrom: new Map()
+      };
+      result.set(num, value);
+    }
+    return value;
+  };
+
+  for (const player of game.players) ensure(player.num);
+  for (const event of game.damages ?? []) {
+    if (event.time > serverTime) break;
+    if (event.damage <= 0) continue;
+    const target = ensure(event.target);
+    target.receivedFrom.set(event.attacker, (target.receivedFrom.get(event.attacker) ?? 0) + event.damage);
+    if (event.attacker < 0) {
+      target.receivedUnknown += event.damage;
+      continue;
+    }
+    const attacker = ensure(event.attacker);
+    attacker.dealt += event.damage;
+    attacker.dealtTo.set(event.target, (attacker.dealtTo.get(event.target) ?? 0) + event.damage);
+    target.received += event.damage;
+  }
+  return result;
+}
+
 export function statsAt(game: DemoGameSummary, serverTime: number): Map<number, PlayerStats> {
   const stats = new Map<number, PlayerStats>();
   for (const player of game.players) {
@@ -96,12 +145,14 @@ export function mergeScoreboard(
   const stats = statsAt(game, serverTime);
   const vitals = game.vitals ? vitalsAt(game, serverTime) : new Map<number, PlayerVitals>();
   const stances = game.stances ? stanceAt(game, serverTime) : new Map<number, number>();
+  const damage = game.damages ? damageAt(game, serverTime) : new Map<number, PlayerDamage>();
   const players: ScoreboardPlayer[] = [];
   const used = new Set<number>();
 
   for (const player of data.players) {
     const value = stats.get(player.num);
     const life = vitals.get(player.num);
+    const hit = damage.get(player.num);
     players.push({
       ...player,
       score: value ? value.kills : player.score,
@@ -109,6 +160,8 @@ export function mergeScoreboard(
       deaths: value ? value.deaths : player.deaths,
       health: life ? life.health : player.health,
       armor: life ? life.armor : player.armor,
+      damageDealt: hit ? hit.dealt : player.damageDealt,
+      damageReceived: hit ? hit.received : player.damageReceived,
       left: false
     });
     used.add(player.num);
@@ -121,6 +174,7 @@ export function mergeScoreboard(
     if (used.has(record.num) && !left) continue;
     const value = stats.get(record.num) ?? { kills: record.kills, deaths: record.deaths };
     const life = vitals.get(record.num) ?? { health: 100, armor: 25, dead: false };
+    const hit = damage.get(record.num);
     const num = used.has(record.num) ? synthetic-- : record.num;
     players.push({
       num,
@@ -132,7 +186,9 @@ export function mergeScoreboard(
       team: record.team,
       left,
       health: life.health,
-      armor: life.armor
+      armor: life.armor,
+      damageDealt: hit ? hit.dealt : undefined,
+      damageReceived: hit ? hit.received : undefined
     });
     used.add(record.num);
   }

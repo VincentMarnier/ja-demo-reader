@@ -34,7 +34,15 @@ function PlayerRow(props: {
   return (
     <div className={`scoreboard-row team-${player.team}${player.left ? ' left' : ''}`}>
       <span className="scoreboard-score" title={`${player.score} kills / ${player.deaths} deaths`}>
-        {player.score}<small>/{player.deaths}</small>
+        <span className="scoreboard-kd">{player.score}<small>/{player.deaths}</small></span>
+        {player.damageDealt !== undefined ? (
+          <span
+            className="scoreboard-damage"
+            title={`${player.damageDealt} attributed damage dealt / ${player.damageReceived ?? 0} attributed damage received`}
+          >
+            {player.damageDealt}/{player.damageReceived ?? 0}
+          </span>
+        ) : null}
       </span>
       <span className="scoreboard-identity">
         <span className="scoreboard-name" title={stripColors(player.name)}>
