@@ -298,7 +298,7 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
 
 ## App/caching gotchas
 
-- Summary cache keys are versioned (`v3:name:size:lastModified`). Bump the
+- Summary cache keys are versioned (`v4:name:size:lastModified`). Bump the
   version when the summary shape or game-boundary logic changes; otherwise old
   one-game summaries are reused. The IndexedDB cache self-heals a missing store.
 - A cached summary does not contain the in-memory seek keyframes. The app's

@@ -40,6 +40,10 @@ export interface ScoreboardPlayer {
   ping: number;
   team: number;
   left?: boolean;
+  /** Health at the polled server time, from the parsed demo vitals. */
+  health?: number;
+  /** Armor at the polled server time; -1 when the source carried none. */
+  armor?: number;
 }
 
 export interface ViewStats {
@@ -85,6 +89,24 @@ export interface DemoEvent {
   mod: number;
 }
 
+/**
+ * One health/armor reading scraped from the demo. Samples are ordered by
+ * server time and replayed against the seek target.
+ *
+ * Sources: 0 spawn, 1 death, 2 EV_PAIN (health only), 3 team overlay `tinfo`
+ * (health and armor), 4 duel health configstring (health only), 5 the recorded
+ * client's own playerState (health and armor).
+ */
+export interface DemoVitalsSample {
+  time: number;
+  num: number;
+  /** Health left; 0 means dead. */
+  health: number;
+  /** Armor left, or -1 when this source did not carry armor. */
+  armor: number;
+  source: number;
+}
+
 /** A kill on the seek bar: when it happened and the killer's team. */
 export interface KillMarker {
   /** Milliseconds since the first snapshot of the demo. */
@@ -114,8 +136,11 @@ export interface DemoGameSummary {
   duration: number;
   levelTime: number;
   eventOverflow?: boolean;
+  vitalsOverflow?: boolean;
   players: DemoPlayerSummary[];
   events: DemoEvent[];
+  /** Health/armor timeline scraped during the scan. Absent on older caches. */
+  vitals?: DemoVitalsSample[];
 }
 
 export interface DemoSummary {

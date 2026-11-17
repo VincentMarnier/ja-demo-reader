@@ -271,7 +271,8 @@ EMSCRIPTEN_KEEPALIVE const char *JKA_MemoryJson( void )
 #define JKA_MAX_GAMES       8
 #define JKA_MAX_RECORDS     96
 #define JKA_MAX_EVENTS      16000
-#define JKA_SUMMARY_SIZE    (4 * 1024 * 1024)
+#define JKA_MAX_VITALS      20000
+#define JKA_SUMMARY_SIZE    (8 * 1024 * 1024)
 
 typedef struct {
 	int			num;
@@ -294,6 +295,29 @@ typedef struct {
 	int			attacker;
 	int			mod;
 } jkaEvent_t;
+
+// Health/armor timeline.  Every sample is "the target's vitals at this server
+// time"; the app replays them up to the seek target to draw the scoreboard.
+//
+// Base JKA snapshots do not carry remote health or armor, so the scan uses
+// every source that does transmit them: the team overlay server command
+// (`tinfo`), the duel health configstrings, the demo client's own
+// playerState, and the EV_PAIN damage event, whose eventParm is the target's
+// remaining health.  Players never sampled keep the spawn defaults (100/25).
+typedef struct {
+	int		time;
+	short	num;
+	short	health;
+	short	armor;
+	unsigned char	source;
+} jkaVitals_t;
+
+#define JKA_VITALS_SPAWN	0
+#define JKA_VITALS_DEATH	1
+#define JKA_VITALS_PAIN		2
+#define JKA_VITALS_TEAMINFO	3
+#define JKA_VITALS_DUEL		4
+#define JKA_VITALS_SELF		5
 
 #define JKA_MAX_KEYFRAMES 96
 
@@ -324,6 +348,9 @@ typedef struct {
 	jkaEvent_t	events[JKA_MAX_EVENTS];
 	int			eventCount;
 	qboolean	eventOverflow;
+	jkaVitals_t	vitals[JKA_MAX_VITALS];
+	int			vitalsCount;
+	qboolean	vitalsOverflow;
 } jkaGame_t;
 
 static jkaGame_t	jka_games[JKA_MAX_GAMES];
@@ -350,6 +377,11 @@ static int			jka_keyframeCount;
 static int			jka_lastKeyframeTime;
 static int			jka_eventEntitySeen[MAX_GENTITIES];
 static int			jka_eventEntityValue[MAX_GENTITIES];
+static int			jka_entityEventValue[MAX_CLIENTS];
+static int			jka_slotHealth[MAX_CLIENTS];
+static int			jka_slotArmor[MAX_CLIENTS];
+static qboolean		jka_slotDead[MAX_CLIENTS];
+static qboolean		jka_predictablePain[MAX_CLIENTS];
 static char			jka_summary[JKA_SUMMARY_SIZE];
 static qboolean		jka_summaryValid = qfalse;
 
@@ -427,11 +459,16 @@ static void JKA_ResetSummary( void )
 	jka_lastKeyframeTime = 0;
 	Com_Memset( jka_eventEntitySeen, 0, sizeof( jka_eventEntitySeen ) );
 	Com_Memset( jka_eventEntityValue, 0, sizeof( jka_eventEntityValue ) );
+	Com_Memset( jka_predictablePain, 0, sizeof( jka_predictablePain ) );
 	jka_summary[0] = 0;
 	jka_summaryValid = qfalse;
 	for ( int i = 0; i < MAX_CLIENTS; i++ ) {
 		jka_slotRecord[i] = -1;
 		jka_slotHash[i] = 0;
+		jka_slotHealth[i] = 100;
+		jka_slotArmor[i] = 25;
+		jka_slotDead[i] = qfalse;
+		jka_entityEventValue[i] = 0;
 	}
 }
 
@@ -441,6 +478,17 @@ static jkaGame_t *JKA_CurrentGame( void )
 		return NULL;
 	}
 	return &jka_games[jka_currentGame];
+}
+
+static void JKA_ResetSlotVitals( int slot )
+{
+	if ( slot < 0 || slot >= MAX_CLIENTS ) {
+		return;
+	}
+	jka_slotHealth[slot] = 100;
+	jka_slotArmor[slot] = 25;
+	jka_slotDead[slot] = qfalse;
+	jka_entityEventValue[slot] = 0;
 }
 
 static jkaPlayerRecord_t *JKA_ActiveRecord( jkaGame_t *game, int slot )
@@ -499,6 +547,7 @@ static void JKA_CloseSlot( jkaGame_t *game, int slot, int now )
 {
 	jkaPlayerRecord_t *record = JKA_ActiveRecord( game, slot );
 
+	JKA_ResetSlotVitals( slot );
 	if ( !record ) {
 		jka_slotRecord[slot] = -1;
 		return;
@@ -522,6 +571,89 @@ static void JKA_EnsureRecord( jkaGame_t *game, int slot, int now )
 	record = JKA_AddRecord( game, slot, name, 0, now, qtrue );
 	if ( record ) {
 		jka_slotRecord[slot] = game->playerCount - 1;
+	}
+}
+
+static qboolean JKA_IsSpectator( int slot )
+{
+	jkaPlayerRecord_t *record = JKA_ActiveRecord( JKA_CurrentGame(), slot );
+
+	return ( record && record->team == 3 ) ? qtrue : qfalse;
+}
+
+static void JKA_EmitVitals( jkaGame_t *game, int now, int num, int health, int armor, int source )
+{
+	jkaVitals_t *sample;
+
+	if ( !game ) {
+		return;
+	}
+	if ( game->vitalsCount >= JKA_MAX_VITALS ) {
+		game->vitalsOverflow = qtrue;
+		return;
+	}
+	sample = &game->vitals[game->vitalsCount++];
+	sample->time = now;
+	sample->num = (short)num;
+	sample->health = (short)health;
+	sample->armor = (short)armor;
+	sample->source = (unsigned char)source;
+}
+
+// Applies one observed/derived vitals value for a client.  Positive health
+// after a tracked death starts a new life; EV_PAIN and duel samples carry no
+// armor, so a health drop is taken as "the armor was used up" (base JKA armor
+// absorbs all damage until it is empty).
+static void JKA_SetVitals( int now, int num, int health, int armor, int source )
+{
+	jkaGame_t *game = JKA_CurrentGame();
+	int oldHealth;
+	int oldArmor;
+	qboolean respawned = qfalse;
+
+	if ( !game || num < 0 || num >= MAX_CLIENTS || JKA_IsSpectator( num ) ) {
+		return;
+	}
+	JKA_EnsureRecord( game, num, now );
+
+	oldHealth = jka_slotHealth[num];
+	oldArmor = jka_slotArmor[num];
+
+	if ( health <= 0 ) {
+		jka_slotHealth[num] = 0;
+		jka_slotArmor[num] = 0;
+		jka_slotDead[num] = qtrue;
+		if ( oldHealth != 0 || oldArmor != 0 ) {
+			JKA_EmitVitals( game, now, num, 0, 0, JKA_VITALS_DEATH );
+		}
+		return;
+	}
+
+	if ( jka_slotDead[num] ) {
+		jka_slotDead[num] = qfalse;
+		respawned = qtrue;
+		if ( armor < 0 ) {
+			armor = 25;
+		}
+	} else if ( armor < 0 ) {
+		armor = ( health < oldHealth ) ? 0 : oldArmor;
+	}
+
+	jka_slotHealth[num] = health;
+	jka_slotArmor[num] = armor;
+
+	if ( respawned || health != oldHealth || armor != oldArmor ) {
+		JKA_EmitVitals( game, now, num, health, armor, source );
+	}
+}
+
+static void JKA_SpawnSlot( int now, int slot )
+{
+	jkaGame_t *game = JKA_CurrentGame();
+
+	JKA_ResetSlotVitals( slot );
+	if ( game ) {
+		JKA_EmitVitals( game, now, slot, 100, 25, JKA_VITALS_SPAWN );
 	}
 }
 
@@ -588,10 +720,12 @@ static void JKA_UpdatePlayers( int now )
 			record->lastSeen = now;
 			record->team = team;
 			jka_slotRecord[slot] = (int)( record - game->players );
+			JKA_SpawnSlot( now, slot );
 		} else {
 			record = JKA_AddRecord( game, slot, name, team, now, qfalse );
 			if ( record ) {
 				jka_slotRecord[slot] = game->playerCount - 1;
+				JKA_SpawnSlot( now, slot );
 			}
 		}
 	}
@@ -622,6 +756,7 @@ static void JKA_StartGame( int now, int gamestateId )
 	for ( int i = 0; i < MAX_CLIENTS; i++ ) {
 		jka_slotRecord[i] = -1;
 		jka_slotHash[i] = 0;
+		JKA_ResetSlotVitals( i );
 	}
 	jka_lastSnapMessageNum = -1;
 	jka_lastEventTime = -1;
@@ -630,6 +765,7 @@ static void JKA_StartGame( int now, int gamestateId )
 	jka_lastEventMod = -1;
 	Com_Memset( jka_eventEntitySeen, 0, sizeof( jka_eventEntitySeen ) );
 	Com_Memset( jka_eventEntityValue, 0, sizeof( jka_eventEntityValue ) );
+	Com_Memset( jka_predictablePain, 0, sizeof( jka_predictablePain ) );
 
 	JKA_UpdatePlayers( now );
 }
@@ -668,6 +804,7 @@ static void JKA_TrackObituary( int now, int target, int attacker, int mod )
 		record->deaths++;
 		record->lastSeen = now;
 	}
+	JKA_SetVitals( now, target, 0, 0, JKA_VITALS_DEATH );
 
 	if ( attacker >= 0 && attacker < MAX_CLIENTS && attacker != target ) {
 		JKA_EnsureRecord( game, attacker, now );
@@ -677,6 +814,203 @@ static void JKA_TrackObituary( int now, int target, int attacker, int mod )
 			record->lastSeen = now;
 		}
 	}
+}
+
+static const char *JKA_ParseIntToken( const char *s, int *out )
+{
+	int value = 0;
+	qboolean negative = qfalse;
+	qboolean any = qfalse;
+
+	while ( *s == ' ' || *s == '\t' ) {
+		s++;
+	}
+	if ( *s == '-' ) {
+		negative = qtrue;
+		s++;
+	}
+	while ( *s >= '0' && *s <= '9' ) {
+		value = value * 10 + ( *s - '0' );
+		s++;
+		any = qtrue;
+	}
+	if ( !any ) {
+		return NULL;
+	}
+	*out = negative ? -value : value;
+	return s;
+}
+
+// "tinfo <count> <client> <location> <health> <armor> <weapon> <powerups> ..."
+// is the team overlay the server sends to a playing client.  It is the only
+// exact remote health/armor the demo carries for teammates.
+static void JKA_ParseTeamInfo( const char *command, int now )
+{
+	const char *s = command;
+	int count;
+	int i;
+
+	while ( *s && *s != ' ' && *s != '\t' ) {
+		s++;
+	}
+	if ( !( s = JKA_ParseIntToken( s, &count ) ) || count <= 0 || count > MAX_CLIENTS ) {
+		return;
+	}
+	for ( i = 0; i < count; i++ ) {
+		int num;
+		int scratch;
+		int health;
+		int armor;
+
+		if ( !( s = JKA_ParseIntToken( s, &num ) ) ) {
+			return;
+		}
+		if ( !( s = JKA_ParseIntToken( s, &scratch ) ) ) {	// location
+			return;
+		}
+		if ( !( s = JKA_ParseIntToken( s, &health ) ) ) {
+			return;
+		}
+		if ( !( s = JKA_ParseIntToken( s, &armor ) ) ) {
+			return;
+		}
+		if ( !( s = JKA_ParseIntToken( s, &scratch ) ) ) {	// weapon
+			return;
+		}
+		if ( !( s = JKA_ParseIntToken( s, &scratch ) ) ) {	// powerups
+			return;
+		}
+		JKA_SetVitals( now, num, health, armor, JKA_VITALS_TEAMINFO );
+	}
+}
+
+static int JKA_NextPipeInt( const char **cursor, qboolean *ok )
+{
+	const char *s = *cursor;
+	int value = 0;
+	qboolean negative = qfalse;
+	qboolean any = qfalse;
+
+	if ( !s ) {
+		*ok = qfalse;
+		return 0;
+	}
+	while ( *s == ' ' || *s == '\t' ) {
+		s++;
+	}
+	if ( *s == '!' ) {
+		*ok = qfalse;
+		return 0;
+	}
+	if ( *s == '-' ) {
+		negative = qtrue;
+		s++;
+	}
+	while ( *s >= '0' && *s <= '9' ) {
+		value = value * 10 + ( *s - '0' );
+		s++;
+		any = qtrue;
+	}
+	if ( !any ) {
+		*ok = qfalse;
+		return 0;
+	}
+	while ( *s && *s != '|' ) {
+		s++;
+	}
+	if ( *s == '|' ) {
+		s++;
+	}
+	*cursor = s;
+	*ok = qtrue;
+	return negative ? -value : value;
+}
+
+// CS_CLIENT_DUELHEALTHS is "<h1>|<h2>|<h3>" matching CS_CLIENT_DUELISTS.
+// Duels transmit exact health but not armor.
+static void JKA_TrackDuelHealth( int now )
+{
+	const char *list = JKA_ConfigString( CS_CLIENT_DUELISTS );
+	const char *healths = JKA_ConfigString( CS_CLIENT_DUELHEALTHS );
+	int num[3] = { -1, -1, -1 };
+	int health[3] = { -1, -1, -1 };
+	qboolean ok = qtrue;
+	int i;
+
+	if ( !list[0] || !healths[0] ) {
+		return;
+	}
+	for ( i = 0; i < 3; i++ ) {
+		num[i] = JKA_NextPipeInt( &list, &ok );
+		if ( !ok ) {
+			break;
+		}
+	}
+	ok = qtrue;
+	for ( i = 0; i < 3; i++ ) {
+		health[i] = JKA_NextPipeInt( &healths, &ok );
+		if ( !ok ) {
+			break;
+		}
+	}
+	for ( i = 0; i < 3; i++ ) {
+		if ( num[i] >= 0 && num[i] < MAX_CLIENTS && health[i] > 0 ) {
+			JKA_SetVitals( now, num[i], health[i], -1, JKA_VITALS_DUEL );
+		}
+	}
+}
+
+// Client entities carry EF_DEAD and, when the server mirrors a playerState
+// event, EV_PAIN in entityState.event.  Its eventParm is the health left.
+static void JKA_TrackPlayerVitals( int now, entityState_t *state )
+{
+	int num = state->number;
+	qboolean dead;
+
+	if ( state->eType != ET_PLAYER || num < 0 || num >= MAX_CLIENTS ) {
+		return;
+	}
+	if ( JKA_IsSpectator( num ) ) {
+		return;
+	}
+	dead = ( state->eFlags & EF_DEAD ) ? qtrue : qfalse;
+	if ( dead ) {
+		if ( !jka_slotDead[num] ) {
+			JKA_SetVitals( now, num, 0, 0, JKA_VITALS_DEATH );
+		}
+	} else if ( jka_slotDead[num] ) {
+		// A respawn: back to the spawn defaults until a sample says otherwise.
+		JKA_SetVitals( now, num, 100, 25, JKA_VITALS_SPAWN );
+	}
+
+	if ( state->event && state->event != jka_entityEventValue[num] ) {
+		jka_entityEventValue[num] = state->event;
+		// Predictable saber pain events carry a 1..100 sound bucket, not the
+		// health left.  The server also broadcasts them as EF_PLAYER_EVENT
+		// temp entities; JKA_ProcessSnapshot marks those slots for this
+		// snapshot.  The recorded client is covered by its exact playerState.
+		if ( ( state->event & ~EV_EVENT_BITS ) == EV_PAIN &&
+			!jka_predictablePain[num] && num != cl.snap.ps.clientNum ) {
+			JKA_SetVitals( now, num, state->eventParm, -1, JKA_VITALS_PAIN );
+		}
+	}
+}
+
+static void JKA_TrackSelfVitals( int now )
+{
+	int num = cl.snap.ps.clientNum;
+	int health;
+	int armor;
+
+	if ( num < 0 || num >= MAX_CLIENTS || JKA_IsSpectator( num ) ) {
+		return;
+	}
+	health = cl.snap.ps.stats[STAT_HEALTH];
+	armor = cl.snap.ps.stats[STAT_ARMOR];
+	if ( armor < 0 ) {
+		armor = 0;
+	}
+	JKA_SetVitals( now, num, health > 0 ? health : 0, health > 0 ? armor : 0, JKA_VITALS_SELF );
 }
 
 static void JKA_ProcessSnapshot( int now, int resumeOffset )
@@ -735,6 +1069,8 @@ static void JKA_ProcessSnapshot( int now, int resumeOffset )
 
 	game->endTime = now;
 	JKA_UpdatePlayers( now );
+	JKA_TrackSelfVitals( now );
+	JKA_TrackDuelHealth( now );
 
 	if ( jka_keyframeCount < JKA_MAX_KEYFRAMES &&
 		( jka_keyframeCount == 0 || now - jka_lastKeyframeTime >= 10000 ) ) {
@@ -777,15 +1113,43 @@ static void JKA_ProcessSnapshot( int now, int resumeOffset )
 		jka_fullSnapshots++;
 	}
 
+	// Predictable player pain events (saber locks, broken limbs) are broadcast
+	// as EF_PLAYER_EVENT temp entities whose eventParm is a sound bucket, not
+	// health.  Mark their slots before reading the player entities so the same
+	// EV_PAIN in an entityState is not mistaken for the health left.
+	Com_Memset( jka_predictablePain, 0, sizeof( jka_predictablePain ) );
+	for ( i = 0; i < cl.snap.numEntities && i < MAX_PARSE_ENTITIES; i++ ) {
+		entityState_t *state = &cl.parseEntities[( cl.snap.parseEntitiesNum + i ) & ( MAX_PARSE_ENTITIES - 1 )];
+
+		if ( state->eType >= ET_EVENTS &&
+			( state->eType - ET_EVENTS ) == EV_PAIN &&
+			( state->eFlags & EF_PLAYER_EVENT ) &&
+			state->otherEntityNum >= 0 && state->otherEntityNum < MAX_CLIENTS ) {
+			jka_predictablePain[state->otherEntityNum] = qtrue;
+		}
+	}
+
 	for ( i = 0; i < cl.snap.numEntities && i < MAX_PARSE_ENTITIES; i++ ) {
 		entityState_t *state = &cl.parseEntities[( cl.snap.parseEntitiesNum + i ) & ( MAX_PARSE_ENTITIES - 1 )];
 		int event;
 
 		if ( state->eType < ET_EVENTS ) {
+			// Events riding on a player entity (EV_PAIN carries the health
+			// left in eventParm) and the dead/alive transition.
+			JKA_TrackPlayerVitals( now, state );
 			continue;
 		}
 		// Freestanding event entities carry the event in eType, not event.
 		event = state->eType - ET_EVENTS;
+		if ( event == EV_PLAYER_TELEPORT_IN ) {
+			// Spawn-in effect; only a respawn when the slot is tracked dead
+			// (teleport pads fire this for living players).
+			if ( state->clientNum >= 0 && state->clientNum < MAX_CLIENTS &&
+				jka_slotDead[state->clientNum] ) {
+				JKA_SetVitals( now, state->clientNum, 100, 25, JKA_VITALS_SPAWN );
+			}
+			continue;
+		}
 		if ( event != EV_OBITUARY ) {
 			continue;
 		}
@@ -871,6 +1235,8 @@ static int JKA_ScanDemo( const char *name, int targetTime, qboolean stopAtTarget
 			if ( jka_lastCommandSeq < clc.serverCommandSequence - MAX_RELIABLE_COMMANDS ) {
 				jka_lastCommandSeq = clc.serverCommandSequence - MAX_RELIABLE_COMMANDS;
 			}
+			int commandTime = cl.snap.serverTime > 0 ? cl.snap.serverTime : last;
+
 			for ( int commandSeq = jka_lastCommandSeq + 1; commandSeq <= clc.serverCommandSequence; commandSeq++ ) {
 				const char *command = clc.serverCommands[commandSeq & ( MAX_RELIABLE_COMMANDS - 1 )];
 				char commandName[64];
@@ -898,6 +1264,11 @@ static int JKA_ScanDemo( const char *name, int targetTime, qboolean stopAtTarget
 					CL_GetServerCommand( commandSeq );
 				} else {
 					clc.lastExecutedServerCommand = commandSeq;
+					// The team overlay carries teammates' exact health/armor
+					// and is only sent to the recorded client.
+					if ( !Q_stricmp( commandName, "tinfo" ) ) {
+						JKA_ParseTeamInfo( command, commandTime );
+					}
 				}
 
 				if ( !Q_stricmp( commandName, "map_restart" ) ||
@@ -1024,7 +1395,14 @@ static void JKA_BuildSummary( void )
 			JKA_Append( &out, &left, "%s{\"time\":%d,\"target\":%d,\"attacker\":%d,\"mod\":%d}",
 				i ? "," : "", event->time, event->target, event->attacker, event->mod );
 		}
-		JKA_Append( &out, &left, "]}" );
+		JKA_Append( &out, &left, "],\"vitals\":[" );
+		for ( i = 0; i < game->vitalsCount; i++ ) {
+			jkaVitals_t *vitals = &game->vitals[i];
+			JKA_Append( &out, &left, "%s{\"time\":%d,\"num\":%d,\"health\":%d,\"armor\":%d,\"source\":%d}",
+				i ? "," : "", vitals->time, vitals->num, vitals->health, vitals->armor, vitals->source );
+		}
+		JKA_Append( &out, &left, "],\"vitalsOverflow\":%s}",
+			game->vitalsOverflow ? "true" : "false" );
 		firstGame = qfalse;
 	}
 

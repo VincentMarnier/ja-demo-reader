@@ -27,14 +27,27 @@ function PlayerRow(props: {
   onFollow: (clientNum: number) => void;
 }) {
   const { player } = props;
+  const known = player.health !== undefined;
+  const health = player.health ?? 0;
+  const armor = player.armor ?? 0;
+  const dead = known && health <= 0;
   return (
     <div className={`scoreboard-row team-${player.team}${player.left ? ' left' : ''}`}>
       <span className="scoreboard-score" title={`${player.score} kills / ${player.deaths} deaths`}>
         {player.score}<small>/{player.deaths}</small>
       </span>
-      <span className="scoreboard-name" title={stripColors(player.name)}>
-        {stripColors(player.name)}
-        {player.left ? <small className="left-tag">left</small> : null}
+      <span className="scoreboard-identity">
+        <span className="scoreboard-name" title={stripColors(player.name)}>
+          {stripColors(player.name)}
+          {player.left ? <small className="left-tag">left</small> : null}
+        </span>
+        <span
+          className={`scoreboard-vitals${dead ? ' dead' : ''}${known ? '' : ' unknown'}`}
+          title={!known ? 'Vitals not scanned yet' : dead ? 'Dead' : `${health} health / ${armor} armor`}
+        >
+          <span className="vitals-health">HP {known ? health : '—'}</span>
+          <span className="vitals-armor">AP {known ? armor : '—'}</span>
+        </span>
       </span>
       <span className="scoreboard-ping">{player.ping > 0 ? `${player.ping} ms` : '—'}</span>
       <button

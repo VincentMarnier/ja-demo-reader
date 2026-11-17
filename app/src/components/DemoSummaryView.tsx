@@ -56,6 +56,9 @@ export function DemoSummaryView({ summary }: DemoSummaryViewProps) {
       {summary.games.some(game => game.eventOverflow) ? (
         <p className="fineprint">Some events were truncated from this very long demo.</p>
       ) : null}
+      {summary.games.some(game => game.vitalsOverflow) ? (
+        <p className="fineprint">Some health samples were truncated from this very long demo.</p>
+      ) : null}
     </section>
   );
 }

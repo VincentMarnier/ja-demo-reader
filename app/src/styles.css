@@ -409,16 +409,19 @@ summary { cursor: pointer; color: var(--muted); }
   display: flex;
   align-items: flex-start;
   justify-content: center;
+  flex-wrap: nowrap;
   gap: var(--play-gap);
 }
 
 .play-row > .stage {
   flex: 1 1 auto;
+  min-width: 0;
   max-width: var(--stage-max);
 }
 
 .scoreboard-panel {
   flex: 0 0 var(--scoreboard-width, 300px);
+  min-width: 0;
   max-height: min(75vh, 620px);
   overflow: auto;
   background: rgba(17, 24, 33, 0.94);
@@ -462,9 +465,16 @@ summary { cursor: pointer; color: var(--muted); }
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   padding: 7px 0;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.scoreboard-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  overflow: hidden;
 }
 .scoreboard-score {
   text-align: right;
@@ -479,6 +489,20 @@ summary { cursor: pointer; color: var(--muted); }
   font-size: 12px;
 }
 .scoreboard-ping { color: var(--muted); font-size: 10px; white-space: nowrap; }
+.scoreboard-vitals {
+  display: flex;
+  gap: 8px;
+  font-size: 9px;
+  line-height: 1.2;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.scoreboard-vitals .vitals-health { color: #7fe08a; font-weight: 700; }
+.scoreboard-vitals .vitals-armor { color: #8cc7ff; }
+.scoreboard-vitals.dead .vitals-health { color: #ff8a8a; }
+.scoreboard-vitals.dead .vitals-armor { color: var(--muted); }
+.scoreboard-vitals.unknown .vitals-health,
+.scoreboard-vitals.unknown .vitals-armor { color: var(--muted); }
 .follow-btn {
   border: 1px solid var(--border);
   background: transparent;
@@ -668,15 +692,17 @@ summary { cursor: pointer; color: var(--muted); }
 .keybind-btn:hover { border-color: #3a4c60; }
 .keybind-btn.capturing { border-color: var(--accent); color: var(--accent); }
 
-/* The scoreboard stays beside the video and only stacks on phone widths. */
+/* The scoreboard stays beside the video; only very narrow screens stack it. */
 @media (max-width: 1000px) {
   .scoreboard-row { grid-template-columns: 30px minmax(0, 1fr) auto auto; }
+  /* Keep the name and vitals room while the side panel is at its narrowest. */
+  .scoreboard-ping { display: none; }
 }
 /* Keep the feed clear of the score strip until the stage is wide enough. */
 @media (max-width: 1300px) {
   .kill-feed { top: 52px; }
 }
-@media (max-width: 720px) {
+@media (max-width: 520px) {
   .play-row { flex-direction: column; align-items: stretch; }
   .play-row > .stage { width: 100%; }
   .scoreboard-panel { flex: 1 1 auto; width: 100%; max-height: none; }

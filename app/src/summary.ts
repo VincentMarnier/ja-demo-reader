@@ -17,6 +17,41 @@ export interface PlayerStats {
   deaths: number;
 }
 
+export interface PlayerVitals {
+  health: number;
+  armor: number;
+  dead: boolean;
+}
+
+/**
+ * Replays the scanned vitals samples up to `serverTime`. Players without a
+ * sample yet (or demos/summaries without vitals) keep the spawn defaults:
+ * 100 health and 25 armor.
+ */
+export function vitalsAt(game: DemoGameSummary, serverTime: number): Map<number, PlayerVitals> {
+  const vitals = new Map<number, PlayerVitals>();
+  const ensure = (num: number): PlayerVitals => {
+    let value = vitals.get(num);
+    if (!value) {
+      value = { health: 100, armor: 25, dead: false };
+      vitals.set(num, value);
+    }
+    return value;
+  };
+
+  for (const player of game.players) ensure(player.num);
+  for (const sample of game.vitals ?? []) {
+    if (sample.time > serverTime) break;
+    const value = ensure(sample.num);
+    if (sample.health >= 0) {
+      value.health = sample.health;
+      value.dead = sample.health <= 0;
+    }
+    if (sample.armor >= 0) value.armor = sample.armor;
+  }
+  return vitals;
+}
+
 export function statsAt(game: DemoGameSummary, serverTime: number): Map<number, PlayerStats> {
   const stats = new Map<number, PlayerStats>();
   for (const player of game.players) {
@@ -49,16 +84,20 @@ export function mergeScoreboard(
   if (!game) return data;
 
   const stats = statsAt(game, serverTime);
+  const vitals = vitalsAt(game, serverTime);
   const players: ScoreboardPlayer[] = [];
   const used = new Set<number>();
 
   for (const player of data.players) {
     const value = stats.get(player.num);
+    const life = vitals.get(player.num);
     players.push({
       ...player,
       score: value ? value.kills : player.score,
       kills: value ? value.kills : player.kills,
       deaths: value ? value.deaths : player.deaths,
+      health: life ? life.health : player.health,
+      armor: life ? life.armor : player.armor,
       left: false
     });
     used.add(player.num);
@@ -70,6 +109,7 @@ export function mergeScoreboard(
     const left = record.left && !record.returned;
     if (used.has(record.num) && !left) continue;
     const value = stats.get(record.num) ?? { kills: record.kills, deaths: record.deaths };
+    const life = vitals.get(record.num) ?? { health: 100, armor: 25, dead: false };
     const num = used.has(record.num) ? synthetic-- : record.num;
     players.push({
       num,
@@ -79,7 +119,9 @@ export function mergeScoreboard(
       deaths: value.deaths,
       ping: 0,
       team: record.team,
-      left
+      left,
+      health: life.health,
+      armor: life.armor
     });
     used.add(record.num);
   }

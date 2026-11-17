@@ -701,7 +701,7 @@ export default function App() {
     // for the demo; otherwise scan again (the scan no longer loads the map).
     // Bump the cache key when the summary format or game-boundary logic
     // changes so old cached summaries are not reused.
-    const cacheKey = `v3:${demoFile.name}:${demoFile.file.size}:${demoFile.file.lastModified}`;
+    const cacheKey = `v4:${demoFile.name}:${demoFile.file.size}:${demoFile.file.lastModified}`;
     const hadKeyframes = keyframesReadyRef.current;
     let summary = hadKeyframes ? await loadDemoSummary(cacheKey) : null;
     let info: DemoInfo | null = null;
@@ -1142,20 +1142,20 @@ export default function App() {
                 <KillFeed game={currentGame} serverTime={status?.serverTime ?? 0} />
               ) : null}
             </div>
-          </div>
 
-          {showPlayer && settings.showScoreboard ? (
-            <ScoreboardPanel
-              data={scoreboard}
-              followClient={followClient}
-              freeCam={freeCam}
-              pointerLocked={pointerLocked}
-              onFollow={followPlayer}
-              onToggleFreeCam={toggleFreeCam}
-              onCaptureMouse={captureMouse}
-              onDemoCamera={demoCamera}
-            />
-          ) : null}
+            {showPlayer && settings.showScoreboard ? (
+              <ScoreboardPanel
+                data={scoreboard}
+                followClient={followClient}
+                freeCam={freeCam}
+                pointerLocked={pointerLocked}
+                onFollow={followPlayer}
+                onToggleFreeCam={toggleFreeCam}
+                onCaptureMouse={captureMouse}
+                onDemoCamera={demoCamera}
+              />
+            ) : null}
+          </div>
         </div>
       </main>
 

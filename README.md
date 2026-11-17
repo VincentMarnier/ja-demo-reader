@@ -21,6 +21,9 @@ Academy and select your own `assets0..3.pk3` and demo files. Nothing is uploaded
   restarts and level changes start new games with reset stats.
 - Exact kills/deaths at the current playback or seek position, replayed from the
   demo's obituary events.
+- Per-game health/armor on the scoreboard: exact values where the demo transmits
+  them (team overlay, duels, the recorded client), damage-event health samples for
+  everyone else, and 100 HP / 25 armor spawn defaults.
 - Follow camera for any player, a free-fly camera with mouse look, and the
   original recorded demo camera.
 - Custom Health/Armor/saber HUD, score strip, timer and scoreboard.
