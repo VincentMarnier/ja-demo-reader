@@ -2,10 +2,43 @@
 
 **Status:** Implementation complete and verified in both hosts. Emscripten
 6.0.1 was installed, the engine built, the GL-in-worker spike passed, and the
-full app booted, checked a custom map/demo and played it in headful Chromium
-149; `?worker=0` was also booted for comparison. **Task Manager tab memory was
-not measured**, so the M9 idle/map-loaded memory targets are not claimed; the
-in-page MEMFS/storage evidence is.
+full app booted, checked a retail demo and played it in Brave 157 and headful
+Chromium 149. Brave Task Manager measured the worker at **130 MB idle** and
+**290–298 MB after Check map/Play/Stop**, so the worker idle/map-memory targets
+are met; the fallback is ~1.3–1.4 GB. Restart and backward seek still use full
+reloads (Phase 4/5), and Stop still performs a full teardown instead of
+keep-warm.
+
+**Scope:** Run the same engine build in a dedicated Web Worker against an
+OffscreenCanvas, mount retail PK3s read-only with WORKERFS, keep a degraded
+main-thread host, and remove the OPFS asset cache.
+
+### Target scorecard
+
+| Target | Measured | State |
+|---|---|---|
+| Engine boot ≤ 5 s | **1.1–2.3 s** worker; 4.9 s fallback | met |
+| Check map ≤ 2 s | **8.0–8.5 s** (demo scan includes a map/cgame load) | not met; Phase 4 prewarm |
+| First Play ≤ 10 s | **8.0–8.3 s** | met, but WORKERFS adds ~5 s vs MEMFS |
+| Restart ≤ 0.5 s | **7.8–10.8 s** | not met; Phase 4/5 |
+| Forward seek | **1 ms warm** | met |
+| Backward seek ≤ 0.6 s | **7.99 s** (`path=keyframe`) | not met; Phase 5 |
+| Idle tab ≤ 400 MB | **130 MB** (Brave) | met |
+| Map-loaded ≤ 800 MB | **290–298 MB** (Brave) | met |
+| Browser asset storage | **57–80 KB**, no OPFS copy | met |
+| UI responsiveness | worker path; not formally measured | expected |
+
+## What changed
+
+| Area | Change |
+|---|---|
+| Engine build | One module for `web,worker`; WORKERFS linked; `FS` and run-dependency hooks exported; GL proc lookup enabled. |
+| Window/GL | New `engine/platform/win_emscripten.cpp` creates a WebGL2 context on the transferred OffscreenCanvas. Patch `0008` selects it at runtime and skips DOM input in the worker. |
+| Worker host | New `app/src/engine/engine.worker.ts` and `WorkerEngineHost.ts`; the worker owns the wasm module, the RPC queue and the status/scoreboard polls. |
+| Fallback | `EngineHost.ts` is now `MainThreadEngineHost`; the old MEMFS staging path is kept. Both hosts implement `EngineHostApi` in `app/src/engine/shared.ts`. |
+| Assets | Retail PK3s are mounted with WORKERFS at `/jka/base`; demos and added map PK3s are written to the writable `/userdata/base`. |
+| OPFS | The asset-cache write/read path and its UI are removed. A one-time cleanup deletes the old `jka-demo-player/assets` OPFS tree. |
+| Docs | README, architecture and AGENTS updated for the worker path and the no-cache model. |
 
 ## Spike result (this checkout)
 
@@ -56,13 +89,15 @@ instead, so the harness number is not an app timing.
 | Mounted PK3s | **1,225,008,939 bytes / 4 files** |
 | `performance.memory.usedJSHeapSize` | **5.0–5.5 MB** |
 | Browser storage estimate | **73,728 bytes** (no OPFS asset copy) |
-| Check map (includes the demo scan) | **3.7–4.5 s** |
-| `JKA_PlayDemo` (custom map + demo) | **5.86–6.38 s** |
-| `CL_InitCGame` | **4.54–4.99 s** |
-| Restart (current full reload path) | **10.3–10.8 s** |
-| Stop | full teardown; **Asyncify abort reproduced** (Phase 4) |
-| Map/cgame split | BSP 0.503–0.508 s; decode 1.25–1.41 s; cgame setup 1.89–2.00 s; graphics 1.30–1.58 s; clients 0.98–1.17 s |
-| Renderer after the map | 144–226 frames, 9 used programs |
+| Check map (includes the demo scan) | **3.7 s** custom asms; **8.0–8.5 s** retail |
+| `JKA_PlayDemo` | **5.86–6.38 s** custom asms; **8.0–8.3 s** retail |
+| `CL_InitCGame` | **4.54–4.99 s** custom asms; **6.5–6.9 s** retail (high-detail map) |
+| Restart (current full reload path) | **7.8–10.8 s** |
+| Forward seek | **path=warm ms=1** |
+| Backward seek | **path=keyframe ms=7994** (Phase 5) |
+| Stop | **1.5–1.7 s** full teardown; no abort in the latest worker runs, fallback aborts |
+| Map/cgame split | BSP 0.503–2.06 s; decode 1.25–2.55 s; cgame setup 1.89–2.00 s; graphics 1.30–3.00 s; clients 0.98–1.23 s |
+| Renderer after the map | 144–226 frames, 9–19 used programs |
 
 The `performance.memory` value is Chrome's JS-heap estimate and does not count
 the whole wasm memory reservation; it is reported only as a comparison with
@@ -75,19 +110,19 @@ showed:
 
 - **Restart is still the full reload path** (`playDemo` again): 10.3–10.8 s.
   Phase 4's keep-warm/seek-to-start is required for the 0.5 s target.
-- **Stop still reproduces the Asyncify abort** after the full
-  `CL_Disconnect`/renderer restart. The UI returns to the map step, but the
-  worker logs `Assertion failed: We cannot start an async operation when one is
-  already in flight` and the engine is no longer usable. This is the Phase 4
-  keep-warm/Release work, not a Phase 3 regression.
+- **Stop did not abort on Brave 157**, but it still performed the full
+  `CL_Disconnect`/`RE_Shutdown`/`R_Init` teardown: **1.54 s**, then the map
+  step. The same Stop aborted with
+  `Assertion failed: We cannot start an async operation when one is already in
+  flight` in headful Chromium 149 and on the `?worker=0` fallback. It is a
+  timing-sensitive teardown path; Phase 4's keep-warm Stop must not rely on
+  it. The abort is not a Phase 3 regression.
 - **The custom `asms.pk3` demo produced no timeline.** The demo scan returned
   `messages=0` (`gamestates=1`), so `demoInfo` had no duration and the seek bar
-  was absent; playback itself still worked. The added map PK3 is “not on the
-  pure list”, which likely makes the first gamestate's cgame/map load restart
-  the filesystem and invalidate the open demo file. A retail-map demo is needed
-  to verify seeking; Phase 4/5 must make the scan safe with added map PK3s.
-- The Play and Restart runs were stable; no page errors other than the Stop
-  abort.
+  was absent; playback itself still worked. The retail demo scanned normally
+  (18,688 messages), so this is specific to the added map PK3/pure-list path.
+  Phase 4/5 should make the scan safe with added map PK3s.
+- The Play and Restart runs were stable; no page errors other than Stop.
 
 ### Worker vs main-thread fallback
 
@@ -105,9 +140,50 @@ Same engine build, same four retail assets, file-input handles:
 
 The fallback's 1.23 GB JS heap is the MEMFS copy; the worker's 5 MB JS heap
 does not contain the mounted PK3s. Both reserve the same 805 MB wasm heap
-(`heap=805306368`), which Task Manager would count; that is why the worker
-idle-memory target still needs a real Task Manager reading (and Phase 2's heap
-reduction, which is not part of this phase).
+(`heap=805306368`).
+
+### Brave Task Manager (user run)
+
+Host: Brave 157 on the user’s desktop, retail-map demo
+`blacksun_vs_cerberus_r1.dm_26`, texture settings **picmip 0 / trilinear**
+(the high-quality setting, not the fast default):
+
+| Point | Worker | `?worker=0` fallback |
+|---|---:|---:|
+| Page load | 38 MB | 38 MB |
+| Engine ready | **130 MB** | **1.3 GB** |
+| After Check map | **297 MB** | **1.39 GB** |
+| After Play | **290 MB** | **1.4 GB** |
+| After Stop | **298 MB** | **1.4 GB** |
+
+This meets the worker idle (≤400 MB) and map-loaded (≤800 MB) targets on the
+user’s machine. The fallback is the expected ~1.2 GB MEMFS copy.
+
+The same Brave run:
+- Worker boot **2.12 s**; Check map **8.24 s** including the scan (the scan’s
+  map/cgame load was 6.50 s); `JKA_PlayDemo` **8.13 s** (`CL_InitCGame` 6.86 s);
+  Stop **1.54 s** with **no Asyncify abort** in the worker.
+- Fallback boot **4.9 s**; Check map **3.6 s**; Play **3.21 s**
+  (`CL_InitCGame` 2.26 s); Stop still aborted Asyncify.
+- The retail demo scanned normally: 18,688 messages, 18,687 snapshots,
+  75 keyframes. This confirms the earlier `messages=0` scan failure was
+  specific to the custom map PK3/pure-list case, not the worker path.
+- The worker Play is slower than the fallback (8.13 s vs 3.21 s) because
+  WORKERFS file-data reads add maps/textures/models work. The fast texture
+  profile (default) should reduce that; this run used the high-quality
+  setting.
+
+A second headful Chromium close-out run on the same retail demo (default fast
+profile) measured:
+
+- Boot 1.1–1.6 s; Check map **8.5 s**; Play **8.0–8.3 s**; Restart
+  **7.8–8.1 s** (still the full reload path).
+- **Forward seek path=warm ms=1**; the UI returned immediately.
+- **Backward seek path=keyframe ms=7994** (about 8 s), the remaining
+  map/cgame reload cost that Phase 5 must remove.
+- Stop **1.68 s**, no worker abort and no page error in this run; it still does
+  the full `RE_Shutdown`/`R_Init` teardown.
+- The custom `asms.pk3` demo still has no timeline; the retail demo has one.
 
 ### WORKERFS central-directory cache
 
@@ -123,22 +199,6 @@ the lazy WORKERFS read path. This cut boot to **2.2 s** and makes the
 Keep this wrapper. It is app-side and does not change the engine; it assumes
 non-ZIP64 PK3s (the retail assets are non-ZIP64) and falls back to the normal
 WORKERFS read for any range it cannot cache.
-
-**Scope:** Run the same engine build in a dedicated Web Worker against an
-OffscreenCanvas, mount retail PK3s read-only with WORKERFS, keep a degraded
-main-thread host, and remove the OPFS asset cache.
-
-## What changed
-
-| Area | Change |
-|---|---|
-| Engine build | One module for `web,worker`; WORKERFS linked; `FS` and run-dependency hooks exported; GL proc lookup enabled. |
-| Window/GL | New `engine/platform/win_emscripten.cpp` creates a WebGL2 context on the transferred OffscreenCanvas. Patch `0008` selects it at runtime and skips DOM input in the worker. |
-| Worker host | New `app/src/engine/engine.worker.ts` and `WorkerEngineHost.ts`; the worker owns the wasm module, the RPC queue and the status/scoreboard polls. |
-| Fallback | `EngineHost.ts` is now `MainThreadEngineHost`; the old MEMFS staging path is kept. Both hosts implement `EngineHostApi` in `app/src/engine/shared.ts`. |
-| Assets | Retail PK3s are mounted with WORKERFS at `/jka/base`; demos and added map PK3s are written to the writable `/userdata/base`. |
-| OPFS | The asset-cache write/read path and its UI are removed. A one-time cleanup deletes the old `jka-demo-player/assets` OPFS tree. |
-| Docs | README, architecture and AGENTS updated for the worker path and the no-cache model. |
 
 ## The spike gate
 
@@ -337,34 +397,32 @@ Done in this checkout:
    is copied and compiled.
 2. `npm --prefix app run typecheck` and `npm --prefix app run build` pass.
 3. `worker-smoke.html` rendered the splash to the OffscreenCanvas in headful
-   Chromium; the full app booted, added a map PK3 and played the demo. The
-   custom-map demo scan returned no duration (see close-out findings), so the
-   timeline/seek bar was absent.
+   Chromium. The full app booted and played both a custom-map demo and a
+   retail-map demo. The custom map PK3 (not on the pure list) produced no
+   timeline; the retail demo scanned normally (18,688 messages, 75 keyframes).
 4. `JKA_PROFILE memory` with the worker: `memfs=8,104`, `mounted=1,225,008,939`,
    `storageUsage=73,728`. The Phase 0 1.225 GB MEMFS and ~1.14 GB OPFS copies
    are gone.
-5. Boot, Check map, Play and Restart timings and the worker-vs-fallback boot
-   comparison are above. Worker Play is **5.9–6.4 s** (`CL_InitCGame`
-   4.54–4.99 s), slower than the ~3.2 s MEMFS Play; the extra is WORKERFS
-   file-data reads. Restart is 10.3–10.8 s on the current full-reload path.
+5. Boot, Check map, Play, Restart, forward seek, backward seek and Stop were
+   measured. Worker Play is **5.9–8.3 s** depending on the map;
+   `CL_InitCGame` 4.54–6.86 s. Restart is **7.8–10.8 s** on the full-reload
+   path. Forward seek is **1 ms**; backward seek is **~8 s**. Stop is
+   **1.5–1.7 s**, full teardown; no worker abort in the latest runs, fallback
+   abort.
 6. The clean engine build was rerun end-to-end from the pinned worktree with
    the final `0001`–`0008` patch set and staged successfully.
+7. Brave Task Manager: worker **130 MB idle / 290–298 MB loaded**; fallback
+   **1.3–1.4 GB**.
 
-Still required:
+Remaining, for the next phases:
 
-- **Task Manager tab memory** (Brave/Chrome `Shift+Esc`) at idle, after Check
-  map, after Play and after Stop. The in-page JS heap does not include the
-  805 MB wasm reservation, and the fallback's 1.23 GB MEMFS is main-thread JS
-  heap. Without this the M9 idle/map-loaded targets remain unproven.
-- **Real Brave** (the user's primary target); the measurements above are
-  Chromium 149 headful. Headless Chromium has no WebGL2 on this host.
-- **A retail-map demo** for the seek/timeline check. The custom-map demo scan
-  returned `messages=0`, so forward/backward seek through the UI was not
-  measurable.
-- **Fallback Play** (only fallback boot was measured), **Stop** (the worker
-  reproduces the Asyncify abort), and mod/second-map/demo-switch cases.
-- **Old OPFS cleanup** on a profile that actually contains the legacy
-  `jka-demo-player/assets` tree; the test profile had none.
+- **Phase 4:** prewarm/prepare, keep-warm Stop and Release. Current Play after
+  Check map repeats the map/cgame load (8 s); Stop performs a 1.5 s full
+  teardown; Restart is 7.8–10.8 s.
+- **Phase 5:** backward seek is 7.99 s (`path=keyframe`); forward is 1 ms.
+- **Phase 3 edge cases:** fallback seek/Stop, old OPFS cleanup on a dirty
+  profile, mod demos, second map/demo switch. The custom-map pure-list scan
+  issue is documented.
 
 Do not read the worker Play number as a Phase 4 result; prewarm/keep-warm is not
 implemented yet.
@@ -387,9 +445,10 @@ implemented yet.
   `messages=0`, so no summary/duration/timeline. Playback worked. Phase 4/5
   must either keep the scan's demo handle valid across the warm map load or
   bypass the pure-list restart for local demos.
-- **Stop is not usable in the worker yet.** It still goes through the full
-  disconnect/renderer-restart path and aborts Asyncify. Phase 4's keep-warm
-  Stop/Release must replace it.
+- **Stop is still the full teardown path.** Brave completed it in 1.54 s with
+  no abort, but headful Chromium 149 and the fallback aborted Asyncify in the
+  same code. Phase 4's keep-warm Stop/Release must replace it rather than rely
+  on the race.
 - **OffscreenCanvas presentation.** The worker relies on task-boundary
   presentation with `preserveDrawingBuffer=0`; no explicit commit is used.
 - **Gamma.** OffscreenCanvas has no window gamma ramp. `deviceSupportsGamma` is
