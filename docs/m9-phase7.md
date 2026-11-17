@@ -22,6 +22,7 @@ seek is documented as an untested edge case rather than optimized.
 | Personal demo names in shared docs | replaced with `demo.dm_26` / `added-map.pk3` |
 | Pinned OpenJK commit | `260c59c2907187af555a676fe0cc798893bf7757`, unmodified |
 | Package version | `0.1.0` (version/tag decision pending) |
+| Directory selection | Chromium uses `showDirectoryPicker`; Brave builds that disable it now fall back to a `webkitdirectory` folder input, and Firefox/Safari can use **Choose assets instead**. |
 
 ## Clean build
 
@@ -78,6 +79,16 @@ Worker host, retail demo:
 This is a JS-heap sanity check, not tab memory. Brave Task Manager should be
 recorded at page load, after prepare, after Play, after the same 20 seeks, after
 Stop and after Release.
+
+## Browser folder selection
+
+`Select GameData folder` uses the File System Access API
+(`window.showDirectoryPicker`) in desktop Chromium. That API needs HTTPS or
+`localhost`; Brave builds that disable it and Firefox/Safari that lack it use
+the `webkitdirectory` folder-upload input instead. **Choose assets instead**
+remains the flat multi-file fallback and is the safest option if a browser
+blocks both folder paths. Folder uploads filter to the `base/` tree when the
+browser exposes `webkitRelativePath`.
 
 ## Deployment
 

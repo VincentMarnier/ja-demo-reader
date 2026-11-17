@@ -26,7 +26,9 @@ interface LauncherProps {
   onPickAssets: () => void;
   onSaved: () => void;
   onAssetsFileInput: (event: ChangeEvent<HTMLInputElement>) => void;
+  onFolderFileInput: (event: ChangeEvent<HTMLInputElement>) => void;
   assetInputRef: RefObject<HTMLInputElement | null>;
+  folderInputRef: RefObject<HTMLInputElement | null>;
   demoInputRef: RefObject<HTMLInputElement | null>;
   mapInputRef: RefObject<HTMLInputElement | null>;
   onDemoSelect: (name: string) => void;
@@ -253,6 +255,14 @@ export function Launcher(props: LauncherProps) {
           accept=".pk3,.dm_26"
           className="hidden-input"
           onChange={props.onAssetsFileInput}
+        />
+        <input
+          ref={props.folderInputRef}
+          type="file"
+          multiple
+          className="hidden-input"
+          onChange={props.onFolderFileInput}
+          {...({ webkitdirectory: '' } as Record<string, string>)}
         />
         <input
           ref={props.demoInputRef}

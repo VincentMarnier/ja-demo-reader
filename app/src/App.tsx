@@ -71,6 +71,7 @@ export default function App() {
   const engineRef = useRef<EngineHostApi | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const assetInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
   const demoInputRef = useRef<HTMLInputElement>(null);
   const mapInputRef = useRef<HTMLInputElement>(null);
   const logCursorRef = useRef(0);
@@ -500,11 +501,21 @@ export default function App() {
   }, [bootEngine]);
 
   const handlePickAssets = useCallback(async () => {
+    if (!window.showDirectoryPicker) {
+      // Brave, Firefox and older Chromium builds may not expose the directory
+      // picker.  Use the directory-upload input instead of failing the wizard.
+      folderInputRef.current?.click();
+      return;
+    }
     try {
       const picked = await pickGameData();
       if (picked) await applyAssets(picked.selection, picked.directory);
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
+      if (err instanceof DOMException && (err.name === 'NotSupportedError' || err.name === 'SecurityError')) {
+        folderInputRef.current?.click();
+        return;
+      }
       setError(err instanceof Error ? err.message : String(err));
       setPhase('error');
     }
@@ -531,6 +542,28 @@ export default function App() {
       if (!files || files.length === 0) return;
       void applyAssets(selectionFromFileList(files));
       event.target.value = '';
+    },
+    [applyAssets]
+  );
+
+  const handleFolderFileInput = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const all = Array.from(event.target.files ?? []);
+      event.target.value = '';
+      if (all.length === 0) return;
+      // A directory upload can point at GameData or directly at base.  Keep
+      // only the base tree when the browser gives us relative paths; fall back
+      // to the flat list on browsers that do not expose webkitRelativePath.
+      const underBase = (file: File) =>
+        /(^|\/)base\//i.test((file.webkitRelativePath || '').replace(/\\/g, '/'));
+      const hasBasePath = all.some(underBase);
+      const selected = hasBasePath ? all.filter(underBase) : all;
+      if (selected.length === 0) {
+        setError('Select the GameData folder (or its base folder) so assets0.pk3 is included.');
+        setPhase('error');
+        return;
+      }
+      void applyAssets(selectionFromFileList(selected));
     },
     [applyAssets]
   );
@@ -979,7 +1012,9 @@ export default function App() {
               onPickAssets={handlePickAssets}
               onSaved={handleSaved}
               onAssetsFileInput={handleAssetsFileInput}
+              onFolderFileInput={handleFolderFileInput}
               assetInputRef={assetInputRef}
+              folderInputRef={folderInputRef}
               demoInputRef={demoInputRef}
               mapInputRef={mapInputRef}
               onDemoSelect={handleDemoSelect}

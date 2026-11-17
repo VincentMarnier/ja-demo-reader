@@ -37,7 +37,11 @@ Academy and select your own `assets0..3.pk3` and demo files. Nothing is uploaded
 
 ## Requirements
 
-- A desktop browser with WebGL2 (Chrome/Edge recommended).
+- A desktop browser with WebGL2 (Chrome/Edge/Brave recommended).
+- The **Select GameData folder** picker uses the File System Access API in
+  Chromium browsers and needs HTTPS or `localhost`. Brave builds that disable
+  that API, and Firefox/Safari, use the directory-upload fallback or
+  **Choose assets instead**; both stay on the device.
 - Node.js 22+.
 - A legally owned Jedi Academy install with `base/assets0..3.pk3`.
 - One or more `.dm_26` demos (retail or mod; mod demos may need the mod's assets).
