@@ -32,7 +32,7 @@ load; that is the honest fallback, not a hidden timer.
 | Engine patch | New `0009-cgame-warm-seek.patch`: a `CG_SeekReset` cgame export, an in-place seek reset, the scan-only gamestate path, and an EOF guard. |
 | Keyframes | `JKA_SeekKeyframeWarm` restores the nearest keyframe, replays to the target and resets the cgame without `CL_Disconnect` or a map load. |
 | Keyframe selection | Keyframes are selected within the target game, not merely the nearest earlier keyframe across a game boundary. |
-| Cgame | `CG_SeekReset` clears entities, snapshots and per-demo state while keeping the map, renderer, registered media and world item visuals. |
+| Cgame | `CG_SeekReset` clears entities, snapshots, per-demo state and cached saber trail segments while keeping the map, renderer, registered media and world item visuals. |
 | Scan | `JKA_ScanDemo` sets `jka_scanOnly`; `CL_ParseGamestate` rebuilds configstrings/snapshots but skips `CL_InitDownloads`, the map load and cgame init. |
 | Keyframe gameState | The scan executes `cs`/`bcs` server commands while scanning, so a keyframe's configstrings match live playback. |
 | App | Check map scans when this engine has no keyframes for the demo; Restart and Watch again use a warm seek to the first snapshot. |
@@ -52,8 +52,11 @@ load; that is the honest fallback, not a hidden timer.
 4. `CG_SeekReset` clears `cg`, `cg_entities`, local entities, marks and the
    FX/ROFF state. It keeps the map, collision map, registered media and world
    item visuals resident, rebuilds `cgs.gameState`, serverinfo, config values,
-   clientinfo and permanent entities, and starts the cgame at the oldest
-   snapshot still in the client ring.
+   clientinfo and permanent entities, clears each client's cached saber trail
+   (segment base/tip, timestamps and mark history), and starts the cgame at
+   the oldest snapshot still in the client ring. The trail is world-space
+   cached state; without clearing it a seek can leave a saber "laser" at the
+   position from before the jump.
 5. `cl.serverTime` is set to the target snapshot and the main loop resumes.
    The cgame requests snapshots from the ring edge to the target, executes the
    retained server commands and draws normally.
@@ -143,6 +146,8 @@ Done in this checkout:
 6. The added-map-PK3 demo now scans 24,359 messages and 20 keyframes; its
    summary shows two games.
 7. No `CG_ReadNextSnapshot: way out of range` warning after warm seeks.
+8. Saber trail caches are cleared on reset; follow-camera seeks no longer
+   leave trail segments at the pre-seek position.
 
 Outstanding:
 
@@ -162,7 +167,9 @@ Outstanding:
 - **`CG_SeekReset` is a soft reset.** It must keep item visuals and cge media
   that are map-level while clearing entity/snapshot state. Do not replace it
   with `CG_Init` (map load) or `CG_Shutdown`-only (stale snapshots) without
-  re-testing new games, duels and view weapons.
+  re-testing new games, duels and view weapons. Saber trails are cached in
+  `clientInfo_t` and copied by `CG_NewClientInfo`; clear them after rebuilding
+  clientinfo or the trail can draw at the pre-seek position.
 - **EOF is not a disconnect here.** `CL_DemoCompleted` leaves `CA_ACTIVE` and
   the demo file open. `CL_SetCGameTime` must keep the `jka_demoEnded` break;
   removing it reintroduces an infinite read loop when the seek target is the

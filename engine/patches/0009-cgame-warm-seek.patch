@@ -1,8 +1,8 @@
 diff --git a/codemp/cgame/cg_main.c b/codemp/cgame/cg_main.c
-index 5588f581..664cb210 100644
+index 5588f581..5ffa7d55 100644
 --- a/codemp/cgame/cg_main.c
 +++ b/codemp/cgame/cg_main.c
-@@ -2728,6 +2728,72 @@ void CG_DestroyAllGhoul2(void)
+@@ -2728,6 +2728,88 @@ void CG_DestroyAllGhoul2(void)
  	CG_CleanJetpackGhoul2();
  }
  
@@ -62,6 +62,22 @@ index 5588f581..664cb210 100644
 +	}
 +	cg.loading = qfalse;
 +
++	// CG_NewClientInfo keeps unchanged saber info, including trail segment
++	// timestamps and positions from the playback position before the seek.
++	// A stale trail draws as a detached saber "laser" after the jump.
++	for ( i = 0; i < MAX_CLIENTS; i++ ) {
++		clientInfo_t *ci = &cgs.clientinfo[i];
++		int s, b;
++		for ( s = 0; s < MAX_SABERS; s++ ) {
++			for ( b = 0; b < MAX_BLADES; b++ ) {
++				bladeInfo_t *blade = &ci->saber[s].blade[b];
++				Com_Memset( &blade->trail, 0, sizeof( blade->trail ) );
++				blade->storageTime = 0;
++				blade->hitWallDebounceTime = 0;
++			}
++		}
++	}
++
 +	CG_InitLocalEntities();
 +	CG_InitMarkPolys();
 +
@@ -75,7 +91,7 @@ index 5588f581..664cb210 100644
  /*
  =================
  CG_Shutdown
-@@ -3037,6 +3103,7 @@ Q_EXPORT cgameExport_t* QDECL GetModuleAPI( int apiVersion, cgameImport_t *impor
+@@ -3037,6 +3119,7 @@ Q_EXPORT cgameExport_t* QDECL GetModuleAPI( int apiVersion, cgameImport_t *impor
  	cge.AutomapInput			= CG_AutomapInput;
  	cge.MiscEnt					= CG_MiscEnt;
  	cge.CameraShake				= CG_FX_CameraShake;
@@ -83,7 +99,7 @@ index 5588f581..664cb210 100644
  
  	return &cge;
  }
-@@ -3171,6 +3238,10 @@ Q_EXPORT intptr_t vmMain( int command, intptr_t arg0, intptr_t arg1, intptr_t ar
+@@ -3171,6 +3254,10 @@ Q_EXPORT intptr_t vmMain( int command, intptr_t arg0, intptr_t arg1, intptr_t ar
  		CG_FX_CameraShake();
  		return 0;
  
