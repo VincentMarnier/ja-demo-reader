@@ -1224,18 +1224,25 @@ static int JKA_SeekKeyframeWarm( int targetTime )
 	int targetSnapshot;
 
 	if ( !keyframe || targetTime < keyframe->time ) {
+		JKA_BridgeProfileLog( "seek-warm skip no-keyframe target=%d keyframes=%d", targetTime, jka_keyframeCount );
 		return 0;
 	}
 	if ( !clc.demofile || !clc.demoplaying || cls.state != CA_ACTIVE ) {
+		JKA_BridgeProfileLog( "seek-warm skip not-active target=%d demo=%d state=%d file=%d",
+			targetTime, clc.demoplaying ? 1 : 0, (int)cls.state, clc.demofile ? 1 : 0 );
 		return 0;
 	}
 	if ( keyframe->gameIndex < 0 || keyframe->gameIndex >= jka_gameCount ) {
+		JKA_BridgeProfileLog( "seek-warm skip bad-game keyframe=%d gameIndex=%d games=%d",
+			keyframe->snap.serverTime, keyframe->gameIndex, jka_gameCount );
 		return 0;
 	}
 	game = &jka_games[keyframe->gameIndex];
 	currentMap = Info_ValueForKey( JKA_ConfigString( CS_SERVERINFO ), "mapname" );
 	if ( !currentMap || !currentMap[0] || Q_stricmp( currentMap, game->map ) ) {
 		// A different map still needs the full Renderer/cgame load.
+		JKA_BridgeProfileLog( "seek-warm skip map target=%d current=%s keyframe=%s",
+			targetTime, currentMap ? currentMap : "", game->map );
 		return 0;
 	}
 
@@ -1275,9 +1282,11 @@ static int JKA_SeekKeyframeWarm( int targetTime )
 			JKA_MaybeYield( &lastYield );
 		}
 	} catch ( int ) {
+		JKA_BridgeProfileLog( "seek-warm skip replay-error target=%d", targetTime );
 		return -1;
 	}
 	if ( !clc.demofile || !cl.snap.valid ) {
+		JKA_BridgeProfileLog( "seek-warm skip replay-eof target=%d", targetTime );
 		return -1;
 	}
 	JKA_BridgeProfileLog( "seek-warm phase=replayed target=%d snapTime=%d filePos=%d",
@@ -1302,7 +1311,7 @@ static int JKA_SeekKeyframeWarm( int targetTime )
 	jka_demoEnded = qfalse;
 
 	JKA_BridgeProfileLog( "seek-warm phase=reset-start first=%d", firstSnapshot );
-	CGVM_SeekReset( firstSnapshot, keyframe->serverCommandSequence, keyframe->clientNum );
+	CGVM_SeekReset( firstSnapshot, keyframe->serverCommandSequence, clc.serverCommandSequence, keyframe->clientNum );
 	JKA_BridgeProfileLog( "seek-warm phase=reset-done first=%d", firstSnapshot );
 
 	JKA_BridgeProfileLog( "seek target=%d path=warm-inplace keyframe=%d first=%d levelStart=%s serverTime=%d ms=%d",

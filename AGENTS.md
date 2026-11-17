@@ -9,8 +9,8 @@
   `docs/m9-phase1.md` describes the hybrid shader compile and texture profile,
   `docs/m9-phase3.md` describes the worker engine, WORKERFS and OPFS removal,
   `docs/m9-phase4.md` covers background prepare, keep-warm Stop and Release,
-  and `docs/m9-phase5.md` covers warm seek, Restart and the scan-only Check
-  map.
+  `docs/m9-phase5.md` covers warm seek, Restart and the scan-only Check map,
+  and `docs/m9-phase6.md` covers seek state fidelity and added-map demos.
 - The app is a single Vite/React app in `app/`. `App.tsx` owns the wizard and
   player state, `engine/WorkerEngineHost.ts` and `engine/EngineHost.ts` are the
   two implementations of the shared `engine/host.ts` interface, and `src/fs/`
@@ -78,9 +78,10 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   diagnostics (timings, image counters, shader usage), `0007` adds the hybrid
   eager/lazy shader compile, `0008` selects the OffscreenCanvas window layer
   and skips DOM input in the worker, and `0009` adds the cgame seek reset,
-  scan-only gamestate path and EOF guard. Prefer a new patch over editing a
-  large existing one. Verify every patch with a clean worktree: apply all
-  patches from the pin and compare the affected files.
+  scan-only gamestate path, target server-command application and EOF guard.
+  Prefer a new patch over editing a large existing one. Verify every patch
+  with a clean worktree: apply all patches from the pin and compare the
+  affected files.
 - `engine/platform/win_emscripten.cpp` is copied into `codemp/client/` by the
   build script, like `jka_bridge.cpp`; editing it needs no patch change. It is
   selected only when `Module.canvas` is an OffscreenCanvas, so the SDL
@@ -160,6 +161,12 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   Keep that; a keyframe with only the initial gamestate restores wrong HUD
   values. The replay loops in `JKA_SeekDemo` also stop when the demo file
   position stops advancing; keep that EOF guard.
+- `CG_SeekReset` receives the target command sequence (client's latest after
+  replaying to the target) and calls `CG_ExecuteNewServerCommands` after
+  rebuilding clientinfo. This applies the keyframe→target `cs`/`scores`/server
+  commands immediately, so scores, level start, clientinfo and saber data match
+  the target on the first frame; `cgs.serverCommandSequence` then prevents the
+  snapshot transitions from executing them again.
 - Worker host (`app/src/engine/engine.worker.ts`): every long/async wasm call
   goes through the worker's own `runExclusive` queue, and `play` stays
   single-flight on both sides. Short synchronous calls (status/scoreboard

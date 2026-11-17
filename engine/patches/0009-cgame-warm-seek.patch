@@ -1,8 +1,8 @@
 diff --git a/codemp/cgame/cg_main.c b/codemp/cgame/cg_main.c
-index 5588f581..8dfa3817 100644
+index 5588f581..c9213c39 100644
 --- a/codemp/cgame/cg_main.c
 +++ b/codemp/cgame/cg_main.c
-@@ -2728,6 +2728,112 @@ void CG_DestroyAllGhoul2(void)
+@@ -2728,6 +2728,120 @@ void CG_DestroyAllGhoul2(void)
  	CG_CleanJetpackGhoul2();
  }
  
@@ -20,7 +20,7 @@ index 5588f581..8dfa3817 100644
 +is normally the oldest snapshot still in the client ring buffer.
 +=================
 +*/
-+void CG_SeekReset( int firstSnapshotNum, int serverCommandSequence, int clientNum )
++void CG_SeekReset( int firstSnapshotNum, int serverCommandSequence, int targetCommandSequence, int clientNum )
 +{
 +	int i;
 +
@@ -84,6 +84,14 @@ index 5588f581..8dfa3817 100644
 +	for ( i = 0; i < MAX_CLIENTS; i++ ) {
 +		CG_NewClientInfo( i, qfalse );
 +	}
++
++	// Apply every retained server command from the keyframe to the target
++	// now, not one snapshot at a time.  This puts scores, level-start and
++	// clientinfo/saber data at the target on the first drawn frame; otherwise
++	// a seek to the first snapshot can show the keyframe's stale HUD values
++	// for a few seconds.  cgs.serverCommandSequence advances to the target, so
++	// the snapshot transitions do not execute the same commands again.
++	CG_ExecuteNewServerCommands( targetCommandSequence );
 +	cg.loading = qfalse;
 +
 +	// CG_NewClientInfo keeps unchanged saber info, including trail segment
@@ -115,7 +123,7 @@ index 5588f581..8dfa3817 100644
  /*
  =================
  CG_Shutdown
-@@ -3037,6 +3143,7 @@ Q_EXPORT cgameExport_t* QDECL GetModuleAPI( int apiVersion, cgameImport_t *impor
+@@ -3037,6 +3151,7 @@ Q_EXPORT cgameExport_t* QDECL GetModuleAPI( int apiVersion, cgameImport_t *impor
  	cge.AutomapInput			= CG_AutomapInput;
  	cge.MiscEnt					= CG_MiscEnt;
  	cge.CameraShake				= CG_FX_CameraShake;
@@ -123,19 +131,19 @@ index 5588f581..8dfa3817 100644
  
  	return &cge;
  }
-@@ -3171,6 +3278,10 @@ Q_EXPORT intptr_t vmMain( int command, intptr_t arg0, intptr_t arg1, intptr_t ar
+@@ -3171,6 +3286,10 @@ Q_EXPORT intptr_t vmMain( int command, intptr_t arg0, intptr_t arg1, intptr_t ar
  		CG_FX_CameraShake();
  		return 0;
  
 +	case CG_SEEK_RESET:
-+		CG_SeekReset( arg0, arg1, arg2 );
++		CG_SeekReset( arg0, arg1, arg2, arg3 );
 +		return 0;
 +
  	default:
  		trap->Error( ERR_DROP, "vmMain: unknown command %i", command );
  		break;
 diff --git a/codemp/cgame/cg_public.h b/codemp/cgame/cg_public.h
-index 801aa1be..b615ed2b 100644
+index 801aa1be..709c82a2 100644
 --- a/codemp/cgame/cg_public.h
 +++ b/codemp/cgame/cg_public.h
 @@ -471,6 +471,7 @@ typedef enum cgameExportLegacy_e {
@@ -150,7 +158,7 @@ index 801aa1be..b615ed2b 100644
  	void			(*AutomapInput)				( void );
  	void			(*MiscEnt)					( void );
  	void			(*CameraShake)				( void );
-+	void			(*SeekReset)				( int firstSnapshotNum, int serverCommandSequence, int clientNum );
++	void			(*SeekReset)				( int firstSnapshotNum, int serverCommandSequence, int targetCommandSequence, int clientNum );
  } cgameExport_t;
  
  //linking of cgame library
@@ -178,38 +186,38 @@ index 42919ebc..94031ec4 100644
  		// the contents of cl.snap
  		CL_ReadDemoMessage();
 diff --git a/codemp/client/cl_cgameapi.cpp b/codemp/client/cl_cgameapi.cpp
-index 571f8a95..f4a9a23a 100644
+index 571f8a95..5a6bcf8a 100644
 --- a/codemp/client/cl_cgameapi.cpp
 +++ b/codemp/client/cl_cgameapi.cpp
 @@ -291,6 +291,19 @@ void CGVM_MiscEnt( void ) {
  	cge->MiscEnt();
  }
  
-+void CGVM_SeekReset( int firstSnapshotNum, int serverCommandSequence, int clientNum ) {
++void CGVM_SeekReset( int firstSnapshotNum, int serverCommandSequence, int targetCommandSequence, int clientNum ) {
 +	if ( !cgvm || !cls.cgameStarted ) {
 +		return;
 +	}
 +	if ( cgvm->isLegacy ) {
-+		VM_Call( cgvm, CG_SEEK_RESET, firstSnapshotNum, serverCommandSequence, clientNum );
++		VM_Call( cgvm, CG_SEEK_RESET, firstSnapshotNum, serverCommandSequence, targetCommandSequence, clientNum );
 +		return;
 +	}
 +	VMSwap v( cgvm );
 +
-+	cge->SeekReset( firstSnapshotNum, serverCommandSequence, clientNum );
++	cge->SeekReset( firstSnapshotNum, serverCommandSequence, targetCommandSequence, clientNum );
 +}
 +
  void CGVM_CameraShake( void ) {
  	if ( cgvm->isLegacy ) {
  		VM_Call( cgvm, CG_FX_CAMERASHAKE );
 diff --git a/codemp/client/cl_cgameapi.h b/codemp/client/cl_cgameapi.h
-index b4f9933e..8a3bb8ca 100644
+index b4f9933e..9f24d03e 100644
 --- a/codemp/client/cl_cgameapi.h
 +++ b/codemp/client/cl_cgameapi.h
 @@ -47,6 +47,7 @@ void			CGVM_MapChange				( void );
  void			CGVM_AutomapInput			( void );
  void			CGVM_MiscEnt				( void );
  void			CGVM_CameraShake			( void );
-+void			CGVM_SeekReset				( int firstSnapshotNum, int serverCommandSequence, int clientNum );
++void			CGVM_SeekReset				( int firstSnapshotNum, int serverCommandSequence, int targetCommandSequence, int clientNum );
  
  void CL_BindCGame( void );
  void CL_UnbindCGame( void );

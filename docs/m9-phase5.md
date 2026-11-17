@@ -7,6 +7,10 @@ or cgame, so the scan behind it dropped from ~8 s to **0.25–0.5 s** in the
 worker (1.4–1.7 s in the fallback). The demo-scan failure on added
 map PK3s is also fixed.
 
+**Update:** Phase 6 applies the keyframe→target server commands during the
+reset, so scores/level-start/clientinfo are current on the first frame; see
+`docs/m9-phase6.md`.
+
 **Scope:** Remove the repeated map/cgame load from backward seek and Restart,
 make Check map cheap, and keep the full-reload path for map/game changes and
 failure cases.
@@ -55,7 +59,8 @@ load; that is the honest fallback, not a hidden timer.
    instances, and the default `g2WeaponInstances` resident. It rebuilds
    `cgs.gameState`, serverinfo, config values, clientinfo and permanent
    entities, clears each client's cached saber trail (segment base/tip,
-   timestamps and mark history), and starts the cgame at the oldest snapshot
+   timestamps and mark history), applies the retained server commands through
+   the target sequence (Phase 6), and starts the cgame at the oldest snapshot
    still in the client ring.
    The saber blade is placed with a bolt matrix on the **hilt model** copied
    into the player ghoul2. Freeing the clientinfo body/hilt instances or
