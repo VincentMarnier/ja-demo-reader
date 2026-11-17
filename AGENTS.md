@@ -74,7 +74,7 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
 - `engine/platform/jka_bridge.cpp` is copied into `codemp/client/` by the build
   script; editing it needs no patch change.
 - Changes to upstream/cgame/client source belong in a patch. The current patch
-  set is `0001`–`0011`; `0004` contains the linked cgame/rend2 changes,
+  set is `0001`–`0012`; `0004` contains the linked cgame/rend2 changes,
   `0005` keeps the last frame when a demo ends, `0006` adds M9 `jka_profile`
   diagnostics (timings, image counters, shader usage), `0007` adds the hybrid
   eager/lazy shader compile, `0008` selects the OffscreenCanvas window layer
@@ -82,8 +82,11 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   scan-only gamestate path, target server-command application and EOF guard,
   `0010` swaps the SDL audio device for `client/em_audio.cpp` on Emscripten
   and fixes the `C_MP3Stream_Decode` signature that wasm-ld rejects once demo
-  music starts, and `0011` adds the `cg_killMessage` cvar that turns off the
-  cgame's obituary console/centerprint text (the app draws its own kill feed).
+  music starts, `0011` adds the `cg_killMessage` cvar that turns off the
+  cgame's obituary console/centerprint text (the app draws its own kill feed),
+  and `0012` fills a followed remote player's `saberStyle` from the clientinfo
+  saber type plus `entityState.fireflag` (the wire stance field is only two
+  bits, so dual/staff need the clientinfo correction).
   Prefer a new patch over editing a large existing one.
   Verify every patch with a clean worktree: apply all patches from the pin and
   compare the affected files.
@@ -298,7 +301,7 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
 
 ## App/caching gotchas
 
-- Summary cache keys are versioned (`v4:name:size:lastModified`). Bump the
+- Summary cache keys are versioned (`v5:name:size:lastModified`). Bump the
   version when the summary shape or game-boundary logic changes; otherwise old
   one-game summaries are reused. The IndexedDB cache self-heals a missing store.
 - A cached summary does not contain the in-memory seek keyframes. The app's

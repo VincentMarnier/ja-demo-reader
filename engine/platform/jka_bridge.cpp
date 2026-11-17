@@ -319,6 +319,18 @@ typedef struct {
 #define JKA_VITALS_DUEL		4
 #define JKA_VITALS_SELF		5
 
+#define JKA_MAX_STANCES	8000
+
+// Saber stance timeline.  Base JKA mirrors playerState.fd.saberAnimLevel into
+// entityState.fireflag for every player, so the current stance is available for
+// remote players too (the wire field is 2 bits, so it covers none/fast/medium/
+// strong; dual and staff arrive as their truncated values).
+typedef struct {
+	int		time;
+	short	num;
+	short	stance;
+} jkaStance_t;
+
 #define JKA_MAX_KEYFRAMES 96
 
 typedef struct {
@@ -351,6 +363,9 @@ typedef struct {
 	jkaVitals_t	vitals[JKA_MAX_VITALS];
 	int			vitalsCount;
 	qboolean	vitalsOverflow;
+	jkaStance_t	stances[JKA_MAX_STANCES];
+	int			stanceCount;
+	qboolean	stanceOverflow;
 } jkaGame_t;
 
 static jkaGame_t	jka_games[JKA_MAX_GAMES];
@@ -380,6 +395,7 @@ static int			jka_eventEntityValue[MAX_GENTITIES];
 static int			jka_entityEventValue[MAX_CLIENTS];
 static int			jka_slotHealth[MAX_CLIENTS];
 static int			jka_slotArmor[MAX_CLIENTS];
+static int			jka_slotStance[MAX_CLIENTS];
 static qboolean		jka_slotDead[MAX_CLIENTS];
 static qboolean		jka_predictablePain[MAX_CLIENTS];
 static char			jka_summary[JKA_SUMMARY_SIZE];
@@ -467,6 +483,7 @@ static void JKA_ResetSummary( void )
 		jka_slotHash[i] = 0;
 		jka_slotHealth[i] = 100;
 		jka_slotArmor[i] = 25;
+		jka_slotStance[i] = -1;
 		jka_slotDead[i] = qfalse;
 		jka_entityEventValue[i] = 0;
 	}
@@ -487,6 +504,7 @@ static void JKA_ResetSlotVitals( int slot )
 	}
 	jka_slotHealth[slot] = 100;
 	jka_slotArmor[slot] = 25;
+	jka_slotStance[slot] = -1;
 	jka_slotDead[slot] = qfalse;
 	jka_entityEventValue[slot] = 0;
 }
@@ -598,6 +616,44 @@ static void JKA_EmitVitals( jkaGame_t *game, int now, int num, int health, int a
 	sample->health = (short)health;
 	sample->armor = (short)armor;
 	sample->source = (unsigned char)source;
+}
+
+static void JKA_EmitStance( jkaGame_t *game, int now, int num, int stance )
+{
+	jkaStance_t *sample;
+
+	if ( !game ) {
+		return;
+	}
+	if ( game->stanceCount >= JKA_MAX_STANCES ) {
+		game->stanceOverflow = qtrue;
+		return;
+	}
+	sample = &game->stances[game->stanceCount++];
+	sample->time = now;
+	sample->num = (short)num;
+	sample->stance = (short)stance;
+}
+
+static void JKA_TrackPlayerStance( int now, entityState_t *state )
+{
+	jkaGame_t *game = JKA_CurrentGame();
+	int num = state->number;
+	int stance;
+
+	if ( !game || state->eType != ET_PLAYER || num < 0 || num >= MAX_CLIENTS ) {
+		return;
+	}
+	if ( JKA_IsSpectator( num ) ) {
+		return;
+	}
+	stance = state->fireflag;
+	if ( jka_slotStance[num] == stance ) {
+		return;
+	}
+	jka_slotStance[num] = stance;
+	JKA_EnsureRecord( game, num, now );
+	JKA_EmitStance( game, now, num, stance );
 }
 
 // Applies one observed/derived vitals value for a client.  Positive health
@@ -973,6 +1029,7 @@ static void JKA_TrackPlayerVitals( int now, entityState_t *state )
 	if ( JKA_IsSpectator( num ) ) {
 		return;
 	}
+	JKA_TrackPlayerStance( now, state );
 	dead = ( state->eFlags & EF_DEAD ) ? qtrue : qfalse;
 	if ( dead ) {
 		if ( !jka_slotDead[num] ) {
@@ -1401,8 +1458,15 @@ static void JKA_BuildSummary( void )
 			JKA_Append( &out, &left, "%s{\"time\":%d,\"num\":%d,\"health\":%d,\"armor\":%d,\"source\":%d}",
 				i ? "," : "", vitals->time, vitals->num, vitals->health, vitals->armor, vitals->source );
 		}
-		JKA_Append( &out, &left, "],\"vitalsOverflow\":%s}",
-			game->vitalsOverflow ? "true" : "false" );
+		JKA_Append( &out, &left, "],\"vitalsOverflow\":%s,", game->vitalsOverflow ? "true" : "false" );
+		JKA_Append( &out, &left, "\"stances\":[" );
+		for ( i = 0; i < game->stanceCount; i++ ) {
+			jkaStance_t *stance = &game->stances[i];
+			JKA_Append( &out, &left, "%s{\"time\":%d,\"num\":%d,\"stance\":%d}",
+				i ? "," : "", stance->time, stance->num, stance->stance );
+		}
+		JKA_Append( &out, &left, "],\"stancesOverflow\":%s}",
+			game->stanceOverflow ? "true" : "false" );
 		firstGame = qfalse;
 	}
 

@@ -51,7 +51,7 @@ export function VitalsHud({ view }: VitalsHudProps) {
       </div>
 
       <div className="vitals-right">
-        <span className="vitals-label">{view?.saber ? 'Saber' : 'Equipment'}</span>
+        <span className="vitals-label">{view?.saber ? 'Stance' : 'Equipment'}</span>
         <strong>{weaponLabel}</strong>
       </div>
     </div>

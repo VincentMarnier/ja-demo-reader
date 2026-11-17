@@ -1,0 +1,23 @@
+diff --git a/codemp/cgame/cg_view.c b/codemp/cgame/cg_view.c
+--- a/codemp/cgame/cg_view.c
++++ b/codemp/cgame/cg_view.c
+@@ -2925,6 +2925,19 @@
+ 			// style. Duel health arrives separately in the duel configstring.
+ 			centity_t *cent = &cg_entities[viewClient];
+ 			weapon = cent->currentState.weapon;
++			// entityState.fireflag mirrors playerState.fd.saberAnimLevel, but
++			// the wire field is only two bits, so dual and staff arrive as
++			// their truncated values. Recover them from the clientinfo saber
++			// types while both blades/sabers are on.
++			if ( weapon == WP_SABER ) {
++				if ( vci && vci->saber[1].model[0] && cent->currentState.saberHolstered == 0 ) {
++					saberStyle = SS_DUAL;
++				} else if ( vci && vci->saber[0].type == SABER_STAFF && cent->currentState.saberHolstered == 0 ) {
++					saberStyle = SS_STAFF;
++				} else {
++					saberStyle = cent->currentState.fireflag;
++				}
++			}
+ 			// A zero here usually means the duel health configstring has not
+ 			// arrived, not that the player is at zero health. Keep it unknown
+ 			// instead of drawing a false empty bar.

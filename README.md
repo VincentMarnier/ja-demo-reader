@@ -24,6 +24,9 @@ Academy and select your own `assets0..3.pk3` and demo files. Nothing is uploaded
 - Per-game health/armor on the scoreboard: exact values where the demo transmits
   them (team overlay, duels, the recorded client), damage-event health samples for
   everyone else, and 100 HP / 25 armor spawn defaults.
+- The TypeScript HUD shows the followed player's HP/AP from the parsed
+  timeline and their saber stance (dual/staff corrected from clientinfo), so
+  following anyone keeps real values instead of `—`.
 - Follow camera for any player, a free-fly camera with mouse look, and the
   original recorded demo camera.
 - Custom Health/Armor/saber HUD, score strip, timer and scoreboard.

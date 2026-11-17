@@ -107,6 +107,18 @@ export interface DemoVitalsSample {
   source: number;
 }
 
+/**
+ * One saber-stance reading scraped from a player entity. The scan takes the
+ * stance from `entityState.fireflag`, which the server mirrors from
+ * `playerState.fd.saberAnimLevel`.
+ */
+export interface DemoStanceSample {
+  time: number;
+  num: number;
+  /** 0 none, 1 fast, 2 medium, 3 strong. */
+  stance: number;
+}
+
 /** A kill on the seek bar: when it happened and the killer's team. */
 export interface KillMarker {
   /** Milliseconds since the first snapshot of the demo. */
@@ -137,10 +149,13 @@ export interface DemoGameSummary {
   levelTime: number;
   eventOverflow?: boolean;
   vitalsOverflow?: boolean;
+  stancesOverflow?: boolean;
   players: DemoPlayerSummary[];
   events: DemoEvent[];
   /** Health/armor timeline scraped during the scan. Absent on older caches. */
   vitals?: DemoVitalsSample[];
+  /** Saber-stance timeline scraped during the scan. Absent on older caches. */
+  stances?: DemoStanceSample[];
 }
 
 export interface DemoSummary {

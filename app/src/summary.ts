@@ -52,6 +52,16 @@ export function vitalsAt(game: DemoGameSummary, serverTime: number): Map<number,
   return vitals;
 }
 
+/** Replays the scanned saber-stance samples up to `serverTime`. */
+export function stanceAt(game: DemoGameSummary, serverTime: number): Map<number, number> {
+  const stances = new Map<number, number>();
+  for (const sample of game.stances ?? []) {
+    if (sample.time > serverTime) break;
+    stances.set(sample.num, sample.stance);
+  }
+  return stances;
+}
+
 export function statsAt(game: DemoGameSummary, serverTime: number): Map<number, PlayerStats> {
   const stats = new Map<number, PlayerStats>();
   for (const player of game.players) {
@@ -84,7 +94,8 @@ export function mergeScoreboard(
   if (!game) return data;
 
   const stats = statsAt(game, serverTime);
-  const vitals = vitalsAt(game, serverTime);
+  const vitals = game.vitals ? vitalsAt(game, serverTime) : new Map<number, PlayerVitals>();
+  const stances = game.stances ? stanceAt(game, serverTime) : new Map<number, number>();
   const players: ScoreboardPlayer[] = [];
   const used = new Set<number>();
 
@@ -126,5 +137,22 @@ export function mergeScoreboard(
     used.add(record.num);
   }
 
-  return { ...data, players };
+  let view = data.view;
+  if (view) {
+    const life = vitals.get(view.num);
+    // Remote players have no health/armor/style in the snapshot; the scanned
+    // timelines supply them. The recorded POV keeps its exact playerState style
+    // (0-7), which is richer than the 2-bit fireflag the scan captures.
+    const style = view.saberStyle < 0 ? stances.get(view.num) : undefined;
+    if (life || style !== undefined) {
+      view = {
+        ...view,
+        health: life ? life.health : view.health,
+        armor: life ? life.armor : view.armor,
+        saberStyle: style !== undefined ? style : view.saberStyle
+      };
+    }
+  }
+
+  return { ...data, players, view };
 }
