@@ -272,7 +272,7 @@ EMSCRIPTEN_KEEPALIVE const char *JKA_MemoryJson( void )
 #define JKA_MAX_RECORDS     96
 #define JKA_MAX_EVENTS      16000
 #define JKA_MAX_VITALS      20000
-#define JKA_SUMMARY_SIZE    (12 * 1024 * 1024)
+#define JKA_SUMMARY_SIZE    (16 * 1024 * 1024)
 
 typedef struct {
 	int			num;
@@ -343,6 +343,31 @@ typedef struct {
 	unsigned char	source;
 } jkaDamage_t;
 
+#define JKA_MAX_SWINGS	16000
+#define JKA_MAX_SABERS	64
+#define JKA_MAX_SABER_NAME	32
+
+// One saber swing.  The demo has no input keys, but the server mirrors the
+// resolved playerState.saberMove into entityState, and that move is exactly
+// the swing the player made (forward+attack became LS_A_T2B, and so on).
+// hits counts EV_SABER_HIT events; damage is the health loss the scan could
+// attribute to those hits (0 when the demo never exposes the target's health).
+typedef struct {
+	int		time;
+	short	num;
+	short	move;
+	short	damage;
+	unsigned char	stance;
+	unsigned char	saber;	// index into jkaGame_t.sabers
+	unsigned char	hits;
+} jkaSwing_t;
+
+// Saber names from CS_PLAYERS ("st"), interned per game so every swing can
+// carry a stable id.  Index 0 is always "unknown".
+typedef struct {
+	char	name[JKA_MAX_SABER_NAME];
+} jkaSaber_t;
+
 #define JKA_DAMAGE_UNKNOWN	0
 #define JKA_DAMAGE_SABER	1
 #define JKA_DAMAGE_MISSILE	2
@@ -355,6 +380,7 @@ typedef struct {
 typedef struct {
 	int		time;
 	short	attacker;
+	short	swing;	// index+1 into the game's swings, 0 when not in a swing
 	unsigned char	source;
 } jkaPendingHit_t;
 
@@ -396,6 +422,12 @@ typedef struct {
 	jkaDamage_t	damages[JKA_MAX_DAMAGES];
 	int			damageCount;
 	qboolean	damageOverflow;
+	jkaSwing_t	swings[JKA_MAX_SWINGS];
+	int			swingCount;
+	qboolean	swingOverflow;
+	jkaSaber_t	sabers[JKA_MAX_SABERS];
+	int			saberCount;
+	int			pov;	// recorded client (clc.clientNum), -1 when unknown
 } jkaGame_t;
 
 static jkaGame_t	jka_games[JKA_MAX_GAMES];
@@ -426,6 +458,10 @@ static int			jka_entityEventValue[MAX_CLIENTS];
 static int			jka_slotHealth[MAX_CLIENTS];
 static int			jka_slotArmor[MAX_CLIENTS];
 static int			jka_slotStance[MAX_CLIENTS];
+static int			jka_slotMove[MAX_CLIENTS];
+static int			jka_slotTorsoFlip[MAX_CLIENTS];
+static int			jka_slotSwing[MAX_CLIENTS];	// index+1 into game->swings
+static int			jka_slotSaber[MAX_CLIENTS];	// index into game->sabers
 static qboolean		jka_slotDead[MAX_CLIENTS];
 static qboolean		jka_slotKnown[MAX_CLIENTS];
 static qboolean		jka_predictablePain[MAX_CLIENTS];
@@ -523,6 +559,10 @@ static void JKA_ResetSummary( void )
 		jka_slotHealth[i] = 100;
 		jka_slotArmor[i] = 25;
 		jka_slotStance[i] = -1;
+		jka_slotMove[i] = 0;
+		jka_slotTorsoFlip[i] = 0;
+		jka_slotSwing[i] = 0;
+		jka_slotSaber[i] = 0;
 		jka_slotDead[i] = qfalse;
 		jka_slotKnown[i] = qfalse;
 		jka_lastDamageIndex[i] = -1;
@@ -546,6 +586,9 @@ static void JKA_ResetSlotVitals( int slot )
 	jka_slotHealth[slot] = 100;
 	jka_slotArmor[slot] = 25;
 	jka_slotStance[slot] = -1;
+	jka_slotMove[slot] = 0;
+	jka_slotTorsoFlip[slot] = 0;
+	jka_slotSwing[slot] = 0;
 	jka_slotDead[slot] = qfalse;
 	jka_slotKnown[slot] = qfalse;
 	jka_pendingHitCount[slot] = 0;
@@ -612,6 +655,7 @@ static void JKA_CloseSlot( jkaGame_t *game, int slot, int now )
 	JKA_ResetSlotVitals( slot );
 	if ( !record ) {
 		jka_slotRecord[slot] = -1;
+		jka_slotSaber[slot] = 0;
 		return;
 	}
 	record->active = qfalse;
@@ -619,6 +663,7 @@ static void JKA_CloseSlot( jkaGame_t *game, int slot, int now )
 	record->leftAt = now;
 	record->lastSeen = now;
 	jka_slotRecord[slot] = -1;
+	jka_slotSaber[slot] = 0;
 }
 
 static void JKA_EnsureRecord( jkaGame_t *game, int slot, int now )
@@ -679,6 +724,217 @@ static void JKA_EmitStance( jkaGame_t *game, int now, int num, int stance )
 	sample->stance = (short)stance;
 }
 
+// Saber names ("st" in CS_PLAYERS) are interned per game.  Index 0 is
+// reserved for players with no saber or a clientinfo that has not arrived yet.
+static int JKA_SaberId( jkaGame_t *game, const char *name )
+{
+	int i;
+
+	if ( !game ) {
+		return 0;
+	}
+	if ( !name || !name[0] ) {
+		name = "none";
+	}
+	for ( i = 0; i < game->saberCount; i++ ) {
+		if ( !Q_stricmp( game->sabers[i].name, name ) ) {
+			return i;
+		}
+	}
+	if ( game->saberCount >= JKA_MAX_SABERS ) {
+		return 0;
+	}
+	i = game->saberCount++;
+	Q_strncpyz( game->sabers[i].name, name, sizeof( game->sabers[i].name ) );
+	return i;
+}
+
+// entityState.fireflag is only two bits, so the staff (7) and dual (6) styles
+// arrive truncated.  The clientinfo saber name identifies them exactly, which
+// is the same correction the cgame applies to a followed player (patch 0012).
+static int JKA_SaberStance( jkaGame_t *game, int saber, int stance )
+{
+	const char *name;
+
+	name = ( game && saber >= 0 && saber < game->saberCount ) ? game->sabers[saber].name : "";
+	if ( !Q_stricmpn( name, "staff_", 6 ) ) {
+		return SS_STAFF;
+	}
+	if ( !Q_stricmpn( name, "dual_", 5 ) ) {
+		return SS_DUAL;
+	}
+	return stance;
+}
+
+// Mirror of BG_SaberInAttack() (bg_panimate.c) for the client-side scan: the
+// moves that do full attack damage.  Bounces, parries, deflects and
+// knockaways are reactions, not swings, so they are deliberately absent.
+static qboolean JKA_SaberMoveIsAttack( int move )
+{
+	if ( move >= LS_A_TL2BR && move <= LS_A_T2B ) {
+		return qtrue;
+	}
+	switch ( move ) {
+	case LS_A_BACK:
+	case LS_A_BACK_CR:
+	case LS_A_BACKSTAB:
+	case LS_ROLL_STAB:
+	case LS_A_LUNGE:
+	case LS_A_JUMP_T__B_:
+	case LS_A_FLIP_STAB:
+	case LS_A_FLIP_SLASH:
+	case LS_JUMPATTACK_DUAL:
+	case LS_JUMPATTACK_ARIAL_LEFT:
+	case LS_JUMPATTACK_ARIAL_RIGHT:
+	case LS_JUMPATTACK_CART_LEFT:
+	case LS_JUMPATTACK_CART_RIGHT:
+	case LS_JUMPATTACK_STAFF_LEFT:
+	case LS_JUMPATTACK_STAFF_RIGHT:
+	case LS_BUTTERFLY_LEFT:
+	case LS_BUTTERFLY_RIGHT:
+	case LS_A_BACKFLIP_ATK:
+	case LS_SPINATTACK_DUAL:
+	case LS_SPINATTACK:
+	case LS_LEAP_ATTACK:
+	case LS_SWOOP_ATTACK_RIGHT:
+	case LS_SWOOP_ATTACK_LEFT:
+	case LS_TAUNTAUN_ATTACK_RIGHT:
+	case LS_TAUNTAUN_ATTACK_LEFT:
+	case LS_KICK_F:
+	case LS_KICK_B:
+	case LS_KICK_R:
+	case LS_KICK_L:
+	case LS_KICK_S:
+	case LS_KICK_BF:
+	case LS_KICK_RL:
+	case LS_KICK_F_AIR:
+	case LS_KICK_B_AIR:
+	case LS_KICK_R_AIR:
+	case LS_KICK_L_AIR:
+	case LS_STABDOWN:
+	case LS_STABDOWN_STAFF:
+	case LS_STABDOWN_DUAL:
+	case LS_DUAL_SPIN_PROTECT:
+	case LS_STAFF_SOULCAL:
+	case LS_A1_SPECIAL:
+	case LS_A2_SPECIAL:
+	case LS_A3_SPECIAL:
+	case LS_UPSIDE_DOWN_ATTACK:
+	case LS_PULL_ATTACK_STAB:
+	case LS_PULL_ATTACK_SWING:
+	case LS_SPINATTACK_ALORA:
+	case LS_DUAL_FB:
+	case LS_DUAL_LR:
+	case LS_HILT_BASH:
+		return qtrue;
+	}
+	return qfalse;
+}
+
+// One swing starts when the player enters an attack move, chains into a
+// different attack move, or restarts the same attack move (torsoFlip toggles
+// exactly when the same animation restarts).  Leaving the attack moves ends it.
+static void JKA_EmitSwing( jkaGame_t *game, int now, int num, int move, int stance, int saber )
+{
+	jkaSwing_t *swing;
+
+	if ( !game || num < 0 || num >= MAX_CLIENTS ) {
+		return;
+	}
+	if ( game->swingCount >= JKA_MAX_SWINGS ) {
+		game->swingOverflow = qtrue;
+		jka_slotSwing[num] = 0;
+		return;
+	}
+	swing = &game->swings[game->swingCount];
+	Com_Memset( swing, 0, sizeof( *swing ) );
+	swing->time = now;
+	swing->num = (short)num;
+	swing->move = (short)move;
+	swing->stance = (unsigned char)stance;
+	swing->saber = (unsigned char)saber;
+	jka_slotSwing[num] = ++game->swingCount;
+}
+
+static void JKA_TrackSwingState( jkaGame_t *game, int now, int num, int move, int stance,
+	int saber, int torsoFlip, qboolean inFlight, qboolean dead )
+{
+	qboolean start = qfalse;
+
+	if ( !game || num < 0 || num >= MAX_CLIENTS ) {
+		return;
+	}
+	if ( JKA_IsSpectator( num ) || dead ) {
+		jka_slotSwing[num] = 0;
+		return;
+	}
+	if ( !JKA_SaberMoveIsAttack( move ) || inFlight ) {
+		jka_slotSwing[num] = 0;
+	} else if ( move != jka_slotMove[num] || torsoFlip != jka_slotTorsoFlip[num] ) {
+		start = qtrue;
+	} else if ( !jka_slotSwing[num] ) {
+		start = qtrue;
+	}
+	jka_slotMove[num] = move;
+	jka_slotTorsoFlip[num] = torsoFlip;
+	if ( start ) {
+		JKA_EmitSwing( game, now, num, move, stance, saber );
+	}
+}
+
+static void JKA_TrackPlayerSwing( int now, entityState_t *state )
+{
+	jkaGame_t *game = JKA_CurrentGame();
+	int num = state->number;
+	int stance;
+
+	if ( !game || state->eType != ET_PLAYER || num < 0 || num >= MAX_CLIENTS ) {
+		return;
+	}
+	// The recorded client's own entity is not in the demo snapshots; its
+	// playerState path (JKA_TrackSelfSwing) owns slot clientNum.
+	if ( num == cl.snap.ps.clientNum ) {
+		return;
+	}
+	stance = jka_slotStance[num];
+	JKA_TrackSwingState( game, now, num, state->saberMove, stance, jka_slotSaber[num],
+		state->torsoFlip, state->saberInFlight, ( state->eFlags & EF_DEAD ) ? qtrue : qfalse );
+}
+
+// The recorded client does receive its own playerState, which carries the
+// exact saber style and the resolved saberMove.  Track the POV's swings from
+// there so the demo's most interesting player is not left without data.
+static void JKA_TrackSelfSwing( int now )
+{
+	jkaGame_t *game = JKA_CurrentGame();
+	int num = cl.snap.ps.clientNum;
+	int move;
+
+	if ( !game || num < 0 || num >= MAX_CLIENTS ) {
+		return;
+	}
+	move = cl.snap.ps.weapon == WP_SABER ? cl.snap.ps.saberMove : LS_NONE;
+	JKA_TrackSwingState( game, now, num, move, cl.snap.ps.fd.saberAnimLevel, jka_slotSaber[num],
+		cl.snap.ps.torsoFlip, cl.snap.ps.saberInFlight,
+		cl.snap.ps.stats[STAT_HEALTH] > 0 ? qfalse : qtrue );
+}
+
+static void JKA_TrackStanceState( jkaGame_t *game, int now, int num, int stance )
+{
+	if ( !game || num < 0 || num >= MAX_CLIENTS ) {
+		return;
+	}
+	if ( JKA_IsSpectator( num ) ) {
+		return;
+	}
+	if ( jka_slotStance[num] == stance ) {
+		return;
+	}
+	jka_slotStance[num] = stance;
+	JKA_EnsureRecord( game, num, now );
+	JKA_EmitStance( game, now, num, stance );
+}
+
 static void JKA_TrackPlayerStance( int now, entityState_t *state )
 {
 	jkaGame_t *game = JKA_CurrentGame();
@@ -688,16 +944,23 @@ static void JKA_TrackPlayerStance( int now, entityState_t *state )
 	if ( !game || state->eType != ET_PLAYER || num < 0 || num >= MAX_CLIENTS ) {
 		return;
 	}
-	if ( JKA_IsSpectator( num ) ) {
+	if ( num == cl.snap.ps.clientNum ) {
 		return;
 	}
+	// A dual/staff player with one blade/saber off falls back to a single
+	// style (SS_FAST, or the hilt's singleBladeStyle), so only apply the
+	// clientinfo correction while both are on.  This mirrors cgame patch 0012.
 	stance = state->fireflag;
-	if ( jka_slotStance[num] == stance ) {
-		return;
+	if ( state->saberHolstered == 0 ) {
+		stance = JKA_SaberStance( game, jka_slotSaber[num], stance );
 	}
-	jka_slotStance[num] = stance;
-	JKA_EnsureRecord( game, num, now );
-	JKA_EmitStance( game, now, num, stance );
+	JKA_TrackStanceState( game, now, num, stance );
+}
+
+static void JKA_TrackSelfStance( int now )
+{
+	JKA_TrackStanceState( JKA_CurrentGame(), now, cl.snap.ps.clientNum,
+		cl.snap.ps.weapon == WP_SABER ? cl.snap.ps.fd.saberAnimLevel : 0 );
 }
 
 static void JKA_ClearPendingHits( int target )
@@ -707,7 +970,33 @@ static void JKA_ClearPendingHits( int target )
 	}
 }
 
-static void JKA_EmitDamage( jkaGame_t *game, int now, int target, int attacker, int damage, int source )
+static int JKA_NewestPendingSwing( int target, int attacker )
+{
+	int i;
+
+	if ( target < 0 || target >= MAX_CLIENTS ) {
+		return 0;
+	}
+	for ( i = jka_pendingHitCount[target] - 1; i >= 0; i-- ) {
+		if ( jka_pendingHits[target][i].attacker == attacker ) {
+			return jka_pendingHits[target][i].swing;
+		}
+	}
+	return 0;
+}
+
+// A player outside the recorded client's PVS has no entity states, so their
+// last swing index can be stale.  Never attribute a hit or a health loss to a
+// swing older than the pending-hit window.
+static qboolean JKA_SwingRecent( jkaGame_t *game, int swing, int now )
+{
+	if ( !game || swing <= 0 || swing > game->swingCount ) {
+		return qfalse;
+	}
+	return ( now - game->swings[swing - 1].time <= 2000 ) ? qtrue : qfalse;
+}
+
+static void JKA_EmitDamage( jkaGame_t *game, int now, int target, int attacker, int damage, int source, int swing )
 {
 	jkaDamage_t *sample;
 
@@ -728,17 +1017,34 @@ static void JKA_EmitDamage( jkaGame_t *game, int now, int target, int attacker, 
 	sample->damage = (short)damage;
 	sample->source = (unsigned char)source;
 	jka_lastDamageIndex[target] = game->damageCount - 1;
+
+	// Attach the loss to the swing whose hit caused it, so per-swing damage
+	// (mean/median) comes from the demo rather than from an even split.
+	if ( JKA_SwingRecent( game, swing, now ) ) {
+		jkaSwing_t *hit = &game->swings[swing - 1];
+		if ( attacker >= 0 && hit->num == attacker ) {
+			hit->damage = (short)( hit->damage + damage );
+		}
+	}
 }
 
 static void JKA_AddPendingHit( int now, int target, int attacker, int source )
 {
+	jkaGame_t *game = JKA_CurrentGame();
 	int count;
 	int write;
 	int i;
+	int swing = 0;
 
 	if ( target < 0 || target >= MAX_CLIENTS || attacker < 0 || attacker >= MAX_CLIENTS ||
 		target == attacker ) {
 		return;
+	}
+	if ( attacker < MAX_CLIENTS ) {
+		swing = jka_slotSwing[attacker];
+		if ( !JKA_SwingRecent( game, swing, now ) ) {
+			swing = 0;
+		}
 	}
 	count = jka_pendingHitCount[target];
 	write = 0;
@@ -756,8 +1062,18 @@ static void JKA_AddPendingHit( int now, int target, int attacker, int source )
 	}
 	jka_pendingHits[target][count].time = now;
 	jka_pendingHits[target][count].attacker = (short)attacker;
+	jka_pendingHits[target][count].swing = (short)swing;
 	jka_pendingHits[target][count].source = (unsigned char)source;
 	jka_pendingHitCount[target] = count + 1;
+
+	// The hit itself is exact even when the demo never exposes the target's
+	// health, so count it on the swing right away.
+	if ( source == JKA_DAMAGE_SABER && game && JKA_SwingRecent( game, swing, now ) ) {
+		jkaSwing_t *hit = &game->swings[swing - 1];
+		if ( hit->num == attacker && hit->hits < 255 ) {
+			hit->hits++;
+		}
+	}
 }
 
 // Records one observed health/armor loss.  The POV's own incoming damage is
@@ -785,7 +1101,8 @@ static void JKA_RecordDamage( jkaGame_t *game, int now, int target, int damage )
 			attacker = -1;
 		}
 		JKA_EmitDamage( game, now, target, attacker, damage,
-			attacker >= 0 ? JKA_DAMAGE_POV_IN : JKA_DAMAGE_UNKNOWN );
+			attacker >= 0 ? JKA_DAMAGE_POV_IN : JKA_DAMAGE_UNKNOWN,
+			attacker >= 0 ? JKA_NewestPendingSwing( target, attacker ) : 0 );
 		JKA_ClearPendingHits( target );
 		return;
 	}
@@ -810,7 +1127,7 @@ static void JKA_RecordDamage( jkaGame_t *game, int now, int target, int damage )
 	}
 
 	if ( !total ) {
-		JKA_EmitDamage( game, now, target, -1, damage, JKA_DAMAGE_UNKNOWN );
+		JKA_EmitDamage( game, now, target, -1, damage, JKA_DAMAGE_UNKNOWN, 0 );
 		JKA_ClearPendingHits( target );
 		return;
 	}
@@ -835,7 +1152,7 @@ static void JKA_RecordDamage( jkaGame_t *game, int now, int target, int damage )
 			}
 		}
 		remaining -= share;
-		JKA_EmitDamage( game, now, target, i, share, sources[i] );
+		JKA_EmitDamage( game, now, target, i, share, sources[i], JKA_NewestPendingSwing( target, i ) );
 	}
 	JKA_ClearPendingHits( target );
 }
@@ -1020,6 +1337,9 @@ static void JKA_UpdatePlayers( int now )
 			JKA_CloseSlot( game, slot, now );
 			continue;
 		}
+		// The clientinfo saber name identifies the saber and recovers the
+		// stance that the two-bit fireflag truncates (dual/staff).
+		jka_slotSaber[slot] = JKA_SaberId( game, Info_ValueForKey( info, "st" ) );
 		value = Info_ValueForKey( info, "t" );
 		team = value && value[0] ? atoi( value ) : 0;
 
@@ -1082,11 +1402,15 @@ static void JKA_StartGame( int now, int gamestateId )
 	Q_strncpyz( game->map, mapname && mapname[0] ? mapname : "unknown", sizeof( game->map ) );
 	Com_Memcpy( game->baselines, cl.entityBaselines, sizeof( game->baselines ) );
 	game->hasBaselines = qtrue;
+	game->saberCount = 1;
+	Q_strncpyz( game->sabers[0].name, "unknown", sizeof( game->sabers[0].name ) );
+	game->pov = ( clc.clientNum >= 0 && clc.clientNum < MAX_CLIENTS ) ? clc.clientNum : -1;
 
 	jka_currentGame = jka_gameCount - 1;
 	for ( int i = 0; i < MAX_CLIENTS; i++ ) {
 		jka_slotRecord[i] = -1;
 		jka_slotHash[i] = 0;
+		jka_slotSaber[i] = 0;
 		JKA_ResetSlotVitals( i );
 	}
 	jka_lastSnapMessageNum = -1;
@@ -1341,6 +1665,7 @@ static void JKA_TrackPlayerVitals( int now, entityState_t *state )
 		return;
 	}
 	JKA_TrackPlayerStance( now, state );
+	JKA_TrackPlayerSwing( now, state );
 	dead = ( state->eFlags & EF_DEAD ) ? qtrue : qfalse;
 	if ( dead ) {
 		if ( !jka_slotDead[num] ) {
@@ -1441,6 +1766,8 @@ static void JKA_ProcessSnapshot( int now, int resumeOffset )
 	// target this snapshot, otherwise the pre-hit health/armor no longer match.
 	JKA_TrackPovDamage( now );
 	JKA_TrackSelfVitals( now );
+	JKA_TrackSelfStance( now );
+	JKA_TrackSelfSwing( now );
 	JKA_TrackDuelHealth( now );
 
 	if ( jka_keyframeCount < JKA_MAX_KEYFRAMES &&
@@ -1804,8 +2131,22 @@ static void JKA_BuildSummary( void )
 			JKA_Append( &out, &left, "%s{\"time\":%d,\"target\":%d,\"attacker\":%d,\"damage\":%d,\"source\":%d}",
 				i ? "," : "", damage->time, damage->target, damage->attacker, damage->damage, damage->source );
 		}
-		JKA_Append( &out, &left, "],\"damageOverflow\":%s}",
-			game->damageOverflow ? "true" : "false" );
+		JKA_Append( &out, &left, "],\"damageOverflow\":%s,", game->damageOverflow ? "true" : "false" );
+		JKA_Append( &out, &left, "\"pov\":%d,\"sabers\":[", game->pov );
+		for ( i = 0; i < game->saberCount; i++ ) {
+			char saber[128];
+			JKA_JsonEscape( game->sabers[i].name, saber, sizeof( saber ) );
+			JKA_Append( &out, &left, "%s{\"id\":%d,\"name\":\"%s\"}", i ? "," : "", i, saber );
+		}
+		JKA_Append( &out, &left, "],\"swings\":[" );
+		for ( i = 0; i < game->swingCount; i++ ) {
+			jkaSwing_t *swing = &game->swings[i];
+			JKA_Append( &out, &left, "%s{\"time\":%d,\"num\":%d,\"move\":%d,\"stance\":%d,\"saber\":%d,\"hits\":%d,\"damage\":%d}",
+				i ? "," : "", swing->time, swing->num, swing->move, swing->stance, swing->saber,
+				swing->hits, swing->damage );
+		}
+		JKA_Append( &out, &left, "],\"swingsOverflow\":%s}",
+			game->swingOverflow ? "true" : "false" );
 		firstGame = qfalse;
 	}
 

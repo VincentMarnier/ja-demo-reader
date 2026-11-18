@@ -10,8 +10,9 @@
   `docs/m9-phase3.md` describes the worker engine, WORKERFS and OPFS removal,
   `docs/m9-phase4.md` covers background prepare, keep-warm Stop and Release,
   `docs/m9-phase5.md` covers warm seek, Restart and the scan-only Check map,
-  `docs/m9-phase6.md` covers seek state fidelity and added-map demos, and
-  `docs/m9-phase7.md` is the release-hardening checklist.
+  `docs/m9-phase6.md` covers seek state fidelity and added-map demos,
+  `docs/m9-phase7.md` is the release-hardening checklist, and
+  `docs/m10-player-detail.md` covers the per-player swing scan and detail view.
 - The app is a single Vite/React app in `app/`. `App.tsx` owns the wizard and
   player state, `engine/WorkerEngineHost.ts` and `engine/EngineHost.ts` are the
   two implementations of the shared `engine/host.ts` interface, and `src/fs/`
@@ -301,10 +302,28 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
 - The app overrides the cgame's incomplete K/D with the parsed event summary in
   `app/src/summary.ts`/`mergeScoreboard`. Keep that merge; cgame-only counters
   are wrong after seeks and map restarts.
+- Saber swings come from `entityState.saberMove`, the server-resolved `LS_*`
+  move (the demo has no input keys). A swing starts when the move enters the
+  `BG_SaberInAttack` set, changes to another attack move (combo), or restarts
+  the same move (`torsoFlip` toggles). Bounces, parries, deflects and
+  knockaways are reactions, not swings; saber throws are not swings either.
+  Keep `JKA_SaberMoveIsAttack` in sync with upstream `BG_SaberInAttack`.
+- The recorded client's own player entity is **not** in the demo snapshots, so
+  the POV's stance and swings come from `cl.snap.ps`
+  (`fd.saberAnimLevel`, `saberMove`, `torsoFlip`, `saberInFlight`,
+  `stats[STAT_HEALTH]`). Remote players use `fireflag`, which is two bits, with
+  the dual/staff correction from the clientinfo saber name (`st`/`st2`).
+- `EV_SABER_HIT` also fires for blocked contacts, so `hits` means "the blade
+  connected", not "damage was dealt". Damage is attached to a swing only where
+  the demo exposes the target's health; the app reports how many swings carried
+  a damage sample. Do not present a swing's hit count as proof of damage.
+- Swings and saber names are per game (`swings`, `sabers`, `pov`), capped by
+  `JKA_MAX_SWINGS`; `swingOverflow` is surfaced in the summary. The summary
+  cache version is `v8` because the shape changed.
 
 ## App/caching gotchas
 
-- Summary cache keys are versioned (`v7:name:size:lastModified`). Bump the
+- Summary cache keys are versioned (`v8:name:size:lastModified`). Bump the
   version when the summary shape or game-boundary logic changes; otherwise old
   one-game summaries are reused. The IndexedDB cache self-heals a missing store.
 - A cached summary does not contain the in-memory seek keyframes. The app's
@@ -332,6 +351,10 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   canvas gamma filter. Setting `r_gamma` live does not re-upload textures.
 - Remote follow cameras use the entity's yaw and pitch; the recorded POV client
   stays first-person. Dead players use a level pitch.
+- The launcher/overlay panels are flex-centered with `.launcher-layer > .panel,
+  .overlay > .panel { margin: auto }`. Keep it: with `align-items: center`
+  alone, a panel taller than the viewport (the player detail view) has its top
+  clipped above the scroll origin.
 
 ## Verification and sharing
 

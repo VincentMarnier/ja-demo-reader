@@ -131,6 +131,12 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
     linear-gradient(180deg, rgba(8, 11, 15, 0.62), rgba(8, 11, 15, 0.88)),
     radial-gradient(600px 400px at 30% 20%, rgba(95, 179, 255, 0.12), transparent 65%);
 }
+/* Center the panel while it fits, but top-align it when it is taller than the
+   viewport: `align-items: center` alone clips the top above the scroll origin. */
+.launcher-layer > .panel,
+.overlay > .panel {
+  margin: auto;
+}
 
 .overlay { background: rgba(6, 9, 13, 0.78); backdrop-filter: blur(4px); }
 
@@ -985,8 +991,114 @@ summary { cursor: pointer; color: var(--muted); }
 .demo-trend-key { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
 .demo-trend-key i { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 2px; }
 .demo-trend-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
+.detail-chart .demo-trend-name { max-width: 190px; }
 .demo-trend-key b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
 .demo-trend-empty { margin: 4px 0; font-size: 12px; }
+
+/* M10 per-player saber detail */
+.player-detail { margin-top: 8px; }
+.player-detail-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 12px;
+  margin-bottom: 10px;
+}
+.player-detail-controls label,
+.detail-opponent {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.player-detail-controls select,
+.detail-opponent select {
+  width: auto;
+  max-width: 100%;
+  padding: 6px 9px;
+  border-radius: 8px;
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.detail-tag {
+  align-self: center;
+  padding: 3px 8px;
+  border: 1px solid rgba(95, 179, 255, 0.35);
+  border-radius: 999px;
+  background: rgba(95, 179, 255, 0.12);
+  color: var(--accent-2);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+.detail-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: 8px;
+  margin: 4px 0 12px;
+}
+.detail-kpis > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.detail-value { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.detail-label {
+  font-size: 9px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  line-height: 1.3;
+}
+.detail-heading {
+  margin: 16px 0 6px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.detail-note { margin: -2px 0 8px; }
+.detail-scroll { overflow-x: auto; }
+.detail-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.detail-table th,
+.detail-table td {
+  padding: 3px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  text-align: left;
+  white-space: nowrap;
+}
+.detail-table th {
+  color: var(--muted);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+.detail-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.detail-table tr.detail-group td {
+  padding-top: 10px;
+  border-bottom-color: rgba(255, 255, 255, 0.14);
+  font-weight: 600;
+}
+.detail-table tr.detail-group .muted { font-weight: 400; }
+.detail-sub { font-size: 10px; }
+.detail-opponent { margin: 2px 0 8px; }
+.detail-chart {
+  margin-bottom: 10px;
+  padding: 8px 10px 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.detail-empty { margin: 6px 0; font-size: 12px; }
 
 .badge-left {
   display: inline-block;

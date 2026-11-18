@@ -146,6 +146,28 @@ export interface KillMarker {
   team: number;
 }
 
+/** A saber name interned during the scan; swings reference it by id. */
+export interface DemoSaberName {
+  id: number;
+  name: string;
+}
+
+/**
+ * One saber swing observed in the demo. `move` is the numeric `LS_*` saber
+ * move the server resolved from the player's input; `stance` is the corrected
+ * saber style (6 dual, 7 staff). `hits` counts saber hit events, and `damage`
+ * is the health loss the demo exposed for those hits (0 when it did not).
+ */
+export interface DemoSwingEvent {
+  time: number;
+  num: number;
+  move: number;
+  stance: number;
+  saber: number;
+  hits: number;
+  damage: number;
+}
+
 export interface DemoPlayerSummary {
   num: number;
   name: string;
@@ -166,10 +188,13 @@ export interface DemoGameSummary {
   endTime: number;
   duration: number;
   levelTime: number;
+  /** Recorded client (the demo's POV), or absent on older caches. */
+  pov?: number;
   eventOverflow?: boolean;
   vitalsOverflow?: boolean;
   stancesOverflow?: boolean;
   damageOverflow?: boolean;
+  swingsOverflow?: boolean;
   players: DemoPlayerSummary[];
   events: DemoEvent[];
   /** Health/armor timeline scraped during the scan. Absent on older caches. */
@@ -178,6 +203,10 @@ export interface DemoGameSummary {
   stances?: DemoStanceSample[];
   /** Attributed and unattributed damage instances. Absent on older caches. */
   damages?: DemoDamageEvent[];
+  /** Saber names referenced by the swings. Absent on older caches. */
+  sabers?: DemoSaberName[];
+  /** Saber swings scraped during the scan. Absent on older caches. */
+  swings?: DemoSwingEvent[];
 }
 
 export interface DemoSummary {
