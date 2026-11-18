@@ -413,11 +413,11 @@ export function PlayerDetailView({ summary }: PlayerDetailViewProps) {
             </div>
             <div>
               <span className="detail-value">{formatPercent(successRate(totals.successful, totals.swings))}</span>
-              <span className="detail-label">Success rate</span>
+              <span className="detail-label">Hit rate</span>
             </div>
             <div>
               <span className="detail-value">{totals.hits}</span>
-              <span className="detail-label">Hits</span>
+              <span className="detail-label">Hit events</span>
             </div>
             <div>
               <span className="detail-value">{totals.damage}</span>
@@ -447,7 +447,7 @@ export function PlayerDetailView({ summary }: PlayerDetailViewProps) {
                   <th className="num">Swings</th>
                   <th className="num">Successful</th>
                   <th className="num">Hit rate</th>
-                  <th className="num">Hits</th>
+                  <th className="num">Hit events</th>
                   <th className="num">Damage</th>
                   <th className="num">Avg / swing</th>
                   <th className="num">Median / swing</th>
@@ -506,7 +506,7 @@ export function PlayerDetailView({ summary }: PlayerDetailViewProps) {
                   <th className="num">Swings</th>
                   <th className="num">Successful</th>
                   <th className="num">Hit rate</th>
-                  <th className="num">Hits</th>
+                  <th className="num">Hit events</th>
                   <th className="num">Damage</th>
                   <th className="num">Avg / swing</th>
                 </tr>
@@ -518,7 +518,7 @@ export function PlayerDetailView({ summary }: PlayerDetailViewProps) {
                       {comboName(combo)}
                       <span className="muted">
                         {' '}
-                        · {combo.saberName} · {combo.swings} swings · {combo.hits} hits
+                        · {combo.saberName} · {combo.swings} swings · {combo.hits} hit events
                       </span>
                     </td>
                   </tr>
@@ -598,7 +598,7 @@ export function PlayerDetailView({ summary }: PlayerDetailViewProps) {
         <p className="fineprint">Some swings were truncated from this very long demo.</p>
       ) : null}
       <p className="fineprint">
-        Hits come from the demo&apos;s saber-hit events, which also fire when the target blocks the
+        Hit events come from the demo&apos;s saber-hit events, which also fire when the target blocks the
         blade. Damage is only known where the demo exposes the target&apos;s health, so averages and
         medians use the swings that carried a damage sample.
       </p>

@@ -64,15 +64,16 @@ have their own names.
   repeated identical swings.
 - Bounces, parries, deflects and knockaways are defensive reactions, not
   swings. They are excluded so the swing count and hit rate stay meaningful.
-- A hit is one `EV_SABER_HIT` event. It is attached to the attacker's current
-  swing, and that swing's `hits` counter is incremented. The event also fires
-  when the target blocks the blade, so a hit means "the blade connected", not
-  "damage was dealt".
+- A hit event is one `EV_SABER_HIT` event. It is attached to the attacker's
+  current swing, and that swing's `hits` counter is incremented. The event also
+  fires when the target blocks the blade, so a hit event means "the blade
+  connected", not "damage was dealt". The UI labels the count **Hit events**;
+  **Hit rate** is the share of swings with at least one.
 - A damage instance recorded from the target's health update is attached to
   the pending hit that caused it, so it lands on the swing that produced it.
   Damage the demo cannot see (a target whose health never appears in the
-  snapshot stream) leaves the swing with hits but no damage sample; the app
-  reports how many swings carry a damage sample.
+  snapshot stream) leaves the swing with hit events but no damage sample; the
+  app reports how many swings carry a damage sample.
 - Saber throws have no swing. Their hits are not counted as swings.
 
 ## Summary shape
@@ -92,8 +93,10 @@ Per game, in addition to the existing arrays:
 ```
 
 `move` is the numeric `LS_*` value; the app owns the label table. `stance`
-is corrected (`6` dual, `7` staff). `damage` is the attributed damage for
-that swing, which can be `0` even for a hit the demo did not expose.
+is corrected (`6` dual, `7` staff). `hits` is the number of `EV_SABER_HIT`
+events on that swing; the UI labels that count **Hit events**. `damage` is the
+attributed damage for that swing, which can be `0` even for a hit event the
+demo did not expose.
 
 The summary cache key moved to `v8` because the shape changed.
 

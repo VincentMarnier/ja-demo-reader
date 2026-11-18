@@ -313,10 +313,12 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   (`fd.saberAnimLevel`, `saberMove`, `torsoFlip`, `saberInFlight`,
   `stats[STAT_HEALTH]`). Remote players use `fireflag`, which is two bits, with
   the dual/staff correction from the clientinfo saber name (`st`/`st2`).
-- `EV_SABER_HIT` also fires for blocked contacts, so `hits` means "the blade
-  connected", not "damage was dealt". Damage is attached to a swing only where
-  the demo exposes the target's health; the app reports how many swings carried
-  a damage sample. Do not present a swing's hit count as proof of damage.
+- `EV_SABER_HIT` also fires for blocked contacts, so a hit event means "the
+  blade connected", not "damage was dealt". The UI labels the count **Hit
+  events**; **Hit rate** is the share of swings with at least one. Damage is
+  attached to a swing only where the demo exposes the target's health; the app
+  reports how many swings carried a damage sample. Do not present a swing's
+  hit-event count as proof of damage.
 - Swings and saber names are per game (`swings`, `sabers`, `pov`), capped by
   `JKA_MAX_SWINGS`; `swingOverflow` is surfaced in the summary. The summary
   cache version is `v8` because the shape changed.

@@ -31,10 +31,10 @@ Academy and select your own `assets0..3.pk3` and demo files. Nothing is uploaded
   attacker→target matrix parsed and kept for later analysis. Base demos only
   identify attackers for saber/missile hits, the recorded client and killing
   blows; other damage stays in the unknown bucket.
-- Per-player saber detail in the demo summary: swings and hits by saber and
-  stance, mean and median damage per swing, hit rate over time, every swing type
-  (forward/back/strafe attacks and specials), and the damage that player gave to
-  and received from every other player.
+- Per-player saber detail in the demo summary: swings and hit events by saber
+  and stance, mean and median damage per swing, hit rate over time, every swing
+  type (forward/back/strafe attacks and specials), and the damage that player
+  gave to and received from every other player.
 - Follow camera for any player, a free-fly camera with mouse look, and the
   original recorded demo camera.
 - Custom Health/Armor/saber HUD, score strip, timer and scoreboard.
