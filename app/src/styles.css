@@ -813,6 +813,41 @@ summary { cursor: pointer; color: var(--muted); }
 .stage[data-ui-idle] .player-bottom::before {
   opacity: 0;
 }
+
+/* In fullscreen only the stage is painted, so the scoreboard becomes a panel on
+   the right of the frame.  It shares the action bar's idle flag. */
+.stage-scoreboard {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  bottom: 148px;
+  z-index: 8;
+  width: clamp(220px, 26vw, 340px);
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+/* The minimap owns the top-right corner; start below it when it is shown. */
+.stage[data-minimap='1'] .stage-scoreboard {
+  top: 230px;
+}
+.stage-scoreboard .scoreboard-panel {
+  width: 100%;
+  max-height: 100%;
+  background: rgba(8, 12, 17, 0.86);
+  pointer-events: auto;
+}
+.stage[data-ui-idle] .stage-scoreboard {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.2s ease, visibility 0s linear 0.2s;
+}
+@media (max-height: 620px) {
+  /* Too little room below the map: overlap it rather than clip the panel. */
+  .stage[data-minimap='1'] .stage-scoreboard {
+    top: 12px;
+  }
+}
 .seek-bar {
   position: relative;
   pointer-events: auto;

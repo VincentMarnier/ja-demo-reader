@@ -71,6 +71,7 @@ export default function App() {
   const [freeCam, setFreeCam] = useState(false);
   const [followClient, setFollowClient] = useState<number | null>(null);
   const [pointerLocked, setPointerLocked] = useState(false);
+  const [stageFullscreen, setStageFullscreen] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -134,6 +135,14 @@ export default function App() {
     const handler = () => setPointerLocked(document.pointerLockElement === stageRef.current);
     document.addEventListener('pointerlockchange', handler);
     return () => document.removeEventListener('pointerlockchange', handler);
+  }, []);
+
+  // In fullscreen only the stage is painted, so the side scoreboard moves
+  // inside it as an overlay.
+  useEffect(() => {
+    const handler = () => setStageFullscreen(document.fullscreenElement === stageRef.current);
+    document.addEventListener('fullscreenchange', handler);
+    return () => document.removeEventListener('fullscreenchange', handler);
   }, []);
 
   useEffect(() => {
@@ -1085,6 +1094,20 @@ export default function App() {
   }, [demoSummary, demoInfo]);
   const showWizard = phase === 'launcher' || phase === 'validating';
   const showPlayer = phase === 'playing' || phase === 'paused' || phase === 'ended';
+  // The scoreboard is a side panel normally, and an in-stage overlay while the
+  // stage itself is the fullscreen element.
+  const scoreboardPanel = showPlayer && settings.showScoreboard ? (
+    <ScoreboardPanel
+      data={scoreboard}
+      followClient={followClient}
+      freeCam={freeCam}
+      pointerLocked={pointerLocked}
+      onFollow={followPlayer}
+      onToggleFreeCam={toggleFreeCam}
+      onCaptureMouse={captureMouse}
+      onDemoCamera={demoCamera}
+    />
+  ) : null;
   // A demo chosen from a file input may not be in the folder list.
   const playbackDemos: Array<{ name: string }> = (() => {
     const list = assetSelection?.demos ?? [];
@@ -1262,20 +1285,13 @@ export default function App() {
               {showPlayer ? (
                 <KillFeed game={currentGame} serverTime={status?.serverTime ?? 0} />
               ) : null}
+
+              {stageFullscreen && scoreboardPanel ? (
+                <div className="stage-scoreboard">{scoreboardPanel}</div>
+              ) : null}
             </div>
 
-            {showPlayer && settings.showScoreboard ? (
-              <ScoreboardPanel
-                data={scoreboard}
-                followClient={followClient}
-                freeCam={freeCam}
-                pointerLocked={pointerLocked}
-                onFollow={followPlayer}
-                onToggleFreeCam={toggleFreeCam}
-                onCaptureMouse={captureMouse}
-                onDemoCamera={demoCamera}
-              />
-            ) : null}
+            {!stageFullscreen && scoreboardPanel ? scoreboardPanel : null}
           </div>
         </div>
       </main>
