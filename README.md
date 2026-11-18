@@ -42,6 +42,11 @@ Academy and select your own `assets0..3.pk3` and demo files. Nothing is uploaded
 - Follow camera for any player, a free-fly camera with mouse look, and the
   original recorded demo camera.
 - Custom Health/Armor/saber HUD, score strip, timer and scoreboard.
+- Top-down minimap with a static map image built from the demo's BSP: team
+  dots in eight red/blue tones, the 97° view cone and live positions. The
+  camera subject (the demo POV or the followed player) pulses white/amber, and
+  a jump produces a halo whose size and brightness grow with height. Void areas are transparent; the image is cached
+  per map and regenerated when the game data changes.
 - Demo sound through the engine's software mixer: effects, music and voice
   volumes are adjustable from the player's Sound button; `?sound=0` boots
   silently.
@@ -134,6 +139,14 @@ own. See [docs/github-pages.md](docs/github-pages.md).
   obituaries for the seconds around the playhead: killer, weapon and victim,
   with team colours. The cgame's own obituary text is turned off
   (`cg_killMessage 0`, patch `0011`).
+- **Minimap** — the top-right panel is a static top-down image of the map with
+  live dots. Red/blue teammates use eight distinct tones of their team colour;
+  free-for-all uses a palette. Each dot shows a soft 97° view cone that fades
+  with distance, dead players are dimmed, the camera subject (demo POV or
+  followed player) gets a pulsing white/amber highlight, and a jump adds a halo
+  that grows with height. Clicking a dot follows that player.
+  Toggle it from the map button in the action bar or Settings; the kill feed
+  moves below it.
 - **Settings** — FOV, gamma, texture quality, HUD toggles, free-cam bindings and
   local summary clearing.
 
@@ -208,6 +221,7 @@ Some demo-seek and movie-tool ideas were informed by
 ## Documentation
 
 - [docs/m8.md](docs/m8.md) — summaries, caches, indexed seek, speed/gamma.
+- [docs/m11-minimap.md](docs/m11-minimap.md) — top-down map image and live player dots.
 - [docs/m7.md](docs/m7.md) — release audit and sharing notes.
 - [docs/browser-mvp.md](docs/browser-mvp.md) — end-to-end browser flow.
 - [docs/architecture.md](docs/architecture.md),

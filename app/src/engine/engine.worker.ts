@@ -6,7 +6,7 @@
 /// read-only with WORKERFS; only demos and added map PK3s are copied into the
 /// writable `/userdata/base` MEMFS.
 
-import type { DemoStatus, FreeCamPose, ScoreboardData } from '../types';
+import type { DemoStatus, FreeCamPose, RadarData, ScoreboardData } from '../types';
 import type { WorkerMemory, WorkerRequest, WorkerResponse } from './protocol';
 
 // Keep CA_ACTIVE inline: Vite dev serves a classic worker as an unbundled
@@ -90,6 +90,7 @@ let queue: Promise<unknown> = Promise.resolve();
 let lastStatus: DemoStatus | null = null;
 let statusTimer: ReturnType<typeof setInterval> | null = null;
 let scoreboardTimer: ReturnType<typeof setInterval> | null = null;
+let radarTimer: ReturnType<typeof setInterval> | null = null;
 let logBuffer: string[] = [];
 let logTimer: ReturnType<typeof setTimeout> | null = null;
 let fatalSent = false;
@@ -306,6 +307,22 @@ function pollScoreboard(): void {
   }
 }
 
+function pollRadar(): void {
+  if (asyncInFlight || !engineModule?.ccall) return;
+  const status = lastStatus;
+  if (!status || status.demo !== 1 || status.state !== CA_ACTIVE) return;
+  try {
+    const raw = engineModule.ccall('JKA_RadarJson', 'string', [], []) as string;
+    if (!raw) return;
+    const radar = JSON.parse(raw) as RadarData;
+    if (radar && Array.isArray(radar.players)) {
+      post({ type: 'radar', radar });
+    }
+  } catch {
+    // The client snapshot may be between map loads; the next tick retries.
+  }
+}
+
 function startPolling(): void {
   if (statusTimer === null) {
     statusTimer = setInterval(pollStatus, 250);
@@ -315,6 +332,9 @@ function startPolling(): void {
   }
   if (scoreboardTimer === null) {
     scoreboardTimer = setInterval(pollScoreboard, 500);
+  }
+  if (radarTimer === null) {
+    radarTimer = setInterval(pollRadar, 80);
   }
 }
 

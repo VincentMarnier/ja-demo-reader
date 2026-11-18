@@ -1,4 +1,4 @@
-import type { DemoInfo, DemoSummary, FreeCamPose, LocalFile, ScoreboardData } from '../types';
+import type { DemoInfo, DemoSummary, FreeCamPose, LocalFile, RadarData, ScoreboardData } from '../types';
 import type { BootOptions, EngineCallbacks, EngineHostApi } from './shared';
 import { buildEngineArgs, ENGINE_BASE, WorkerUnsupportedError } from './shared';
 import { EngineAudioOutput } from './audio';
@@ -52,6 +52,7 @@ export class WorkerEngineHost implements EngineHostApi {
   private pending = new Map<number, PendingCall>();
   private nextId = 1;
   private scoreboard: ScoreboardData | null = null;
+  private radar: RadarData | null = null;
   private currentDemo: string | null = null;
   private playInFlight: Promise<void> | null = null;
   private prepareInFlight: Promise<void> | null = null;
@@ -275,6 +276,9 @@ export class WorkerEngineHost implements EngineHostApi {
         return;
       case 'scoreboard':
         this.scoreboard = event.scoreboard;
+        return;
+      case 'radar':
+        this.radar = event.radar;
         return;
       case 'memory':
         void this.logWorkerMemory(event.stage, event.memory);
@@ -559,6 +563,10 @@ export class WorkerEngineHost implements EngineHostApi {
 
   async getScoreboard(): Promise<ScoreboardData | null> {
     return this.scoreboard;
+  }
+
+  async getRadar(): Promise<RadarData | null> {
+    return this.radar;
   }
 
   followClient(clientNum: number): void {

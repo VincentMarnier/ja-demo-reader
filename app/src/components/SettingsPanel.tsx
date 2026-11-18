@@ -164,6 +164,14 @@ export function SettingsPanel({ settings, onChange, onClose, onClearLocalData }:
             />
             <span>Show the timer between the scores</span>
           </label>
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={settings.showMinimap}
+              onChange={event => onChange({ showMinimap: event.target.checked })}
+            />
+            <span>Show the top-down minimap with live player positions</span>
+          </label>
         </section>
 
         <section className="settings-section">

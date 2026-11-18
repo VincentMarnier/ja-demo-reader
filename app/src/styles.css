@@ -583,6 +583,51 @@ summary { cursor: pointer; color: var(--muted); }
 }
 .score-strip.solo .score-timer { border: 0; }
 
+/* Static top-down map.  The image itself keeps void pixels transparent; the
+   panel only provides the glass background and keeps dots legible. */
+.minimap {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 4;
+  width: 208px;
+  height: 208px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(8, 12, 17, 0.66);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+  pointer-events: auto;
+}
+.minimap-canvas { display: block; width: 100%; height: 100%; }
+.minimap-note {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-align: center;
+  pointer-events: none;
+}
+.minimap[data-state='loading'] .minimap-note { animation: minimap-pulse 1.6s ease-in-out infinite; }
+@keyframes minimap-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 0.9; }
+}
+/* Keep the kill feed clear of the map while it is visible. */
+.stage[data-minimap='1'] .kill-feed { top: 228px; }
+
+/* A narrower stage (usually the scoreboard panel is open) puts the centered
+   score strip under the map's left edge; drop the map below the strip. */
+@media (max-width: 1100px) {
+  .minimap { top: 62px; }
+  .stage[data-minimap='1'] .kill-feed { top: 280px; }
+}
+
 .kill-feed {
   position: absolute;
   top: 10px;
@@ -725,6 +770,8 @@ summary { cursor: pointer; color: var(--muted); }
 @media (max-width: 720px) {
   .score-strip { top: 54px; transform: translateX(-50%) scale(0.92); }
   .kill-feed { top: 92px; max-width: 64%; }
+  .minimap { top: 96px; right: 8px; width: 118px; height: 118px; }
+  .stage[data-minimap='1'] .kill-feed { top: 222px; }
   .score-side { min-width: 62px; padding: 5px 7px; }
   .score-side .score-name { max-width: 70px; }
   .keybind-grid { grid-template-columns: 1fr; }

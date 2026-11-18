@@ -11,8 +11,9 @@
   `docs/m9-phase4.md` covers background prepare, keep-warm Stop and Release,
   `docs/m9-phase5.md` covers warm seek, Restart and the scan-only Check map,
   `docs/m9-phase6.md` covers seek state fidelity and added-map demos,
-  `docs/m9-phase7.md` is the release-hardening checklist, and
-  `docs/m10-player-detail.md` covers the per-player swing scan and detail view.
+  `docs/m9-phase7.md` is the release-hardening checklist,
+  `docs/m10-player-detail.md` covers the per-player swing scan and detail view,
+  and `docs/m11-minimap.md` covers the static top-down map image and radar.
 - The app is a single Vite/React app in `app/`. `App.tsx` owns the wizard and
   player state, `engine/WorkerEngineHost.ts` and `engine/EngineHost.ts` are the
   two implementations of the shared `engine/host.ts` interface, and `src/fs/`
@@ -340,6 +341,48 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   `statsAt`, `damageAt`, `recordKills` and the trend chart apply it; keep
   per-player pairings (damage vs a player, blocks, movement) raw and positive.
   Do not apply the subtraction twice or to the per-swing tables.
+
+## Minimap
+
+- The background is a one-off raster, not a live render. `app/src/map/` reads
+  `maps/<map>.bsp` straight from the page's PK3 `File` objects, parses RBSP and
+  rasterises every drawable surface from above with a per-pixel height buffer.
+  Void pixels must stay alpha 0; no background fill is added in the renderer.
+- Planar BSP surfaces use their index list, not a triangle fan. Patches are
+  tessellated from their control points. `SURF_SKY`/`SURF_NODRAW` and
+  `textures/system|common` utility shaders are skipped, and down-facing
+  surfaces are skipped so floors are visible from above.
+- Texture colours are 16×16 averages decoded with `createImageBitmap`. When a
+  shader name has no matching image, `shaderScripts.ts` reads `scripts/*.shader`
+  and uses the first stage `map` or `qer_editorimage`. Do not decode full
+  textures per map: the average colour is all the image uses.
+- The image cache key includes the PK3 names/sizes. The GameData assets plus the
+  map PK3 added in the map step are passed to `loadMapImage`; the engine's
+  filesystem and the demo summary cache are not involved. Adding a PK3 changes
+  the signature and regenerates the image.
+- Live positions come from `JKA_RadarJson` (client-only): remote players from
+  the current snapshot's `cl.parseEntities` ring, the recorded POV from
+  `cl.snap.ps` because its entity is absent from demos. The JSON also carries
+  feet `z` and a `g` ground flag (`groundEntityNum != ENTITYNUM_NONE`) for the
+  jump effect. Poll it only while no async engine call is in flight (worker:
+  80 ms push, page: 100 ms read). This is the same rule as the
+  status/scoreboard polls; do not call it during a map load or scan.
+- Teams come from the polled scoreboard, not the radar JSON; players missing
+  from the scoreboard use the FFA palette. Each team has eight fixed hue and
+  lightness tones so teammates stay distinguishable; do not collapse them back
+  to one colour. The camera subject is drawn last with a pulsing white/amber
+  highlight: `followClient`, else the scoreboard view's `num` (the recorded POV
+  with the demo camera), and no highlight in free cam.
+  `AppSettings.showMinimap` and the action-bar map button toggle the panel; the
+  stage's `data-minimap` attribute moves the kill feed down.
+- The jump effect uses `z - baseZ`, where `baseZ` is the last grounded `z`.
+  Reset the baseline on the >600-unit snap (respawn/teleport/seek). Scale the
+  aura, team ring, white lift ring, pulse and dot radius with
+  `min(1, jump / 90)`; a normal jump is ~45 units and Force Jump ~90+. Do not
+  treat stairs or slopes as jumps: `g` decides.
+- The map panel sits at the top right on desktop (208 px) and moves below the
+  score strip on narrow layouts (118 px). Keep the kill-feed offset in sync if
+  the size changes.
 
 ## App/caching gotchas
 

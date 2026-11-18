@@ -1,4 +1,4 @@
-import type { DemoInfo, DemoStatus, DemoSummary, FreeCamPose, LocalFile, ScoreboardData } from '../types';
+import type { DemoInfo, DemoStatus, DemoSummary, FreeCamPose, LocalFile, RadarData, ScoreboardData } from '../types';
 import { prepareAndStage } from '../fs/stage';
 import type { BootOptions, EngineCallbacks, EngineHostApi } from './shared';
 import { buildEngineArgs, ENGINE_BASE } from './shared';
@@ -572,6 +572,19 @@ export class MainThreadEngineHost implements EngineHostApi {
       const raw = this.module.ccall('JKA_ScoreboardJson', 'string', [], []) as string;
       if (!raw) return null;
       const data = JSON.parse(raw) as ScoreboardData;
+      if (!data || !Array.isArray(data.players)) return null;
+      return data;
+    } catch {
+      return null;
+    }
+  }
+
+  async getRadar(): Promise<RadarData | null> {
+    if (!this.module?.ccall || this.asyncInFlight) return null;
+    try {
+      const raw = this.module.ccall('JKA_RadarJson', 'string', [], []) as string;
+      if (!raw) return null;
+      const data = JSON.parse(raw) as RadarData;
       if (!data || !Array.isArray(data.players)) return null;
       return data;
     } catch {

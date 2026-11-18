@@ -2844,6 +2844,70 @@ EMSCRIPTEN_KEEPALIVE const char *JKA_ScoreboardJson( void )
 	return CG_GetScoreboardJson();
 }
 
+// Live player positions for the minimap. Client-side only: remote players come
+// from the current snapshot's entity ring (the recorded POV's own entity is not
+// in the demo), and the POV is read from cl.snap.ps. Positions are raw snapshot
+// origins; the page smooths them between polls.
+EMSCRIPTEN_KEEPALIVE const char *JKA_RadarJson( void )
+{
+	static char buffer[8192];
+	qboolean first = qtrue;
+	int len;
+	int i;
+
+	if ( cls.state != CA_ACTIVE || !cl.snap.valid ) {
+		return "{\"time\":0,\"players\":[]}";
+	}
+
+	len = snprintf( buffer, sizeof( buffer ), "{\"time\":%d,\"players\":[", cl.snap.serverTime );
+
+	{
+		playerState_t *ps = &cl.snap.ps;
+
+		if ( ps->clientNum >= 0 && ps->clientNum < MAX_CLIENTS &&
+			ps->pm_type != PM_SPECTATOR && ps->pm_type != PM_INTERMISSION ) {
+			len += snprintf( buffer + len, sizeof( buffer ) - len,
+				"{\"num\":%d,\"x\":%.2f,\"y\":%.2f,\"z\":%.2f,\"yaw\":%.2f,\"dead\":%d,\"g\":%d}",
+				ps->clientNum, ps->origin[0], ps->origin[1], ps->origin[2],
+				AngleNormalize180( ps->viewangles[YAW] ),
+				ps->stats[STAT_HEALTH] > 0 ? 0 : 1,
+				ps->groundEntityNum != ENTITYNUM_NONE ? 1 : 0 );
+			if ( len > (int)sizeof( buffer ) - 1 ) {
+				len = (int)sizeof( buffer ) - 1;
+			}
+			first = qfalse;
+		}
+	}
+
+	for ( i = 0; i < cl.snap.numEntities && len < (int)sizeof( buffer ) - 128; i++ ) {
+		entityState_t *state = &cl.parseEntities[
+			( cl.snap.parseEntitiesNum + i ) & ( MAX_PARSE_ENTITIES - 1 )];
+
+		if ( state->eType != ET_PLAYER || state->number < 0 || state->number >= MAX_CLIENTS ) {
+			continue;
+		}
+		if ( state->number == cl.snap.ps.clientNum ) {
+			continue;
+		}
+
+		len += snprintf( buffer + len, sizeof( buffer ) - len,
+			"%s{\"num\":%d,\"x\":%.2f,\"y\":%.2f,\"z\":%.2f,\"yaw\":%.2f,\"dead\":%d,\"g\":%d}",
+			first ? "" : ",", state->number,
+			state->pos.trBase[0], state->pos.trBase[1], state->pos.trBase[2],
+			AngleNormalize180( state->apos.trBase[YAW] ),
+			( state->eFlags & EF_DEAD ) ? 1 : 0,
+			state->groundEntityNum != ENTITYNUM_NONE ? 1 : 0 );
+		if ( len > (int)sizeof( buffer ) - 1 ) {
+			len = (int)sizeof( buffer ) - 1;
+		}
+		first = qfalse;
+	}
+
+	snprintf( buffer + len, sizeof( buffer ) - len, "]}" );
+	buffer[sizeof( buffer ) - 1] = 0;
+	return buffer;
+}
+
 EMSCRIPTEN_KEEPALIVE void JKA_FollowClient( int clientNum )
 {
 	CG_SetFollowClient( clientNum );

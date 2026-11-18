@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
-import type { AssetSelection, DemoInfo, DemoStatus, DemoSummary, FreeCamPose, KillMarker, LocalFile, Phase, ScoreboardData, StageProgress, ValidationResult } from './types';
+import type { AssetSelection, DemoInfo, DemoStatus, DemoSummary, FreeCamPose, KillMarker, LocalFile, Phase, RadarData, ScoreboardData, StageProgress, ValidationResult } from './types';
 import { CA_ACTIVE } from './types';
 import { validateDemoFile, validateSelection } from './fs/validate';
 import {
@@ -13,6 +13,7 @@ import { loadDirectoryHandle, saveDirectoryHandle } from './fs/handles';
 import { loadDemoSummary, saveDemoSummary, clearDemoSummaries } from './fs/demoCache';
 import { assetSetKey } from './fs/signature';
 import { clearLegacyAssetCache } from './fs/assetCache';
+import { clearMapImageCache, loadMapImage } from './map/mapImage';
 import { chooseGame, mergeScoreboard } from './summary';
 import { formatTime } from './format';
 import { createEngineHost, WorkerUnsupportedError } from './engine/host';
@@ -43,6 +44,7 @@ export default function App() {
   const [mapMissing, setMapMissing] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
   const [addedPk3s, setAddedPk3s] = useState<string[]>([]);
+  const [addedPk3Files, setAddedPk3Files] = useState<File[]>([]);
   const [addingPk3s, setAddingPk3s] = useState(false);
   const [checking, setChecking] = useState(false);
 
@@ -57,6 +59,7 @@ export default function App() {
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
   const [showSettings, setShowSettings] = useState(false);
   const [scoreboard, setScoreboard] = useState<ScoreboardData | null>(null);
+  const [radar, setRadar] = useState<RadarData | null>(null);
   const [demoInfo, setDemoInfo] = useState<DemoInfo | null>(null);
   const [demoSummary, setDemoSummary] = useState<DemoSummary | null>(null);
   const [engineMode, setEngineMode] = useState<EngineMode | null>(null);
@@ -173,6 +176,25 @@ export default function App() {
     };
     tick();
     const timer = window.setInterval(tick, 500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [phase]);
+
+  useEffect(() => {
+    if (phase !== 'playing' && phase !== 'paused' && phase !== 'ended') return;
+    let cancelled = false;
+    const tick = () => {
+      const engine = engineRef.current;
+      if (!engine) return;
+      void engine.getRadar().then(data => {
+        if (cancelled || !data) return;
+        setRadar(data);
+      });
+    };
+    tick();
+    const timer = window.setInterval(tick, 100);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
@@ -617,6 +639,7 @@ export default function App() {
         setFreeCam(false);
         setFollowClient(null);
         setScoreboard(null);
+        setRadar(null);
         setPhase('stopping');
         await engine.suspendDemo();
         preparedDemoRef.current = null;
@@ -644,6 +667,32 @@ export default function App() {
     await clearDemoSummaries();
     await clearLegacyAssetCache();
   }, []);
+
+  // The minimap reads the BSP and its textures straight from the game PK3s the
+  // user already supplied: the four retail archives plus whichever map PK3 was
+  // added for this demo.  A repeated name keeps the added file, matching the
+  // engine's search path where /userdata/base overrides /jka/base.
+  const minimapSources = useCallback(
+    (extra: File[] = []): Blob[] => {
+      const byName = new Map<string, Blob>();
+      for (const file of [
+        ...(assetValidation?.assets ?? []).map(asset => asset.file),
+        ...addedPk3Files,
+        ...extra
+      ]) {
+        byName.set((file as File).name, file);
+      }
+      return [...byName.values()];
+    },
+    [assetValidation, addedPk3Files]
+  );
+  const minimapFiles = useMemo<Blob[]>(() => minimapSources(), [minimapSources]);
+  // The minimap rings the camera subject, not just an explicit follow: with the
+  // demo camera that is the recorded POV, and after Follow it is that player.
+  // Free cam has no subject of its own, so it clears the highlight.
+  const minimapHighlight = freeCam
+    ? null
+    : (followClient ?? scoreboard?.view?.num ?? status?.clientNum ?? null);
 
   const checkMap = useCallback(async () => {
     if (!assetSelection || !demoFile || !canvasRef.current) return;
@@ -736,9 +785,12 @@ export default function App() {
       // Keep the wizard visible while the demo loads in the background.  Play
       // joins this promise instead of starting a second map load.
       setPhase('launcher');
+      // Build the minimap now, while the map step is visible, so opening the
+      // player does not pay for the archive/texture pass during playback.
+      void loadMapImage(map, minimapSources());
       void ensurePrepared(engine, name);
     }
-  }, [assetSelection, assetValidation, demoFile, bootEngine, ensurePrepared]);
+  }, [assetSelection, assetValidation, demoFile, bootEngine, ensurePrepared, minimapSources]);
 
   const startPlay = useCallback(async () => {
     if (!demoFile || mapMissing || !canvasRef.current) return;
@@ -749,6 +801,7 @@ export default function App() {
     setFreeCam(false);
     setFollowClient(null);
     setScoreboard(null);
+    setRadar(null);
     setPhase('loading');
     try {
       let engine = engineRef.current;
@@ -817,6 +870,10 @@ export default function App() {
         }
         preparedDemoRef.current = null;
         setAddedPk3s(current => Array.from(new Set([...current, ...files.map(file => file.name)])));
+        setAddedPk3Files(current => {
+          const names = new Set(current.map(file => file.name));
+          return [...current, ...files.filter(file => !names.has(file.name))];
+        });
         const map = await engine.parseDemoMap(demoBase(demoFile.name));
         if (!map) {
           setMapError('Could not re-read the demo map after adding the PK3.');
@@ -830,6 +887,7 @@ export default function App() {
           return;
         }
         setPhase('launcher');
+        void loadMapImage(map, minimapSources(files));
         void ensurePrepared(engine, demoBase(demoFile.name));
       } catch (err) {
         setMapError(err instanceof Error ? err.message : String(err));
@@ -837,7 +895,7 @@ export default function App() {
         setAddingPk3s(false);
       }
     },
-    [demoFile, ensurePrepared]
+    [demoFile, ensurePrepared, minimapSources]
   );
 
   const togglePause = useCallback(async () => {
@@ -865,6 +923,7 @@ export default function App() {
     setFreeCam(false);
     setFollowClient(null);
     setScoreboard(null);
+    setRadar(null);
     setPaused(false);
     setPhase('loading');
     engine.markStage('restart:start');
@@ -900,6 +959,7 @@ export default function App() {
     setFreeCam(false);
     setFollowClient(null);
     setScoreboard(null);
+    setRadar(null);
     setPaused(false);
     playbackRequestedRef.current = true;
     setPhase('seeking');
@@ -928,6 +988,7 @@ export default function App() {
     setFreeCam(false);
     setFollowClient(null);
     setScoreboard(null);
+    setRadar(null);
     setPhase('stopping');
     engine?.markStage('stop:start');
     try {
@@ -971,8 +1032,13 @@ export default function App() {
     setEngineMode(null);
     setStatus(null);
     setScoreboard(null);
+    setRadar(null);
     setAddedPk3s([]);
+    setAddedPk3Files([]);
     setAddingPk3s(false);
+    // The minimap images belong to the released engine session; drop them so
+    // a later map starts clean instead of keeping up to three 4 MB rasters.
+    clearMapImageCache();
     // The transferred canvas cannot be reused, so replace the element for the
     // next boot.
     setCanvasGeneration(generation => generation + 1);
@@ -1075,7 +1141,11 @@ export default function App() {
           ) : null}
 
           <div className="play-row">
-            <div className="stage" ref={stageRef}>
+            <div
+              className="stage"
+              ref={stageRef}
+              data-minimap={showPlayer && settings.showMinimap ? '1' : undefined}
+            >
               <svg className="gamma-filter" aria-hidden="true" focusable="false">
                 <filter id="jka-gamma" colorInterpolationFilters="sRGB">
                   <feComponentTransfer>
@@ -1168,6 +1238,16 @@ export default function App() {
                   view={scoreboard?.view ?? null}
                   showScores={settings.showScores}
                   showTimer={settings.showTimer}
+                  showMinimap={settings.showMinimap}
+                  mapName={status?.map || mapName}
+                  mapFiles={minimapFiles}
+                  radar={radar}
+                  fov={settings.cgFov}
+                  highlightClient={minimapHighlight}
+                  onFollow={followPlayer}
+                  onToggleMinimap={() =>
+                    setSettings(current => ({ ...current, showMinimap: !current.showMinimap }))
+                  }
                   currentMs={demoPosition}
                   durationMs={demoInfo?.duration ?? 0}
                   killMarkers={killMarkers}

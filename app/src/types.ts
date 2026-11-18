@@ -79,6 +79,29 @@ export interface FreeCamPose {
   roll: number;
 }
 
+/**
+ * One player position polled for the minimap. Coordinates are the demo's world
+ * units; `yaw` is the view yaw in degrees (0 faces +X).  The recorded POV comes
+ * from its playerState, remote players from the current snapshot.
+ */
+export interface RadarPlayer {
+  num: number;
+  x: number;
+  y: number;
+  /** Feet height in world units, used to scale the airborne effect. */
+  z: number;
+  yaw: number;
+  /** 1 when the player is dead; the minimap dims those dots. */
+  dead: number;
+  /** 1 when the player stands on something; 0 while airborne. */
+  g: number;
+}
+
+export interface RadarData {
+  time: number;
+  players: RadarPlayer[];
+}
+
 export interface DemoInfo {
   first: number;
   duration: number;

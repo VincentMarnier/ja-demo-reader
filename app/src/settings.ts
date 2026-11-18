@@ -22,6 +22,7 @@ export interface AppSettings {
   showScoreboard: boolean;
   showScores: boolean;
   showTimer: boolean;
+  showMinimap: boolean;
   playbackSpeed: number;
   volumeEffects: number;
   volumeMusic: number;
@@ -63,6 +64,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showScoreboard: true,
   showScores: true,
   showTimer: true,
+  showMinimap: true,
   playbackSpeed: 1,
   // The engine's own defaults: s_volume 0.5, s_musicvolume 0.25, s_volumeVoice 1.
   volumeEffects: 0.5,
@@ -145,6 +147,7 @@ export function loadSettings(): AppSettings {
       showScoreboard: parsed.showScoreboard !== false,
       showScores: parsed.showScores !== false,
       showTimer: parsed.showTimer !== false,
+      showMinimap: parsed.showMinimap !== false,
       playbackSpeed: clampSpeed(parsed.playbackSpeed),
       volumeEffects: clampVolume(parsed.volumeEffects, DEFAULT_SETTINGS.volumeEffects),
       volumeMusic: clampVolume(parsed.volumeMusic, DEFAULT_SETTINGS.volumeMusic),

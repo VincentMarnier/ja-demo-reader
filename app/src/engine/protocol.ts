@@ -1,4 +1,4 @@
-import type { DemoInfo, DemoStatus, DemoSummary, FreeCamPose, ScoreboardData, StageProgress } from '../types';
+import type { DemoInfo, DemoStatus, DemoSummary, FreeCamPose, RadarData, ScoreboardData, StageProgress } from '../types';
 
 export interface BootFile {
   name: string;
@@ -57,6 +57,7 @@ export type WorkerResponse =
   | { type: 'ready' }
   | { type: 'status'; status: DemoStatus }
   | { type: 'scoreboard'; scoreboard: ScoreboardData }
+  | { type: 'radar'; radar: RadarData }
   | { type: 'memory'; stage: string; memory: WorkerMemory }
   | { type: 'audio-open'; rate: number; frames: number; channels: number }
   | { type: 'audio-data'; start: number; pcm: ArrayBuffer }

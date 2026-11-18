@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { KillMarker, Phase, ScoreboardData, ViewStats } from '../types';
+import type { KillMarker, Phase, RadarData, ScoreboardData, ViewStats } from '../types';
 import { ScoreStrip } from './ScoreStrip';
 import { SeekBar } from './SeekBar';
 import { VitalsHud } from './VitalsHud';
+import { Minimap } from './Minimap';
 
 interface PlayerProps {
   matchTime: string;
@@ -16,6 +17,15 @@ interface PlayerProps {
   view: ViewStats | null;
   showScores: boolean;
   showTimer: boolean;
+  showMinimap: boolean;
+  mapName: string;
+  mapFiles: readonly Blob[];
+  radar: RadarData | null;
+  fov: number;
+  /** Player to ring on the minimap: the demo POV or the followed player. */
+  highlightClient: number | null;
+  onFollow: (clientNum: number) => void;
+  onToggleMinimap: () => void;
   currentMs: number;
   durationMs: number;
   killMarkers: KillMarker[];
@@ -92,6 +102,15 @@ function ChevronLeftIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M15 5 8 12l7 7" />
+    </svg>
+  );
+}
+
+function MapIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3.5 6.5 9 4l6 2.5L20.5 4v13.5L15 20l-6-2.5L3.5 20z" />
+      <path d="M9 4v13.5M15 6.5V20" />
     </svg>
   );
 }
@@ -199,6 +218,18 @@ export function Player(props: PlayerProps) {
         showTimer={props.showTimer}
       />
 
+      {props.showMinimap ? (
+        <Minimap
+          mapName={props.mapName}
+          files={props.mapFiles}
+          radar={props.radar}
+          scores={props.scores}
+          fov={props.fov}
+          highlightClient={props.highlightClient}
+          onFollow={props.onFollow}
+        />
+      ) : null}
+
       <button
         type="button"
         className={visible ? 'player-back' : 'player-back is-hidden'}
@@ -303,6 +334,17 @@ export function Player(props: PlayerProps) {
               </div>
             ) : null}
           </div>
+
+          <button
+            type="button"
+            className={props.showMinimap ? 'icon-btn active' : 'icon-btn'}
+            onClick={props.onToggleMinimap}
+            aria-label={props.showMinimap ? 'Hide minimap' : 'Show minimap'}
+            aria-pressed={props.showMinimap}
+            title={props.showMinimap ? 'Hide minimap' : 'Show minimap'}
+          >
+            <MapIcon />
+          </button>
 
           <button
             type="button"

@@ -4,6 +4,7 @@ import type {
   DemoSummary,
   FreeCamPose,
   LocalFile,
+  RadarData,
   ScoreboardData,
   StageProgress
 } from '../types';
@@ -55,6 +56,8 @@ export interface EngineHostApi {
   seekDemo(name: string, targetMs: number): Promise<void>;
   setCvar(name: string, value: string): void;
   getScoreboard(): Promise<ScoreboardData | null>;
+  /** Live player positions for the minimap; null while a long call is running. */
+  getRadar(): Promise<RadarData | null>;
   followClient(clientNum: number): void;
   enableFreeCam(): Promise<FreeCamPose | null>;
   setFreeCamPose(pose: FreeCamPose): void;
