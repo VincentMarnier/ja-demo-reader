@@ -226,7 +226,8 @@ summary { cursor: pointer; color: var(--muted); }
 
 .stage[data-ui-idle] { cursor: none; }
 
-/* The back button and the action bar fade out together; the vitals do not. */
+/* The back button, the action bar and the bottom scrim fade out together;
+   the vitals do not. */
 .player-back,
 .action-bar {
   transition: opacity 0.2s ease;
@@ -781,12 +782,20 @@ summary { cursor: pointer; color: var(--muted); }
 }
 
 .player-bottom {
+  position: relative;
   margin-top: auto;
   display: flex;
   flex-direction: column;
   gap: 2px;
   padding: 34px 12px 10px;
   pointer-events: none;
+}
+/* The bottom scrim fades with the action bar instead of lingering on the frame. */
+.player-bottom::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
   background: linear-gradient(
     0deg,
     rgba(0, 0, 0, 0.88),
@@ -794,6 +803,15 @@ summary { cursor: pointer; color: var(--muted); }
     rgba(0, 0, 0, 0.22) 76%,
     transparent
   );
+  opacity: 1;
+  transition: opacity 0.2s ease;
+}
+.player-bottom > * {
+  position: relative;
+  z-index: 1;
+}
+.stage[data-ui-idle] .player-bottom::before {
+  opacity: 0;
 }
 .seek-bar {
   position: relative;
