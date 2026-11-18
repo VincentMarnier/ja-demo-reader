@@ -33,8 +33,12 @@ Academy and select your own `assets0..3.pk3` and demo files. Nothing is uploaded
   blows; other damage stays in the unknown bucket.
 - Per-player saber detail in the demo summary: swings and hit events by saber
   and stance, mean and median damage per swing, hit rate over time, every swing
-  type (forward/back/strafe attacks and specials), and the damage that player
-  gave to and received from every other player.
+  type (forward/back/strafe attacks and specials), guard breaks won and lost
+  against every other player, saber hits dealt/received while airborne, on the
+  ground or just after landing, and the damage that player gave to and received
+  from every other player.
+- Global score and damage given count opponent kills/damage minus ally
+  kills/damage (teams 1/2 only); per-player matchups stay raw and positive.
 - Follow camera for any player, a free-fly camera with mouse look, and the
   original recorded demo camera.
 - Custom Health/Armor/saber HUD, score strip, timer and scoreboard.

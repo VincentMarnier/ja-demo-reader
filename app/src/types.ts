@@ -91,6 +91,8 @@ export interface DemoEvent {
   target: number;
   attacker: number;
   mod: number;
+  /** 1 when attacker and target were on the same team (1/2). */
+  friendly?: number;
 }
 
 /**
@@ -136,6 +138,34 @@ export interface DemoDamageEvent {
   damage: number;
   /** 0 unknown, 1 saber, 2 missile, 3 POV outgoing, 4 POV incoming, 5 kill. */
   source: number;
+  /** 1 when attacker and target were on the same team (1/2). */
+  friendly?: number;
+}
+
+/**
+ * One saber contact with the movement state of both players at that moment
+ * (0 on ground, 1 airborne, 2 just landed). The scan records these separately
+ * from the swings so dealt/received hits can be split by movement.
+ */
+export interface DemoSaberHit {
+  time: number;
+  attacker: number;
+  target: number;
+  attackerState: number;
+  targetState: number;
+}
+
+/**
+ * A broken guard: `loser` was parrying, `winner`'s strike broke the parry
+ * (`LS_H1_*`) and left `loser` exposed. Wall bounces and saber-lock clashes
+ * are not blocks and are not recorded.
+ */
+export interface DemoBlock {
+  time: number;
+  winner: number;
+  loser: number;
+  /** 1 guard broken (H1), 2 saber knocked away (V1). */
+  kind?: number;
 }
 
 /** A kill on the seek bar: when it happened and the killer's team. */
@@ -207,6 +237,12 @@ export interface DemoGameSummary {
   sabers?: DemoSaberName[];
   /** Saber swings scraped during the scan. Absent on older caches. */
   swings?: DemoSwingEvent[];
+  /** Saber contacts with both players' movement state. Absent on older caches. */
+  saberHits?: DemoSaberHit[];
+  /** Broken guards. Absent on older caches. */
+  blocks?: DemoBlock[];
+  saberHitOverflow?: boolean;
+  blockOverflow?: boolean;
 }
 
 export interface DemoSummary {

@@ -1089,7 +1089,6 @@ summary { cursor: pointer; color: var(--muted); }
   font-weight: 600;
 }
 .detail-table tr.detail-group .muted { font-weight: 400; }
-.detail-sub { font-size: 10px; }
 .detail-opponent { margin: 2px 0 8px; }
 .detail-chart {
   margin-bottom: 10px;
@@ -1099,6 +1098,18 @@ summary { cursor: pointer; color: var(--muted); }
   background: rgba(255, 255, 255, 0.02);
 }
 .detail-empty { margin: 6px 0; font-size: 12px; }
+.detail-inline-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 2px 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.detail-inline-stats b {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
 
 .badge-left {
   display: inline-block;

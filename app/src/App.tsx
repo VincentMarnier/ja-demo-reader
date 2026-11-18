@@ -703,7 +703,7 @@ export default function App() {
     // for the demo; otherwise scan again (the scan no longer loads the map).
     // Bump the cache key when the summary format or game-boundary logic
     // changes so old cached summaries are not reused.
-    const cacheKey = `v8:${demoFile.name}:${demoFile.file.size}:${demoFile.file.lastModified}`;
+    const cacheKey = `v10:${demoFile.name}:${demoFile.file.size}:${demoFile.file.lastModified}`;
     const hadKeyframes = keyframesReadyRef.current;
     let summary = hadKeyframes ? await loadDemoSummary(cacheKey) : null;
     let info: DemoInfo | null = null;

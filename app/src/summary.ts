@@ -1,4 +1,4 @@
-import type { DemoGameSummary, DemoSummary, ScoreboardData, ScoreboardPlayer } from './types';
+import type { DemoGameSummary, DemoPlayerSummary, DemoSummary, ScoreboardData, ScoreboardPlayer } from './types';
 
 export function chooseGame(summary: DemoSummary, serverTime: number): DemoGameSummary | null {
   if (!summary.games.length) return null;
@@ -104,7 +104,9 @@ export function damageAt(game: DemoGameSummary, serverTime: number): Map<number,
       continue;
     }
     const attacker = ensure(event.attacker);
-    attacker.dealt += event.damage;
+    // Global damage given is opponents minus allies; the per-target matrix
+    // stays raw so "damage vs this player" is always positive.
+    attacker.dealt += event.friendly ? -event.damage : event.damage;
     attacker.dealtTo.set(event.target, (attacker.dealtTo.get(event.target) ?? 0) + event.damage);
     target.received += event.damage;
   }
@@ -122,10 +124,26 @@ export function statsAt(game: DemoGameSummary, serverTime: number): Map<number, 
     if (target) target.deaths++;
     if (event.attacker >= 0 && event.attacker !== event.target) {
       const attacker = stats.get(event.attacker);
-      if (attacker) attacker.kills++;
+      // Global kills are opponents minus allies.
+      if (attacker) attacker.kills += event.friendly ? -1 : 1;
     }
   }
   return stats;
+}
+
+/**
+ * Global kills for one player record: kills of opponents minus kills of
+ * allies, scoped to the record's time window so a reused slot does not borrow
+ * another player's kills.
+ */
+export function recordKills(game: DemoGameSummary, record: DemoPlayerSummary): number {
+  let kills = 0;
+  for (const event of game.events) {
+    if (event.time < record.firstSeen || event.time > record.lastSeen) continue;
+    if (event.attacker !== record.num || event.attacker === event.target) continue;
+    kills += event.friendly ? -1 : 1;
+  }
+  return kills;
 }
 
 /**
@@ -172,7 +190,7 @@ export function mergeScoreboard(
     if (record.team === 3) continue; // spectators
     const left = record.left && !record.returned;
     if (used.has(record.num) && !left) continue;
-    const value = stats.get(record.num) ?? { kills: record.kills, deaths: record.deaths };
+    const value = stats.get(record.num) ?? { kills: recordKills(game, record), deaths: record.deaths };
     const life = vitals.get(record.num) ?? { health: 100, armor: 25, dead: false };
     const hit = damage.get(record.num);
     const num = used.has(record.num) ? synthetic-- : record.num;

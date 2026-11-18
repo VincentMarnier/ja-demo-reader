@@ -321,11 +321,29 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   hit-event count as proof of damage.
 - Swings and saber names are per game (`swings`, `sabers`, `pov`), capped by
   `JKA_MAX_SWINGS`; `swingOverflow` is surfaced in the summary. The summary
-  cache version is `v8` because the shape changed.
+  cache version is `v10` because the shape changed.
+- `saberHits` stores every `EV_SABER_HIT` with attacker, target and both
+  movement states (`0` ground, `1` air, `2` just landed). It drives the
+  dealt/received movement table and does not depend on the swing records.
+- `blocks` stores a guard break: the loser entered `LS_H1_*` (parry broken) or
+  `LS_V1_*` (own strike knocked away) within 300 ms of a saber contact, and the
+  other player is the winner (`kind` 1/2). Wall bounces and saber-lock losses
+  without a recent contact are dropped. Do not count every broken-parry anim
+  as a block.
+- Movement state comes from `groundEntityNum` (entities) and
+  `cl.snap.ps.groundEntityNum` (the POV); a ground transition opens a 400 ms
+  "just landed" window. The POV's own entity is absent, so the ps path is
+  required here too.
+- Global kills/damage are opponents minus allies. `friendly` on each damage and
+  obituary record is captured at scan time from the active records' teams
+  (teams 1/2 only; FFA/team 0 and spectators never create allies). The app's
+  `statsAt`, `damageAt`, `recordKills` and the trend chart apply it; keep
+  per-player pairings (damage vs a player, blocks, movement) raw and positive.
+  Do not apply the subtraction twice or to the per-swing tables.
 
 ## App/caching gotchas
 
-- Summary cache keys are versioned (`v8:name:size:lastModified`). Bump the
+- Summary cache keys are versioned (`v10:name:size:lastModified`). Bump the
   version when the summary shape or game-boundary logic changes; otherwise old
   one-game summaries are reused. The IndexedDB cache self-heals a missing store.
 - A cached summary does not contain the in-memory seek keyframes. The app's

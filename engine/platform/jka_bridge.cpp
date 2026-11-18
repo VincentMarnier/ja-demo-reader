@@ -294,6 +294,7 @@ typedef struct {
 	int			target;
 	int			attacker;
 	int			mod;
+	unsigned char	friendly;	// 1 when attacker and target shared team 1/2
 } jkaEvent_t;
 
 // Health/armor timeline.  Every sample is "the target's vitals at this server
@@ -341,6 +342,7 @@ typedef struct {
 	short	attacker;
 	short	damage;
 	unsigned char	source;
+	unsigned char	friendly;	// 1 when attacker and target shared team 1/2
 } jkaDamage_t;
 
 #define JKA_MAX_SWINGS	16000
@@ -367,6 +369,38 @@ typedef struct {
 typedef struct {
 	char	name[JKA_MAX_SABER_NAME];
 } jkaSaber_t;
+
+#define JKA_MAX_SABER_HITS	8000
+#define JKA_MAX_BLOCKS		4000
+
+#define JKA_STATE_GROUND	0
+#define JKA_STATE_AIR		1
+#define JKA_STATE_LAND		2
+// "Just landed" lasts about as long as the landing animation.
+#define JKA_LAND_WINDOW		400
+// A broken parry is resolved in the same server frame as the hit that caused
+// it; keep a little slack for the snapshot the scan sees it in.
+#define JKA_BLOCK_WINDOW	300
+
+// One saber contact event (EV_SABER_HIT) with both players' movement state at
+// that moment (JKA_STATE_*).  Used for the air / ground / just-landed stats.
+typedef struct {
+	int		time;
+	short	attacker;
+	short	target;
+	unsigned char	attackerState;
+	unsigned char	targetState;
+} jkaSaberHit_t;
+
+// A broken guard: the loser was parrying (LS_PARRY_*) and the winner's strike
+// broke the parry (LS_H1_*), leaving the loser exposed.  winner is -1 when the
+// demo does not identify the attacker.
+typedef struct {
+	int		time;
+	short	winner;
+	short	loser;
+	unsigned char	kind;	// 1 guard broken (H1), 2 saber knocked away (V1)
+} jkaBlock_t;
 
 #define JKA_DAMAGE_UNKNOWN	0
 #define JKA_DAMAGE_SABER	1
@@ -425,6 +459,12 @@ typedef struct {
 	jkaSwing_t	swings[JKA_MAX_SWINGS];
 	int			swingCount;
 	qboolean	swingOverflow;
+	jkaSaberHit_t	saberHits[JKA_MAX_SABER_HITS];
+	int			saberHitCount;
+	qboolean	saberHitOverflow;
+	jkaBlock_t	blocks[JKA_MAX_BLOCKS];
+	int			blockCount;
+	qboolean	blockOverflow;
 	jkaSaber_t	sabers[JKA_MAX_SABERS];
 	int			saberCount;
 	int			pov;	// recorded client (clc.clientNum), -1 when unknown
@@ -462,6 +502,13 @@ static int			jka_slotMove[MAX_CLIENTS];
 static int			jka_slotTorsoFlip[MAX_CLIENTS];
 static int			jka_slotSwing[MAX_CLIENTS];	// index+1 into game->swings
 static int			jka_slotSaber[MAX_CLIENTS];	// index into game->sabers
+static qboolean		jka_slotGrounded[MAX_CLIENTS];
+static int			jka_slotLandedAt[MAX_CLIENTS];
+static qboolean		jka_slotBroken[MAX_CLIENTS];
+static int			jka_slotLastHitTime[MAX_CLIENTS];
+static int			jka_slotLastHitAttacker[MAX_CLIENTS];
+static int			jka_slotLastHitByTime[MAX_CLIENTS];
+static int			jka_slotLastHitByTarget[MAX_CLIENTS];
 static qboolean		jka_slotDead[MAX_CLIENTS];
 static qboolean		jka_slotKnown[MAX_CLIENTS];
 static qboolean		jka_predictablePain[MAX_CLIENTS];
@@ -563,6 +610,13 @@ static void JKA_ResetSummary( void )
 		jka_slotTorsoFlip[i] = 0;
 		jka_slotSwing[i] = 0;
 		jka_slotSaber[i] = 0;
+		jka_slotGrounded[i] = qtrue;
+		jka_slotLandedAt[i] = 0;
+		jka_slotBroken[i] = qfalse;
+		jka_slotLastHitTime[i] = -1;
+		jka_slotLastHitAttacker[i] = -1;
+		jka_slotLastHitByTime[i] = -1;
+		jka_slotLastHitByTarget[i] = -1;
 		jka_slotDead[i] = qfalse;
 		jka_slotKnown[i] = qfalse;
 		jka_lastDamageIndex[i] = -1;
@@ -589,6 +643,13 @@ static void JKA_ResetSlotVitals( int slot )
 	jka_slotMove[slot] = 0;
 	jka_slotTorsoFlip[slot] = 0;
 	jka_slotSwing[slot] = 0;
+	jka_slotGrounded[slot] = qtrue;
+	jka_slotLandedAt[slot] = 0;
+	jka_slotBroken[slot] = qfalse;
+	jka_slotLastHitTime[slot] = -1;
+	jka_slotLastHitAttacker[slot] = -1;
+	jka_slotLastHitByTime[slot] = -1;
+	jka_slotLastHitByTarget[slot] = -1;
 	jka_slotDead[slot] = qfalse;
 	jka_slotKnown[slot] = qfalse;
 	jka_pendingHitCount[slot] = 0;
@@ -686,6 +747,26 @@ static qboolean JKA_IsSpectator( int slot )
 	jkaPlayerRecord_t *record = JKA_ActiveRecord( JKA_CurrentGame(), slot );
 
 	return ( record && record->team == 3 ) ? qtrue : qfalse;
+}
+
+// Team 1/2 is a real team; team 0 is free-for-all and team 3 is spectator.
+// In FFA every other player is an opponent, so ally damage is never subtracted.
+static int JKA_SameTeam( jkaGame_t *game, int attacker, int target )
+{
+	jkaPlayerRecord_t *a;
+	jkaPlayerRecord_t *t;
+	int team;
+
+	if ( !game || attacker < 0 || attacker >= MAX_CLIENTS || target < 0 || target >= MAX_CLIENTS ) {
+		return 0;
+	}
+	a = JKA_ActiveRecord( game, attacker );
+	t = JKA_ActiveRecord( game, target );
+	if ( !a || !t || a->team != t->team ) {
+		return 0;
+	}
+	team = a->team;
+	return ( team == 1 || team == 2 ) ? 1 : 0;
 }
 
 static void JKA_EmitVitals( jkaGame_t *game, int now, int num, int health, int armor, int source )
@@ -882,6 +963,108 @@ static void JKA_TrackSwingState( jkaGame_t *game, int now, int num, int move, in
 	}
 }
 
+// The parry-broken animation (LS_H1_*) is the game's "the attacker broke the
+// defender's guard" outcome: the defender is staggered and exposed.  V1 is the
+// mirrored outcome for the attacker whose strike was knocked away, which also
+// leaves them exposed.  Both are resolved as block exchanges; V1 from a wall
+// bounce has no recent saber contact and is ignored below.
+static qboolean JKA_SaberMoveIsBrokenParry( int move )
+{
+	if ( move >= LS_H1_T_ && move <= LS_H1_BL ) {
+		return qtrue;
+	}
+	if ( move >= LS_V1_BR && move <= LS_V1_B_ ) {
+		return qtrue;
+	}
+	return qfalse;
+}
+
+static unsigned char JKA_MoveState( int num, int now )
+{
+	if ( num < 0 || num >= MAX_CLIENTS ) {
+		return JKA_STATE_GROUND;
+	}
+	if ( !jka_slotGrounded[num] ) {
+		return JKA_STATE_AIR;
+	}
+	if ( jka_slotLandedAt[num] > 0 && now - jka_slotLandedAt[num] <= JKA_LAND_WINDOW ) {
+		return JKA_STATE_LAND;
+	}
+	return JKA_STATE_GROUND;
+}
+
+// groundEntityNum is ENTITYNUM_NONE while airborne; the transition back to a
+// ground entity starts the short "just landed" window.
+static void JKA_TrackGroundState( int num, int now, int groundEntityNum, qboolean dead )
+{
+	qboolean grounded;
+
+	if ( num < 0 || num >= MAX_CLIENTS ) {
+		return;
+	}
+	if ( dead ) {
+		jka_slotGrounded[num] = qtrue;
+		jka_slotLandedAt[num] = 0;
+		return;
+	}
+	grounded = ( groundEntityNum != ENTITYNUM_NONE ) ? qtrue : qfalse;
+	if ( grounded && !jka_slotGrounded[num] ) {
+		jka_slotLandedAt[num] = now;
+	}
+	jka_slotGrounded[num] = grounded;
+}
+
+static void JKA_TrackBlockState( int now, int num, int move, qboolean dead )
+{
+	jkaGame_t *game = JKA_CurrentGame();
+	int winner = -1;
+	int kind = 0;
+
+	if ( !game || num < 0 || num >= MAX_CLIENTS ) {
+		return;
+	}
+	if ( dead || !JKA_SaberMoveIsBrokenParry( move ) ) {
+		jka_slotBroken[num] = qfalse;
+		return;
+	}
+	if ( jka_slotBroken[num] ) {
+		return;
+	}
+	jka_slotBroken[num] = qtrue;
+
+	if ( move >= LS_H1_T_ && move <= LS_H1_BL ) {
+		// The defender's parry was broken by the last player who hit them.
+		kind = 1;
+		if ( jka_slotLastHitTime[num] >= 0 && now - jka_slotLastHitTime[num] <= JKA_BLOCK_WINDOW ) {
+			winner = jka_slotLastHitAttacker[num];
+		}
+	} else {
+		// The loser's own strike was knocked away; the target they last hit
+		// is the defender who knocked it away.
+		kind = 2;
+		if ( jka_slotLastHitByTime[num] >= 0 && now - jka_slotLastHitByTime[num] <= JKA_BLOCK_WINDOW ) {
+			winner = jka_slotLastHitByTarget[num];
+		}
+	}
+
+	// A wall bounce or a lost saber-lock clash also plays a broken animation
+	// but has no recent saber contact with the other player.
+	if ( winner < 0 || winner >= MAX_CLIENTS || winner == num ) {
+		return;
+	}
+	if ( game->blockCount >= JKA_MAX_BLOCKS ) {
+		game->blockOverflow = qtrue;
+		return;
+	}
+	{
+		jkaBlock_t *block = &game->blocks[game->blockCount++];
+		block->time = now;
+		block->winner = (short)winner;
+		block->loser = (short)num;
+		block->kind = (unsigned char)kind;
+	}
+}
+
 static void JKA_TrackPlayerSwing( int now, entityState_t *state )
 {
 	jkaGame_t *game = JKA_CurrentGame();
@@ -916,6 +1099,13 @@ static void JKA_TrackSelfSwing( int now )
 	move = cl.snap.ps.weapon == WP_SABER ? cl.snap.ps.saberMove : LS_NONE;
 	JKA_TrackSwingState( game, now, num, move, cl.snap.ps.fd.saberAnimLevel, jka_slotSaber[num],
 		cl.snap.ps.torsoFlip, cl.snap.ps.saberInFlight,
+		cl.snap.ps.stats[STAT_HEALTH] > 0 ? qfalse : qtrue );
+	JKA_TrackBlockState( now, num, move, cl.snap.ps.stats[STAT_HEALTH] > 0 ? qfalse : qtrue );
+}
+
+static void JKA_TrackSelfGround( int now )
+{
+	JKA_TrackGroundState( cl.snap.ps.clientNum, now, cl.snap.ps.groundEntityNum,
 		cl.snap.ps.stats[STAT_HEALTH] > 0 ? qfalse : qtrue );
 }
 
@@ -1016,6 +1206,7 @@ static void JKA_EmitDamage( jkaGame_t *game, int now, int target, int attacker, 
 	sample->attacker = (short)attacker;
 	sample->damage = (short)damage;
 	sample->source = (unsigned char)source;
+	sample->friendly = (unsigned char)JKA_SameTeam( game, attacker, target );
 	jka_lastDamageIndex[target] = game->damageCount - 1;
 
 	// Attach the loss to the swing whose hit caused it, so per-swing damage
@@ -1065,6 +1256,26 @@ static void JKA_AddPendingHit( int now, int target, int attacker, int source )
 	jka_pendingHits[target][count].swing = (short)swing;
 	jka_pendingHits[target][count].source = (unsigned char)source;
 	jka_pendingHitCount[target] = count + 1;
+
+	// A saber contact is recorded even when the demo never exposes the
+	// target's health: it drives the air/ground stats and the guard-break
+	// pairing.
+	if ( source == JKA_DAMAGE_SABER && game ) {
+		jka_slotLastHitTime[target] = now;
+		jka_slotLastHitAttacker[target] = attacker;
+		jka_slotLastHitByTime[attacker] = now;
+		jka_slotLastHitByTarget[attacker] = target;
+		if ( game->saberHitCount < JKA_MAX_SABER_HITS ) {
+			jkaSaberHit_t *saberHit = &game->saberHits[game->saberHitCount++];
+			saberHit->time = now;
+			saberHit->attacker = (short)attacker;
+			saberHit->target = (short)target;
+			saberHit->attackerState = JKA_MoveState( attacker, now );
+			saberHit->targetState = JKA_MoveState( target, now );
+		} else {
+			game->saberHitOverflow = qtrue;
+		}
+	}
 
 	// The hit itself is exact even when the demo never exposes the target's
 	// health, so count it on the swing right away.
@@ -1452,6 +1663,7 @@ static void JKA_TrackObituary( int now, int target, int attacker, int mod )
 		event->target = target;
 		event->attacker = attacker;
 		event->mod = mod;
+		event->friendly = (unsigned char)JKA_SameTeam( game, attacker, target );
 	} else {
 		game->eventOverflow = qtrue;
 	}
@@ -1475,6 +1687,7 @@ static void JKA_TrackObituary( int now, int target, int attacker, int mod )
 			if ( damage->attacker < 0 && now - damage->time <= 1500 ) {
 				damage->attacker = (short)attacker;
 				damage->source = JKA_DAMAGE_KILL;
+				damage->friendly = (unsigned char)JKA_SameTeam( game, attacker, target );
 			}
 		}
 	}
@@ -1667,6 +1880,7 @@ static void JKA_TrackPlayerVitals( int now, entityState_t *state )
 	JKA_TrackPlayerStance( now, state );
 	JKA_TrackPlayerSwing( now, state );
 	dead = ( state->eFlags & EF_DEAD ) ? qtrue : qfalse;
+	JKA_TrackBlockState( now, num, state->saberMove, dead );
 	if ( dead ) {
 		if ( !jka_slotDead[num] ) {
 			JKA_SetVitals( now, num, 0, 0, JKA_VITALS_DEATH );
@@ -1768,6 +1982,7 @@ static void JKA_ProcessSnapshot( int now, int resumeOffset )
 	JKA_TrackSelfVitals( now );
 	JKA_TrackSelfStance( now );
 	JKA_TrackSelfSwing( now );
+	JKA_TrackSelfGround( now );
 	JKA_TrackDuelHealth( now );
 
 	if ( jka_keyframeCount < JKA_MAX_KEYFRAMES &&
@@ -1824,6 +2039,15 @@ static void JKA_ProcessSnapshot( int now, int resumeOffset )
 			( state->eFlags & EF_PLAYER_EVENT ) &&
 			state->otherEntityNum >= 0 && state->otherEntityNum < MAX_CLIENTS ) {
 			jka_predictablePain[state->otherEntityNum] = qtrue;
+		}
+		// Movement state must be current before the event pass classifies a
+		// saber hit as dealt/received in the air, on the ground or just
+		// landed.  The recorded client's own entity is absent; its state comes
+		// from the playerState (JKA_TrackSelfGround).
+		if ( state->eType == ET_PLAYER && state->number >= 0 && state->number < MAX_CLIENTS &&
+			state->number != cl.snap.ps.clientNum ) {
+			JKA_TrackGroundState( state->number, now, state->groundEntityNum,
+				( state->eFlags & EF_DEAD ) ? qtrue : qfalse );
 		}
 	}
 
@@ -2108,8 +2332,8 @@ static void JKA_BuildSummary( void )
 		JKA_Append( &out, &left, "],\"events\":[" );
 		for ( i = 0; i < game->eventCount; i++ ) {
 			jkaEvent_t *event = &game->events[i];
-			JKA_Append( &out, &left, "%s{\"time\":%d,\"target\":%d,\"attacker\":%d,\"mod\":%d}",
-				i ? "," : "", event->time, event->target, event->attacker, event->mod );
+			JKA_Append( &out, &left, "%s{\"time\":%d,\"target\":%d,\"attacker\":%d,\"mod\":%d,\"friendly\":%d}",
+				i ? "," : "", event->time, event->target, event->attacker, event->mod, event->friendly );
 		}
 		JKA_Append( &out, &left, "],\"vitals\":[" );
 		for ( i = 0; i < game->vitalsCount; i++ ) {
@@ -2128,8 +2352,8 @@ static void JKA_BuildSummary( void )
 		JKA_Append( &out, &left, "\"damages\":[" );
 		for ( i = 0; i < game->damageCount; i++ ) {
 			jkaDamage_t *damage = &game->damages[i];
-			JKA_Append( &out, &left, "%s{\"time\":%d,\"target\":%d,\"attacker\":%d,\"damage\":%d,\"source\":%d}",
-				i ? "," : "", damage->time, damage->target, damage->attacker, damage->damage, damage->source );
+			JKA_Append( &out, &left, "%s{\"time\":%d,\"target\":%d,\"attacker\":%d,\"damage\":%d,\"source\":%d,\"friendly\":%d}",
+				i ? "," : "", damage->time, damage->target, damage->attacker, damage->damage, damage->source, damage->friendly );
 		}
 		JKA_Append( &out, &left, "],\"damageOverflow\":%s,", game->damageOverflow ? "true" : "false" );
 		JKA_Append( &out, &left, "\"pov\":%d,\"sabers\":[", game->pov );
@@ -2145,8 +2369,23 @@ static void JKA_BuildSummary( void )
 				i ? "," : "", swing->time, swing->num, swing->move, swing->stance, swing->saber,
 				swing->hits, swing->damage );
 		}
-		JKA_Append( &out, &left, "],\"swingsOverflow\":%s}",
-			game->swingOverflow ? "true" : "false" );
+		JKA_Append( &out, &left, "],\"swingsOverflow\":%s,", game->swingOverflow ? "true" : "false" );
+		JKA_Append( &out, &left, "\"saberHits\":[" );
+		for ( i = 0; i < game->saberHitCount; i++ ) {
+			jkaSaberHit_t *hit = &game->saberHits[i];
+			JKA_Append( &out, &left, "%s{\"time\":%d,\"attacker\":%d,\"target\":%d,\"attackerState\":%d,\"targetState\":%d}",
+				i ? "," : "", hit->time, hit->attacker, hit->target, hit->attackerState, hit->targetState );
+		}
+		JKA_Append( &out, &left, "],\"saberHitOverflow\":%s,",
+			game->saberHitOverflow ? "true" : "false" );
+		JKA_Append( &out, &left, "\"blocks\":[" );
+		for ( i = 0; i < game->blockCount; i++ ) {
+			jkaBlock_t *block = &game->blocks[i];
+			JKA_Append( &out, &left, "%s{\"time\":%d,\"winner\":%d,\"loser\":%d,\"kind\":%d}",
+				i ? "," : "", block->time, block->winner, block->loser, block->kind );
+		}
+		JKA_Append( &out, &left, "],\"blockOverflow\":%s}",
+			game->blockOverflow ? "true" : "false" );
 		firstGame = qfalse;
 	}
 

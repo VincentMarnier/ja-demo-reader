@@ -548,3 +548,105 @@ export function opponentDamage(game: DemoGameSummary, num: number, window?: Swin
   result.sort((a, b) => b.given + b.received - (a.given + a.received) || a.name.localeCompare(b.name));
   return result;
 }
+
+export interface MovementTally {
+  air: number;
+  ground: number;
+  land: number;
+}
+
+export interface MovementCounts {
+  dealt: MovementTally;
+  received: MovementTally;
+}
+
+/**
+ * Global damage given: damage to opponents minus damage to allies. The
+ * per-opponent views stay raw and positive.
+ */
+export function damageGiven(game: DemoGameSummary, num: number, window?: SwingWindow): number {
+  let total = 0;
+  for (const damage of game.damages ?? []) {
+    if (damage.damage <= 0 || damage.attacker !== num) continue;
+    if (window && (damage.time < window.from || damage.time > window.to)) continue;
+    total += damage.friendly ? -damage.damage : damage.damage;
+  }
+  return total;
+}
+
+/**
+ * Saber contacts dealt and received split by the player's own movement state
+ * when the hit landed: airborne, on the ground, or just after landing.
+ */
+export function movementCounts(game: DemoGameSummary, num: number, window?: SwingWindow): MovementCounts {
+  const dealt: MovementTally = { air: 0, ground: 0, land: 0 };
+  const received: MovementTally = { air: 0, ground: 0, land: 0 };
+  const add = (tally: MovementTally, state: number) => {
+    if (state === 1) tally.air++;
+    else if (state === 2) tally.land++;
+    else tally.ground++;
+  };
+
+  for (const hit of game.saberHits ?? []) {
+    if (window && (hit.time < window.from || hit.time > window.to)) continue;
+    if (hit.attacker === num) add(dealt, hit.attackerState);
+    if (hit.target === num) add(received, hit.targetState);
+  }
+  return { dealt, received };
+}
+
+export interface BlockOpponentStats {
+  num: number;
+  name: string;
+  /** Guards this player broke (this player's strike, opponent exposed). */
+  won: number;
+  /** Guards this player lost (opponent's strike, this player exposed). */
+  lost: number;
+}
+
+export interface BlockStats {
+  won: number;
+  lost: number;
+  opponents: BlockOpponentStats[];
+}
+
+/**
+ * Broken guards won and lost against every other player. A win is a broken
+ * parry (`LS_H1_*`): the loser was blocking and is left exposed. Wall bounces
+ * and saber-lock losses are not guard breaks and are excluded by the scan.
+ */
+export function blockStats(game: DemoGameSummary, num: number, window?: SwingWindow): BlockStats {
+  const byNum = new Map<number, BlockOpponentStats>();
+  const ensure = (other: number): BlockOpponentStats => {
+    let entry = byNum.get(other);
+    if (!entry) {
+      entry = { num: other, name: playerLabel(game, other), won: 0, lost: 0 };
+      byNum.set(other, entry);
+    }
+    return entry;
+  };
+
+  for (const player of game.players) {
+    if (player.num === num) continue;
+    if (player.team === 3 && player.kills === 0 && player.deaths === 0) continue;
+    ensure(player.num);
+  }
+
+  let won = 0;
+  let lost = 0;
+  for (const block of game.blocks ?? []) {
+    if (window && (block.time < window.from || block.time > window.to)) continue;
+    if (block.winner === num && block.loser !== num) {
+      won++;
+      ensure(block.loser).won++;
+    } else if (block.loser === num) {
+      lost++;
+      if (block.winner >= 0 && block.winner !== num) ensure(block.winner).lost++;
+    }
+  }
+
+  const opponents = [...byNum.values()].sort(
+    (a, b) => b.won + b.lost - (a.won + a.lost) || a.name.localeCompare(b.name)
+  );
+  return { won, lost, opponents };
+}

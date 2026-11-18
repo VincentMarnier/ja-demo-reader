@@ -10,7 +10,11 @@ sabering in depth:
 - hits per swing (hit events, not just health losses),
 - damage per swing, so the app can show the mean and the median,
 - the swing type (the resolved `saberMove`, i.e. the direction or special),
-- the damage that player gave to and received from every other player.
+- the damage that player gave to and received from every other player,
+- saber blocks won and lost against every other player (a win breaks the
+  opponent's guard and leaves them exposed),
+- saber hits that player dealt and received while airborne, on the ground and
+  just after landing.
 
 ## What the demo actually carries
 
@@ -23,6 +27,7 @@ includes the fields this feature needs:
 | `torsoFlip` | toggles when the same animation restarts | 1 bit |
 | `fireflag` | `playerState.fd.saberAnimLevel`, mirrored for every player | 2 bits |
 | `saberInFlight` | thrown saber (saber throw, not a swing) | 1 bit |
+| `groundEntityNum` | the entity the player stands on; `ENTITYNUM_NONE` is airborne | `GENTITYNUM_BITS` |
 
 The **recorded client's own player entity is not in the demo snapshots**. The
 scan therefore reads the POV's stance and swing from its playerState
@@ -75,6 +80,18 @@ have their own names.
   snapshot stream) leaves the swing with hit events but no damage sample; the
   app reports how many swings carry a damage sample.
 - Saber throws have no swing. Their hits are not counted as swings.
+- A **block win** is a broken guard. The loser enters a broken-parry move
+  (`LS_H1_*`, or `LS_V1_*` when their own strike is knocked away) within 300 ms
+  of a saber contact with another player; that player is the winner. Wall
+  bounces and saber-lock losses without a saber contact are ignored, and the
+  `kind` field says which of the two outcomes it was.
+- **Movement state** comes from `groundEntityNum`: airborne while it is
+  `ENTITYNUM_NONE`, otherwise on the ground. The transition back to a ground
+  entity starts a 400 ms "just landed" window. The POV uses
+  `cl.snap.ps.groundEntityNum`; remote players use their entity state.
+- Every `EV_SABER_HIT` is also stored on its own (`saberHits`) with the
+  attacker, the target and both movement states, so dealt/received hits can be
+  split by movement independently of the swing records.
 
 ## Summary shape
 
@@ -88,32 +105,68 @@ Per game, in addition to the existing arrays:
     { "time": 123456, "num": 2, "move": 10, "stance": 3,
       "saber": 0, "hits": 1, "damage": 60 }
   ],
-  "swingsOverflow": false
+  "saberHits": [
+    { "time": 123456, "attacker": 2, "target": 5,
+      "attackerState": 0, "targetState": 1 }  // 0 ground, 1 air, 2 just landed
+  ],
+  "blocks": [
+    { "time": 123900, "winner": 2, "loser": 5, "kind": 1 } // 1 H1, 2 V1
+  ],
+  "swingsOverflow": false,
+  "saberHitOverflow": false,
+  "blockOverflow": false
 }
 ```
-
 `move` is the numeric `LS_*` value; the app owns the label table. `stance`
 is corrected (`6` dual, `7` staff). `hits` is the number of `EV_SABER_HIT`
 events on that swing; the UI labels that count **Hit events**. `damage` is the
 attributed damage for that swing, which can be `0` even for a hit event the
 demo did not expose.
 
-The summary cache key moved to `v8` because the shape changed.
+The summary cache key moved to `v9` because the shape changed.
+
+## Global counters vs pairings
+
+The scoreboard, the demo summary score and the trend charts use **global**
+counters:
+
+- kills = kills of opponents − kills of allies,
+- damage given = damage to opponents − damage to allies.
+
+Only teams 1 and 2 count as a team; team 0 (free-for-all) and spectators never
+create allies. Every damage and kill record carries `friendly` (1 when attacker
+and target shared team 1/2), captured at scan time from the active player
+records, so a team switch mid-game is classified correctly. Kills and damage are
+scoped to the player record's time window when a slot is reused.
+
+Every **per-player pairing** stays raw and positive: damage given/received
+against a specific player, the opponent table's net, blocks and movement. The
+player detail shows both global `Damage given` (allies subtracted) and
+`Swing damage` (the raw sum of the saber table below).
+
+The summary cache key moved to `v10` because the event/damage shape changed.
 
 ## The view
 
 `app/src/saber.ts` owns the move labels, the stance/saber labels and the
-aggregation (per saber+stance, per swing type, buckets, opponent pairs).
-`app/src/components/PlayerDetailView.tsx` is the UI, opened from the demo
-summary's view selector:
+aggregation (per saber+stance, per swing type, buckets, opponent pairs, blocks,
+movement). `app/src/components/PlayerDetailView.tsx` is the UI, opened from the
+demo summary's view selector:
 
 - game and player pickers, defaulting to the longest game and the recorded POV;
-- totals: swings, swings that hit, hit rate, hit events, damage, mean and
-  median damage per swing that carried a damage sample;
+- totals: swings, swings that hit, hit rate, hit events, global damage given
+  (allies subtracted), raw swing damage, mean and median damage per swing that
+  carried a damage sample;
 - a saber × stance table with the same numbers per combination;
 - a hit-rate-over-time chart with one series per combination (plus all swings);
+  the legend shows each combination's overall rate, and the hover value is the
+  bucket under the pointer;
 - a swing-type table grouped by saber × stance, with swings, successful swings,
-  hit rate, hits and damage for every move;
+  hit rate, hit events and damage for every move;
+- a block table with wins and losses against every other player, plus totals
+  and win rate;
+- a movement table with saber hits dealt and received while airborne, on the
+  ground and just after landing;
 - an opponent table with damage given, received and net for every other player,
   plus a cumulative given/received chart for the selected opponent.
 

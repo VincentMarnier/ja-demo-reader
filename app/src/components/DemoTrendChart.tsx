@@ -83,13 +83,17 @@ function buildTrendSeries(game: DemoGameSummary, metric: TrendMetric): TrendSeri
 
   if (metric === 'kills' || metric === 'kd') {
     for (const event of game.events) {
-      if (event.attacker >= 0 && event.attacker !== event.target) add(event.attacker, event.time, 1);
+      if (event.attacker >= 0 && event.attacker !== event.target) {
+        // Global kills: opponents add one, allies subtract one.
+        add(event.attacker, event.time, event.friendly ? -1 : 1);
+      }
       if (metric === 'kd') add(event.target, event.time, -1);
     }
   } else {
     for (const event of game.damages ?? []) {
       if (event.damage <= 0 || event.attacker < 0) continue;
-      add(event.attacker, event.time, event.damage);
+      // Global damage given: opponents add, allies subtract.
+      add(event.attacker, event.time, event.friendly ? -event.damage : event.damage);
       if (metric === 'net') add(event.target, event.time, -event.damage);
     }
   }
