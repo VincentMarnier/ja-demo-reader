@@ -1,0 +1,79 @@
+diff --git a/codemp/cgame/cg_view.c b/codemp/cgame/cg_view.c
+--- a/codemp/cgame/cg_view.c
++++ b/codemp/cgame/cg_view.c
+@@ -41,6 +41,15 @@ static qboolean cg_freeCamActive = qfalse;
+ static vec3_t cg_freeCamOrigin;
+ static vec3_t cg_freeCamAngles;
+ static int cg_followClient = -1;
++// Last pose computed for the followed player. The demo only carries a remote
++// player's entity while it is in the recorded POV's PVS, so a followed player
++// can drop out of the snapshots for stretches of the demo. Hold this pose
++// instead of snapping back to the demo camera, and start following again as
++// soon as the entity has data.
++static qboolean cg_followHoldValid = qfalse;
++static vec3_t cg_followHoldOrigin;
++static vec3_t cg_followHoldAngles;
++static qboolean cg_followHoldThirdPerson = qfalse;
+ static int cg_externalKills[MAX_CLIENTS];
+ static int cg_externalDeaths[MAX_CLIENTS];
+ 
+@@ -75,12 +84,26 @@ static void CG_ApplyExternalCamera( void )
+ 		clientInfo_t *ci = &cgs.clientinfo[cg_followClient];
+ 		centity_t *cent = &cg_entities[cg_followClient];
+ 
+-		if ( !ci->infoValid || ci->team == TEAM_SPECTATOR || !cent->currentValid ||
+-			cent->currentState.eType != ET_PLAYER ) {
++		if ( !ci->infoValid || ci->team == TEAM_SPECTATOR ) {
+ 			cg_followClient = -1;
+ 			return;
+ 		}
+ 
++		if ( !cent->currentValid || cent->currentState.eType != ET_PLAYER ) {
++			// The followed player's entity is not in this snapshot: the demo
++			// only carries remote players while they are in the recorded POV's
++			// PVS. Hold the last pose we had for him instead of snapping back
++			// to the demo camera; the follow resumes by itself once his entity
++			// is back.
++			if ( cg_followHoldValid ) {
++				VectorCopy( cg_followHoldOrigin, cg.refdef.vieworg );
++				VectorCopy( cg_followHoldAngles, cg.refdef.viewangles );
++				cg.refdef.viewangles[ROLL] = 0.0f;
++				cg.renderingThirdPerson = cg_followHoldThirdPerson;
++			}
++			return;
++		}
++
+ 		{
+ 			if ( cg_followClient == cg.snap->ps.clientNum ) {
+ 				// The recorded POV client has real view angles; put the camera at
+@@ -108,6 +131,13 @@ static void CG_ApplyExternalCamera( void )
+ 				cg.renderingThirdPerson = qtrue;
+ 			}
+ 			cg.refdef.viewangles[ROLL] = 0.0f;
++
++			// Remember the pose so a snapshot gap holds it instead of falling
++			// back to the recorded POV.
++			VectorCopy( cg.refdef.vieworg, cg_followHoldOrigin );
++			VectorCopy( cg.refdef.viewangles, cg_followHoldAngles );
++			cg_followHoldThirdPerson = cg.renderingThirdPerson;
++			cg_followHoldValid = qtrue;
+ 		}
+ 	}
+ }
+@@ -2968,6 +2998,8 @@ const char *CG_GetScoreboardJson( void )
+ 
+ void CG_SetFollowClient( int clientNum )
+ {
++	cg_followHoldValid = qfalse;
++
+ 	if ( clientNum < 0 || clientNum >= MAX_CLIENTS ) {
+ 		cg_followClient = -1;
+ 		return;
+@@ -2996,6 +3028,7 @@ const char *CG_EnableFreeCam( void )
+ 		VectorCopy( cg.refdef.viewangles, cg_freeCamAngles );
+ 		cg_freeCamActive = qtrue;
+ 		cg_followClient = -1;
++		cg_followHoldValid = qfalse;
+ 	}
+ 
+ 	snprintf( buffer, sizeof( buffer ),

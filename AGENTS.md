@@ -76,7 +76,7 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
 - `engine/platform/jka_bridge.cpp` is copied into `codemp/client/` by the build
   script; editing it needs no patch change.
 - Changes to upstream/cgame/client source belong in a patch. The current patch
-  set is `0001`–`0013`; `0004` contains the linked cgame/rend2 changes,
+  set is `0001`–`0014`; `0004` contains the linked cgame/rend2 changes,
   `0005` keeps the last frame when a demo ends, `0006` adds M9 `jka_profile`
   diagnostics (timings, image counters, shader usage), `0007` adds the hybrid
   eager/lazy shader compile, `0008` selects the OffscreenCanvas window layer
@@ -91,7 +91,10 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   bits, so dual/staff need the clientinfo correction). `0013` makes a missing
   `misc_model_static` model a warning instead of an `ERR_DROP`; community maps
   often reuse a decorative model from another map PK3, and a demo must still
-  play when only the map PK3 is supplied.
+  play when only the map PK3 is supplied. `0014` makes the follow camera hold
+  the target's last pose while its entity is missing from the snapshots (the
+  demo only carries remote players inside the recorded POV's PVS) instead of
+  snapping back to the demo camera; the follow resumes when the entity returns.
   Prefer a new patch over editing a large existing one.
   Verify every patch with a clean worktree: apply all patches from the pin and
   compare the affected files.

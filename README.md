@@ -131,7 +131,9 @@ own. See [docs/github-pages.md](docs/github-pages.md).
   red for a red-team killer, blue for a blue-team killer, and the accent colour
   when the demo has no teams.
 - **Follow** — first-person model camera for the recorded POV player, third-person
-  model camera for other players.
+  model camera for other players. While the followed player's entity is missing
+  from the demo snapshots, the camera holds its last position instead of
+  snapping back, then follows again when the player's data returns.
 - **Free cam** — toggled from the scoreboard panel; WASD/Space/Ctrl movement,
   arrow keys or pointer-lock mouse look. Bindings can be changed in Settings.
 - **Speed** — opens the playback-speed popover.
