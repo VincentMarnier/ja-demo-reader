@@ -5,10 +5,12 @@ import { formatTime } from '../format';
 import {
   blockStats,
   damageGiven,
+  damageTotals,
   meanValue,
   medianValue,
   movementCounts,
   opponentDamage,
+  opponentSwingCombos,
   playerCombos,
   playerLabel,
   stripColors,
@@ -16,7 +18,7 @@ import {
   swingBuckets,
   swingTotals
 } from '../saber';
-import type { SaberComboStats, SwingWindow } from '../saber';
+import type { SaberComboStats, SaberContactComboStats, SwingWindow } from '../saber';
 import { ChartMomentBar } from './ChartMomentBar';
 import { DamageHeatmapPanel } from './DamageHeatmapPanel';
 import { PLAYER_HEATMAP_MODES } from '../map/damageHeatmap';
@@ -94,8 +96,87 @@ function formatDamage(value: number): string {
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 }
 
-function comboName(combo: SaberComboStats): string {
+function comboName(combo: { saberLabel: string; stanceLabel: string }): string {
   return `${combo.saberLabel} · ${combo.stanceLabel}`;
+}
+
+type SwingCombo = SaberComboStats | SaberContactComboStats;
+
+/**
+ * The grouped swing-type table. The global view reports the swing total and
+ * hit rate; a single-opponent view drops them because swing totals cannot be
+ * attributed to one target, leaving the swings that connected.
+ */
+function SwingTypesTable({ combos, scoped }: { combos: SwingCombo[]; scoped: boolean }) {
+  return (
+    <div className="detail-scroll">
+      <table className="detail-table">
+        <thead>
+          <tr>
+            <th>Swing</th>
+            {scoped ? null : <th className="num">Swings</th>}
+            <th className="num">{scoped ? 'Successful swings' : 'Successful'}</th>
+            {scoped ? null : <th className="num">Hit rate</th>}
+            <th className="num">Hit events</th>
+            <th
+              className="num"
+              title={
+                scoped
+                  ? 'Attributed damage to this opponent on these swings'
+                  : 'Raw damage of these swings; ally damage is included'
+              }
+            >
+              Damage
+            </th>
+            <th className="num" title="Damage per swing that carried a damage sample">
+              Avg / swing
+            </th>
+          </tr>
+        </thead>
+        {combos.map(combo => {
+          const comboSwings = 'swings' in combo ? combo.swings : undefined;
+          return (
+            <tbody key={combo.key}>
+              <tr className="detail-group">
+                <td colSpan={scoped ? 5 : 7}>
+                  {comboName(combo)}
+                  <span className="muted">
+                    {' '}
+                    · {combo.saberName} ·{' '}
+                    {scoped ? `${combo.successful} successful swings` : `${comboSwings} swings`} ·{' '}
+                    {combo.hits} hit events
+                  </span>
+                </td>
+              </tr>
+              {combo.types.map(type => {
+                const typeSwings = 'swings' in type ? type.swings : undefined;
+                return (
+                  <tr key={`${combo.key}-${type.move}`}>
+                    <td>{type.label}</td>
+                    {scoped ? null : <td className="num">{typeSwings}</td>}
+                    <td className="num">{type.successful}</td>
+                    {scoped ? null : (
+                      <td className="num">
+                        {formatPercent(successRate(type.successful, typeSwings ?? 0))}
+                      </td>
+                    )}
+                    <td className="num">{type.hits}</td>
+                    <td className="num">{type.damage}</td>
+                    <td
+                      className="num"
+                      title={`${type.samples.length} swings with a damage sample`}
+                    >
+                      {type.samples.length ? formatDamage(meanValue(type.samples)) : '—'}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          );
+        })}
+      </table>
+    </div>
+  );
 }
 
 interface ChartPoint {
@@ -351,11 +432,11 @@ export function PlayerDetailView({
   const game = games[Math.min(gameIndex, Math.max(0, games.length - 1))];
   const players = useMemo(() => detailPlayers(game), [game]);
   const [selectedPlayer, setSelectedPlayer] = useState<number | null>(null);
+  const [selectedOpponent, setSelectedOpponent] = useState<number | null>(null);
   const num =
     selectedPlayer !== null && players.some(player => player.num === selectedPlayer)
       ? selectedPlayer
       : pickPlayer(game, players);
-  const [selectedOpponent, setSelectedOpponent] = useState<number | null>(null);
   const record = players.find(player => player.num === num);
   const windowFrom = record?.firstSeen;
   const windowTo = record?.lastSeen;
@@ -364,13 +445,32 @@ export function PlayerDetailView({
     [windowFrom, windowTo]
   );
 
+  const opponents = useMemo(() => players.filter(player => player.num !== num), [players, num]);
+  const opponentNum =
+    selectedOpponent !== null && opponents.some(player => player.num === selectedOpponent)
+      ? selectedOpponent
+      : null;
+  const playerName = playerLabel(game, num);
+  const opponentName = opponentNum !== null ? playerLabel(game, opponentNum) : null;
+
   const combos = useMemo(() => playerCombos(game, num, window), [game, num, window]);
   const totals = useMemo(() => swingTotals(combos), [combos]);
   const pairs = useMemo(() => opponentDamage(game, num, window), [game, num, window]);
-  const blocks = useMemo(() => blockStats(game, num, window), [game, num, window]);
-  const movement = useMemo(() => movementCounts(game, num, window), [game, num, window]);
+  const opponentPair =
+    opponentNum === null ? null : pairs.find(entry => entry.num === opponentNum) ?? null;
+  const blocks = useMemo(
+    () => blockStats(game, num, window, opponentNum ?? undefined),
+    [game, num, window, opponentNum]
+  );
+  const movement = useMemo(
+    () => movementCounts(game, num, window, opponentNum ?? undefined),
+    [game, num, window, opponentNum]
+  );
   const given = useMemo(() => damageGiven(game, num, window), [game, num, window]);
-  const opponent = pairs.find(entry => entry.num === selectedOpponent) ?? pairs[0] ?? null;
+  const contactCombos = useMemo(
+    () => (opponentNum === null ? [] : opponentSwingCombos(game, num, opponentNum, window)),
+    [game, num, opponentNum, window]
+  );
   const bucketMs = bucketFor(game.duration);
   const buckets = useMemo(
     () => swingBuckets(game, num, bucketMs, undefined, window),
@@ -434,44 +534,56 @@ export function PlayerDetailView({
     return series;
   }, [buckets, bucketMs, combos, game, num, totals, window]);
 
-  const pairSeries = useMemo<ChartSeries[]>(() => {
-    if (!opponent) return [];
+  const damageSeries = useMemo<ChartSeries[]>(() => {
+    if (opponentNum !== null) {
+      if (!opponentPair) return [];
+      return [
+        {
+          key: 'given',
+          label: `Given to ${opponentPair.name}`,
+          color: SERIES_COLORS[0],
+          points: opponentPair.givenSeries
+        },
+        {
+          key: 'received',
+          label: `Received from ${opponentPair.name}`,
+          color: SERIES_COLORS[3],
+          points: opponentPair.receivedSeries
+        }
+      ];
+    }
+    const all = damageTotals(game, num, window);
     return [
       {
         key: 'given',
-        label: `Given to ${opponent.name}`,
+        label: 'Given to players',
         color: SERIES_COLORS[0],
-        points: opponent.givenSeries
+        points: all.givenSeries
       },
       {
         key: 'received',
-        label: `Received from ${opponent.name}`,
+        label: 'Received from players',
         color: SERIES_COLORS[3],
-        points: opponent.receivedSeries
+        points: all.receivedSeries
       }
     ];
-  }, [opponent]);
+  }, [game, num, window, opponentNum, opponentPair]);
 
   if (!game) return null;
 
   const recordedPov = game.pov !== undefined && game.pov === num;
   const hasSwings = (game.swings?.length ?? 0) > 0;
-
-  // The player heatmaps sit below the saber breakdown.  The same element is
-  // reused in the empty branches so damage still has a map when this summary
-  // has no swing records for the player.
-  const heatmaps = (
-    <>
-      <h4 className="detail-heading">Player damage heatmaps</h4>
-      <DamageHeatmapPanel
-        game={game}
-        num={num}
-        mapName={mapName}
-        files={mapFiles}
-        modes={PLAYER_HEATMAP_MODES}
-      />
-    </>
-  );
+  const scopedCombos = opponentNum === null ? combos : contactCombos;
+  const damageRows = opponentNum === null ? pairs : pairs.filter(entry => entry.num === opponentNum);
+  const movementTotal =
+    movement.dealt.air +
+    movement.dealt.ground +
+    movement.dealt.land +
+    movement.received.air +
+    movement.received.ground +
+    movement.received.land;
+  const blockTotal = blocks.won + blocks.lost;
+  const blockRate = blockTotal > 0 ? formatPercent(blocks.won / blockTotal) : '—';
 
   return (
     <section className="player-detail" aria-label="Player detail">
@@ -497,7 +609,13 @@ export function PlayerDetailView({
         ) : null}
         <label>
           <span>Player</span>
-          <select value={num} onChange={event => setSelectedPlayer(Number(event.target.value))}>
+          <select
+            value={num}
+            onChange={event => {
+              setSelectedPlayer(Number(event.target.value));
+              setSelectedOpponent(null);
+            }}
+          >
             {players.map(player => (
               <option key={player.num} value={player.num}>
                 {stripColors(player.name) || `Client ${player.num}`}
@@ -509,14 +627,12 @@ export function PlayerDetailView({
         {recordedPov ? <span className="detail-tag">Recorded POV</span> : null}
       </div>
 
+      <h4 className="detail-heading">Demo summary</h4>
       {!hasSwings || !game.swings ? (
-        <>
-          <p className="muted detail-empty">
-            This summary has no saber swing data. Run Check map again to rescan the demo with the current
-            scanner.
-          </p>
-          {heatmaps}
-        </>
+        <p className="muted detail-empty">
+          This summary has no saber swing data. Run Check map again to rescan the demo with the current
+          scanner.
+        </p>
       ) : (
         <>
           <div className="detail-kpis">
@@ -554,52 +670,47 @@ export function PlayerDetailView({
             </div>
           </div>
 
-          {combos.length === 0 ? (
-            <>
-              <p className="muted detail-empty">No saber swings were recorded for this player in this game.</p>
-              {heatmaps}
-            </>
-          ) : (
-            <>
           <h4 className="detail-heading">By saber &amp; stance</h4>
-          <div className="detail-scroll">
-            <table className="detail-table">
-              <thead>
-                <tr>
-                  <th>Saber &amp; stance</th>
-                  <th className="num">Swings</th>
-                  <th className="num">Successful</th>
-                  <th className="num">Hit rate</th>
-                  <th className="num">Hit events</th>
-                  <th className="num" title="Raw damage of these swings; ally damage is included">Damage</th>
-                  <th className="num" title="Damage per swing that carried a damage sample">Avg</th>
-                  <th className="num" title="Damage per swing that carried a damage sample">Median</th>
-                </tr>
-              </thead>
-              <tbody>
-                {combos.map(combo => (
-                  <tr key={combo.key}>
-                    <td title={`${combo.saberName} · ${combo.stanceLabel}`}>
-                      {combo.saberLabel} · {combo.stanceLabel}
-                    </td>
-                    <td className="num">{combo.swings}</td>
-                    <td className="num">{combo.successful}</td>
-                    <td className="num">{formatPercent(successRate(combo.successful, combo.swings))}</td>
-                    <td className="num">{combo.hits}</td>
-                    <td className="num">{combo.damage}</td>
-                    <td className="num" title={`${combo.samples.length} swings with a damage sample`}>
-                      {combo.samples.length ? formatDamage(meanValue(combo.samples)) : '—'}
-                    </td>
-                    <td className="num" title={`${combo.samples.length} swings with a damage sample`}>
-                      {combo.samples.length ? formatDamage(medianValue(combo.samples)) : '—'}
-                    </td>
+          {combos.length === 0 ? (
+            <p className="muted detail-empty">No saber swings were recorded for this player in this game.</p>
+          ) : (
+            <div className="detail-scroll">
+              <table className="detail-table">
+                <thead>
+                  <tr>
+                    <th>Saber &amp; stance</th>
+                    <th className="num">Swings</th>
+                    <th className="num">Successful</th>
+                    <th className="num">Hit rate</th>
+                    <th className="num">Hit events</th>
+                    <th className="num" title="Raw damage of these swings; ally damage is included">Damage</th>
+                    <th className="num" title="Damage per swing that carried a damage sample">Avg</th>
+                    <th className="num" title="Damage per swing that carried a damage sample">Median</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {heatmaps}
+                </thead>
+                <tbody>
+                  {combos.map(combo => (
+                    <tr key={combo.key}>
+                      <td title={`${combo.saberName} · ${combo.stanceLabel}`}>
+                        {combo.saberLabel} · {combo.stanceLabel}
+                      </td>
+                      <td className="num">{combo.swings}</td>
+                      <td className="num">{combo.successful}</td>
+                      <td className="num">{formatPercent(successRate(combo.successful, combo.swings))}</td>
+                      <td className="num">{combo.hits}</td>
+                      <td className="num">{combo.damage}</td>
+                      <td className="num" title={`${combo.samples.length} swings with a damage sample`}>
+                        {combo.samples.length ? formatDamage(meanValue(combo.samples)) : '—'}
+                      </td>
+                      <td className="num" title={`${combo.samples.length} swings with a damage sample`}>
+                        {combo.samples.length ? formatDamage(medianValue(combo.samples)) : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           <h4 className="detail-heading">Hit rate over time</h4>
           <p className="fineprint detail-note">
@@ -611,108 +722,171 @@ export function PlayerDetailView({
             duration={game.duration}
             yMax={100}
             yFormat={value => `${Math.round(value)}%`}
-            ariaLabel={`Swing success rate over time for ${playerLabel(game, num)} on ${game.map}`}
+            ariaLabel={`Swing success rate over time for ${playerName} on ${game.map}`}
             emptyText="Not enough swings to chart a hit rate."
             summaryLabel="overall"
             onPlayFrom={onPlayFrom ? time => onPlayFrom(game.startTime + time) : undefined}
             busy={busy}
             canPlay={canPlay}
           />
+        </>
+      )}
 
-          <h4 className="detail-heading">Swing types</h4>
-          <p className="fineprint detail-note">
-            The demo stores the resolved swing, not the keys held. The seven basic attacks are named
-            after the direction that produces them (forward + attack, forward + left + attack, …).
-          </p>
+      <div className="detail-section">
+        <div className="detail-section-head">
+          <h4 className="detail-heading">Against opponents</h4>
+          <label className="detail-opponent">
+            <span>Opponent</span>
+            <select
+              aria-label="Opponent scope"
+              value={opponentNum ?? 'all'}
+              onChange={event =>
+                setSelectedOpponent(event.target.value === 'all' ? null : Number(event.target.value))
+              }
+            >
+              <option value="all">All players (global)</option>
+              {opponents.map(player => (
+                <option key={player.num} value={player.num}>
+                  {stripColors(player.name) || `Client ${player.num}`}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <p className="fineprint detail-note">
+          {opponentNum === null
+            ? 'Global shows every other player. Pick one opponent to scope the damage, heatmaps, swing types, blocks and movement below.'
+            : `Scoped to ${opponentName}. The sections below only count what passed between ${playerName} and ${opponentName}.`}
+        </p>
+
+        <h4 className="detail-heading">Damage over time</h4>
+        <p className="fineprint detail-note">
+          {opponentNum === null
+            ? "Attributed damage from the demo's health updates, raw and positive for every other player. The Damage given KPI above subtracts ally damage."
+            : `Attributed damage between ${playerName} and ${opponentName}, from the demo's health updates. Damage the demo never exposes stays unknown.`}
+        </p>
+        <LineChart
+          key={`${game.map}-${game.startTime}-pairs-${opponentNum ?? 'all'}`}
+          series={damageSeries}
+          duration={game.duration}
+          yFormat={value => String(Math.round(value))}
+          ariaLabel={`Damage given and received by ${playerName}${
+            opponentNum === null ? '' : ` against ${opponentName}`
+          }`}
+          emptyText={
+            opponentNum === null
+              ? 'No attributed damage against other players was recorded.'
+              : `No attributed damage with ${opponentName} was recorded.`
+          }
+          onPlayFrom={onPlayFrom ? time => onPlayFrom(game.startTime + time) : undefined}
+          busy={busy}
+          canPlay={canPlay}
+        />
+        {damageRows.length ? (
           <div className="detail-scroll">
             <table className="detail-table">
               <thead>
                 <tr>
-                  <th>Swing</th>
-                  <th className="num">Swings</th>
-                  <th className="num">Successful</th>
-                  <th className="num">Hit rate</th>
-                  <th className="num">Hit events</th>
-                  <th className="num" title="Raw damage of these swings; ally damage is included">Damage</th>
-                  <th className="num">Avg / swing</th>
+                  <th>Opponent</th>
+                  <th className="num">Given</th>
+                  <th className="num">Received</th>
+                  <th className="num">Net</th>
                 </tr>
               </thead>
-              {combos.map(combo => (
-                <tbody key={combo.key}>
-                  <tr className="detail-group">
-                    <td colSpan={7}>
-                      {comboName(combo)}
-                      <span className="muted">
-                        {' '}
-                        · {combo.saberName} · {combo.swings} swings · {combo.hits} hit events
-                      </span>
-                    </td>
+              <tbody>
+                {damageRows.map(entry => (
+                  <tr key={entry.num}>
+                    <td>{entry.name}</td>
+                    <td className="num">{entry.given || '—'}</td>
+                    <td className="num">{entry.received || '—'}</td>
+                    <td className="num">{entry.given - entry.received}</td>
                   </tr>
-                  {combo.types.map(type => (
-                    <tr key={`${combo.key}-${type.move}`}>
-                      <td>{type.label}</td>
-                      <td className="num">{type.swings}</td>
-                      <td className="num">{type.successful}</td>
-                      <td className="num">{formatPercent(successRate(type.successful, type.swings))}</td>
-                      <td className="num">{type.hits}</td>
-                      <td className="num">{type.damage}</td>
-                      <td className="num">
-                        {type.samples.length ? formatDamage(meanValue(type.samples)) : '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              ))}
+                ))}
+              </tbody>
             </table>
           </div>
-            </>
-          )}
+        ) : null}
 
-          <h4 className="detail-heading">Saber blocks</h4>
-          <p className="fineprint detail-note">
-            A block win is a broken guard: the opponent was parrying and the strike broke the parry,
-            or their strike was knocked away, leaving them exposed. Only exchanges with a saber
-            contact are counted; wall bounces without one are not.
+        <h4 className="detail-heading">Player damage heatmaps</h4>
+        <DamageHeatmapPanel
+          game={game}
+          num={num}
+          mapName={mapName}
+          files={mapFiles}
+          modes={PLAYER_HEATMAP_MODES}
+          opponent={opponentNum}
+        />
+
+        <h4 className="detail-heading">Swing types</h4>
+        <p className="fineprint detail-note">
+          {opponentNum === null
+            ? 'The demo stores the resolved swing, not the keys held. The seven basic attacks are named after the direction that produces them (forward + attack, forward + left + attack, …).'
+            : `Only swings that connected with ${opponentName} are counted. A saber contact is matched to the swing that produced it; swing totals and hit rate are hidden because a swing can hit several players.`}
+        </p>
+        {scopedCombos.length ? (
+          <SwingTypesTable combos={scopedCombos} scoped={opponentNum !== null} />
+        ) : (
+          <p className="muted detail-empty">
+            {opponentNum === null
+              ? 'No saber swings were recorded for this player in this game.'
+              : `No saber contacts with ${opponentName} were recorded for this player.`}
           </p>
-          <div className="detail-inline-stats">
-            <span>Won <b>{blocks.won}</b></span>
-            <span>Lost <b>{blocks.lost}</b></span>
-            <span>
-              Win rate{' '}
-              <b>{blocks.won + blocks.lost > 0 ? formatPercent(blocks.won / (blocks.won + blocks.lost)) : '—'}</b>
-            </span>
-          </div>
-          {blocks.won + blocks.lost > 0 ? (
-            <div className="detail-scroll">
-              <table className="detail-table">
-                <thead>
-                  <tr>
-                    <th>Opponent</th>
-                    <th className="num">Won</th>
-                    <th className="num">Lost</th>
+        )}
+
+        <h4 className="detail-heading">Saber blocks</h4>
+        <p className="fineprint detail-note">
+          A block win is a broken guard: the opponent was parrying and the strike broke the parry,
+          or their strike was knocked away, leaving them exposed. Only exchanges with a saber
+          contact are counted; wall bounces without one are not.
+        </p>
+        <div className="detail-inline-stats">
+          <span>Won <b>{blocks.won}</b></span>
+          <span>Lost <b>{blocks.lost}</b></span>
+          <span>
+            Win rate <b>{blockRate}</b>
+          </span>
+        </div>
+        {blockTotal > 0 ? (
+          <div className="detail-scroll">
+            <table className="detail-table">
+              <thead>
+                <tr>
+                  <th>Opponent</th>
+                  <th className="num">Won</th>
+                  <th className="num">Lost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {blocks.opponents.map(entry => (
+                  <tr key={entry.num}>
+                    <td>{entry.name}</td>
+                    <td className="num">{entry.won || '—'}</td>
+                    <td className="num">{entry.lost || '—'}</td>
                   </tr>
-                </thead>
-                <tbody>
-                  {blocks.opponents.map(entry => (
-                    <tr key={entry.num}>
-                      <td>{entry.name}</td>
-                      <td className="num">{entry.won || '—'}</td>
-                      <td className="num">{entry.lost || '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <p className="muted detail-empty">No broken guards were recorded for this player.</p>
-          )}
-
-          <h4 className="detail-heading">Hits by movement</h4>
-          <p className="fineprint detail-note">
-            Where this player was when the saber contact landed. “Just landed” is within 0.4 s of
-            touching the ground. Counts every saber contact, including ones outside a recorded swing.
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="muted detail-empty">
+            {opponentNum === null
+              ? 'No broken guards were recorded for this player.'
+              : `No broken guards were recorded between ${playerName} and ${opponentName}.`}
           </p>
-          {game.saberHits ? (
+        )}
+
+        <h4 className="detail-heading">Hits by movement</h4>
+        <p className="fineprint detail-note">
+          {opponentNum === null
+            ? 'Where this player was when the saber contact landed. “Just landed” is within 0.4 s of touching the ground. Counts every saber contact, including ones outside a recorded swing.'
+            : `Saber contacts between ${playerName} and ${opponentName}, split by where each player was when the hit landed. “Just landed” is within 0.4 s of touching the ground.`}
+        </p>
+        {game.saberHits ? (
+          opponentNum !== null && movementTotal === 0 ? (
+            <p className="muted detail-empty">
+              No saber contacts with {opponentName} were recorded for this player.
+            </p>
+          ) : (
             <div className="detail-scroll">
               <table className="detail-table">
                 <thead>
@@ -741,68 +915,13 @@ export function PlayerDetailView({
                 </tbody>
               </table>
             </div>
-          ) : (
-            <p className="muted detail-empty">
-              Movement data is not in this cached summary. Run Check map again to rescan.
-            </p>
-          )}
-
-          <h4 className="detail-heading">Damage with every other player</h4>
-          <p className="fineprint detail-note">
-            Attributed damage from the demo&apos;s health updates. Damage the demo never exposes stays
-            unknown; the per-swing tables show how many swings carried a damage sample. Given stays
-            raw per opponent; the Damage given KPI subtracts ally damage.
+          )
+        ) : (
+          <p className="muted detail-empty">
+            Movement data is not in this cached summary. Run Check map again to rescan.
           </p>
-          {pairs.length > 1 ? (
-            <label className="detail-opponent">
-              <span>Opponent</span>
-              <select
-                value={opponent?.num ?? pairs[0].num}
-                onChange={event => setSelectedOpponent(Number(event.target.value))}
-              >
-                {pairs.map(entry => (
-                  <option key={entry.num} value={entry.num}>
-                    {entry.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-          <LineChart
-            key={`${game.map}-${game.startTime}-pairs`}
-            series={pairSeries}
-            duration={game.duration}
-            yFormat={value => String(Math.round(value))}
-            ariaLabel={`Damage given and received by ${playerLabel(game, num)}`}
-            emptyText="No attributed damage against other players was recorded."
-            onPlayFrom={onPlayFrom ? time => onPlayFrom(game.startTime + time) : undefined}
-            busy={busy}
-            canPlay={canPlay}
-          />
-          <div className="detail-scroll">
-            <table className="detail-table">
-              <thead>
-                <tr>
-                  <th>Opponent</th>
-                  <th className="num">Given</th>
-                  <th className="num">Received</th>
-                  <th className="num">Net</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pairs.map(entry => (
-                  <tr key={entry.num}>
-                    <td>{entry.name}</td>
-                    <td className="num">{entry.given || '—'}</td>
-                    <td className="num">{entry.received || '—'}</td>
-                    <td className="num">{entry.given - entry.received}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
+        )}
+      </div>
 
       {game.swingsOverflow ? (
         <p className="fineprint">Some swings were truncated from this very long demo.</p>

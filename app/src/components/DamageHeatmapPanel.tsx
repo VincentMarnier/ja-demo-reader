@@ -29,6 +29,8 @@ interface DamageHeatmapPanelProps {
    * four are the default.
    */
   modes?: readonly DamageHeatmapMode[];
+  /** When set, player layers only count damage between `num` and this client. */
+  opponent?: number | null;
 }
 
 const CARDS: ReadonlyArray<{ mode: DamageHeatmapMode; label: string }> = [
@@ -61,8 +63,9 @@ function HeatmapPreview(props: {
   mode: DamageHeatmapMode;
   num: number;
   team: number;
+  opponent?: number;
 }) {
-  const { image, source, mode, num, team } = props;
+  const { image, source, mode, num, team, opponent } = props;
   const ref = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -97,7 +100,7 @@ function HeatmapPreview(props: {
       const layer = teamHeatmapCanvas(first, second, max);
       if (layer) layers.push(layer);
     } else {
-      const grid = rasterizeHeatmap(source, kind, { player: num });
+      const grid = rasterizeHeatmap(source, kind, { player: num, opponent });
       const tone = playerTone(num, team);
       const layer = heatmapCanvas(grid, grid.max, tone.h, tone.s);
       if (layer) layers.push(layer);
@@ -112,7 +115,7 @@ function HeatmapPreview(props: {
       context.drawImage(layer, 0, 0, canvas.width, canvas.height);
     }
     context.restore();
-  }, [image, source, mode, num, team]);
+  }, [image, source, mode, num, team, opponent]);
 
   return <canvas ref={ref} className="detail-heat-canvas" aria-hidden="true" />;
 }
@@ -122,8 +125,10 @@ export function DamageHeatmapPanel({
   num,
   mapName,
   files,
-  modes = CARDS.map(card => card.mode)
+  modes = CARDS.map(card => card.mode),
+  opponent
 }: DamageHeatmapPanelProps) {
+  const opponentNum = opponent ?? undefined;
   const [image, setImage] = useState<MinimapImage | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'missing'>('loading');
 
@@ -149,7 +154,7 @@ export function DamageHeatmapPanel({
     [game, image]
   );
 
-  const totals = useMemo(() => playerDamageTotals(game, num), [game, num]);
+  const totals = useMemo(() => playerDamageTotals(game, num, opponentNum), [game, num, opponentNum]);
   const teams = useMemo(() => playerTeams(game), [game]);
   const team = teams.get(num) ?? 0;
   const hasPositions = useMemo(() => hasDamagePositions(game), [game]);
@@ -191,25 +196,46 @@ export function DamageHeatmapPanel({
   const teamOnly = modes.every(mode => mode === 'team-given' || mode === 'team-received');
   const playerOnly = modes.every(mode => mode === 'player-given' || mode === 'player-received');
 
+  const playerScope = opponentNum === undefined
+    ? playerName(game, num)
+    : `${playerName(game, num)} vs ${playerName(game, opponentNum)}`;
+
   return (
     <div className="detail-heat">
       <p className="muted detail-heat-note">
         {teamOnly
           ? "Positions come from the demo scan. Given is where each team's attacker stood; received is where the victim stood. Damage outside the recorded POV's PVS has no position and is left out of the map."
           : "Positions come from the demo scan. Given is where the attacker stood; received is where the victim stood. Damage outside the recorded POV's PVS has no position and is left out of the map."}
-        {playerOnly ? ' Follows the player selected above.' : ''}
+        {playerOnly
+          ? opponentNum === undefined
+            ? ' Follows the player selected above.'
+            : ` Only damage between ${playerName(game, num)} and ${playerName(game, opponentNum)} is shown.`
+          : ''}
       </p>
       <div className="detail-heat-grid">
         {CARDS.filter(card => modes.includes(card.mode)).map(card => {
           const teamCard = card.mode === 'team-given' || card.mode === 'team-received';
           const kind = card.mode.endsWith('given') ? 'given' : 'received';
+          const playerCaption =
+            opponentNum === undefined
+              ? playerScope
+              : kind === 'given'
+                ? `${playerName(game, num)} → ${playerName(game, opponentNum)}`
+                : `${playerName(game, opponentNum)} → ${playerName(game, num)}`;
           return (
             <figure className="detail-heat-card" key={card.mode}>
               <figcaption className="detail-heat-head">
                 <strong>{card.label}</strong>
-                <span>{teamCard ? 'Red and blue teams' : playerName(game, num)}</span>
+                <span>{teamCard ? 'Red and blue teams' : playerCaption}</span>
               </figcaption>
-              <HeatmapPreview image={image} source={source} mode={card.mode} num={num} team={team} />
+              <HeatmapPreview
+                image={image}
+                source={source}
+                mode={card.mode}
+                num={num}
+                team={team}
+                opponent={opponentNum}
+              />
               <div className="detail-heat-legend">
                 {teamCard ? (
                   [1, 2].map(id => {

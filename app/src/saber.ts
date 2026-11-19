@@ -298,6 +298,38 @@ export interface SaberComboStats {
   types: SaberTypeStats[];
 }
 
+/**
+ * Swing-type stats scoped to one opponent. The demo does not store a target on
+ * a swing, so a saber contact is matched to the attacker's most recent swing
+ * (the same 2 s window the engine uses when it attaches a hit and its damage).
+ * Only swings that connected with the opponent are represented, which is why
+ * there is no swing total or hit rate here.
+ */
+export interface SaberContactTypeStats {
+  move: number;
+  label: string;
+  kind: SaberMoveKind;
+  successful: number;
+  hits: number;
+  damage: number;
+  /** Damage of each successful swing that the demo attributed damage to. */
+  samples: number[];
+}
+
+export interface SaberContactComboStats {
+  key: string;
+  saber: number;
+  saberName: string;
+  saberLabel: string;
+  stance: number;
+  stanceLabel: string;
+  successful: number;
+  hits: number;
+  damage: number;
+  samples: number[];
+  types: SaberContactTypeStats[];
+}
+
 /** Groups one player's swings by saber and stance, then by swing type. */
 export function playerCombos(game: DemoGameSummary, num: number, window?: SwingWindow): SaberComboStats[] {
   const sabers = new Map((game.sabers ?? []).map(saber => [saber.id, saber.name]));
@@ -358,6 +390,124 @@ export function playerCombos(game: DemoGameSummary, num: number, window?: SwingW
     combo.types.sort((a, b) => b.swings - a.swings || b.hits - a.hits);
   }
   result.sort((a, b) => b.swings - a.swings || a.saberName.localeCompare(b.saberName));
+  return result;
+}
+
+/** Index of the latest swing at or before `time`; -1 when there is none. */
+function swingIndexAtOrBefore(swings: readonly DemoSwingEvent[], time: number): number {
+  let low = 0;
+  let high = swings.length - 1;
+  let found = -1;
+  while (low <= high) {
+    const middle = (low + high) >> 1;
+    if (swings[middle].time <= time) {
+      found = middle;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return found;
+}
+
+/**
+ * One player's swing types scoped to a single opponent. A swing has no target
+ * on the wire, so every saber contact with the opponent is joined to the
+ * attacker's most recent swing within the engine's 2 s pending-hit window.
+ * Damage is attached only to swings that already connected, so an unrelated
+ * blaster loss near a swing cannot invent a saber hit.
+ */
+export function opponentSwingCombos(
+  game: DemoGameSummary,
+  num: number,
+  opponent: number,
+  window?: SwingWindow
+): SaberContactComboStats[] {
+  const swings = (game.swings ?? [])
+    .filter(swing => swing.num === num && inWindow(swing, window))
+    .sort((a, b) => a.time - b.time);
+  if (!swings.length) return [];
+
+  const successful = new Set<number>();
+  const hitsBySwing = new Map<number, number>();
+  for (const hit of game.saberHits ?? []) {
+    if (hit.attacker !== num || hit.target !== opponent) continue;
+    if (window && (hit.time < window.from || hit.time > window.to)) continue;
+    const index = swingIndexAtOrBefore(swings, hit.time);
+    if (index < 0 || hit.time - swings[index].time > 2000) continue;
+    successful.add(index);
+    hitsBySwing.set(index, (hitsBySwing.get(index) ?? 0) + 1);
+  }
+
+  const damageBySwing = new Map<number, number>();
+  for (const damage of game.damages ?? []) {
+    if (damage.attacker !== num || damage.target !== opponent || !(damage.damage > 0)) continue;
+    if (window && (damage.time < window.from || damage.time > window.to)) continue;
+    const index = swingIndexAtOrBefore(swings, damage.time);
+    if (index < 0 || damage.time - swings[index].time > 2000) continue;
+    if (!successful.has(index)) continue;
+    damageBySwing.set(index, (damageBySwing.get(index) ?? 0) + damage.damage);
+  }
+
+  const sabers = new Map((game.sabers ?? []).map(saber => [saber.id, saber.name]));
+  const combos = new Map<string, SaberContactComboStats>();
+  for (const index of successful) {
+    const swing = swings[index];
+    const saberName = sabers.get(swing.saber) ?? 'unknown';
+    const key = `${swing.saber}:${swing.stance}`;
+    let combo = combos.get(key);
+    if (!combo) {
+      combo = {
+        key,
+        saber: swing.saber,
+        saberName,
+        saberLabel: saberLabel(saberName),
+        stance: swing.stance,
+        stanceLabel: stanceLabel(swing.stance),
+        successful: 0,
+        hits: 0,
+        damage: 0,
+        samples: [],
+        types: []
+      };
+      combos.set(key, combo);
+    }
+    const hits = hitsBySwing.get(index) ?? 0;
+    const damage = damageBySwing.get(index) ?? 0;
+    combo.successful++;
+    combo.hits += hits;
+    if (damage > 0) {
+      combo.damage += damage;
+      combo.samples.push(damage);
+    }
+
+    let type = combo.types.find(entry => entry.move === swing.move);
+    if (!type) {
+      const info = saberMoveInfo(swing.move);
+      type = {
+        move: swing.move,
+        label: info.label,
+        kind: info.kind,
+        successful: 0,
+        hits: 0,
+        damage: 0,
+        samples: []
+      };
+      combo.types.push(type);
+    }
+    type.successful++;
+    type.hits += hits;
+    if (damage > 0) {
+      type.damage += damage;
+      type.samples.push(damage);
+    }
+  }
+
+  const result = [...combos.values()];
+  for (const combo of result) {
+    combo.types.sort((a, b) => b.successful - a.successful || b.hits - a.hits);
+  }
+  result.sort((a, b) => b.successful - a.successful || a.saberName.localeCompare(b.saberName));
   return result;
 }
 
@@ -549,6 +699,49 @@ export function opponentDamage(game: DemoGameSummary, num: number, window?: Swin
   return result;
 }
 
+export interface DamageTotals {
+  given: number;
+  received: number;
+  /** Cumulative raw damage this player dealt to every other player. */
+  givenSeries: DamageSeriesPoint[];
+  /** Cumulative raw damage this player took from every other player. */
+  receivedSeries: DamageSeriesPoint[];
+}
+
+/**
+ * Cumulative damage for the global scope of the opponent section: every
+ * player counts, raw and positive, matching the per-player pairings. Unknown
+ * attackers still contribute to the received total.
+ */
+export function damageTotals(game: DemoGameSummary, num: number, window?: SwingWindow): DamageTotals {
+  const duration = Math.max(1, game.duration);
+  let given = 0;
+  let received = 0;
+  const givenSeries: DamageSeriesPoint[] = [{ time: 0, value: 0 }];
+  const receivedSeries: DamageSeriesPoint[] = [{ time: 0, value: 0 }];
+
+  for (const damage of game.damages ?? []) {
+    if (!(damage.damage > 0)) continue;
+    if (window && (damage.time < window.from || damage.time > window.to)) continue;
+    const time = Math.min(duration, Math.max(0, damage.time - game.startTime));
+    if (damage.attacker === num && damage.target !== num) {
+      given += damage.damage;
+      pushPoint(givenSeries, time, given);
+    }
+    if (damage.target === num) {
+      received += damage.damage;
+      pushPoint(receivedSeries, time, received);
+    }
+  }
+  if (givenSeries[givenSeries.length - 1].time < duration) {
+    givenSeries.push({ time: duration, value: given });
+  }
+  if (receivedSeries[receivedSeries.length - 1].time < duration) {
+    receivedSeries.push({ time: duration, value: received });
+  }
+  return { given, received, givenSeries, receivedSeries };
+}
+
 export interface MovementTally {
   air: number;
   ground: number;
@@ -578,7 +771,12 @@ export function damageGiven(game: DemoGameSummary, num: number, window?: SwingWi
  * Saber contacts dealt and received split by the player's own movement state
  * when the hit landed: airborne, on the ground, or just after landing.
  */
-export function movementCounts(game: DemoGameSummary, num: number, window?: SwingWindow): MovementCounts {
+export function movementCounts(
+  game: DemoGameSummary,
+  num: number,
+  window?: SwingWindow,
+  opponent?: number
+): MovementCounts {
   const dealt: MovementTally = { air: 0, ground: 0, land: 0 };
   const received: MovementTally = { air: 0, ground: 0, land: 0 };
   const add = (tally: MovementTally, state: number) => {
@@ -589,8 +787,12 @@ export function movementCounts(game: DemoGameSummary, num: number, window?: Swin
 
   for (const hit of game.saberHits ?? []) {
     if (window && (hit.time < window.from || hit.time > window.to)) continue;
-    if (hit.attacker === num) add(dealt, hit.attackerState);
-    if (hit.target === num) add(received, hit.targetState);
+    if (hit.attacker === num && (opponent === undefined || hit.target === opponent)) {
+      add(dealt, hit.attackerState);
+    }
+    if (hit.target === num && (opponent === undefined || hit.attacker === opponent)) {
+      add(received, hit.targetState);
+    }
   }
   return { dealt, received };
 }
@@ -615,7 +817,12 @@ export interface BlockStats {
  * parry (`LS_H1_*`): the loser was blocking and is left exposed. Wall bounces
  * and saber-lock losses are not guard breaks and are excluded by the scan.
  */
-export function blockStats(game: DemoGameSummary, num: number, window?: SwingWindow): BlockStats {
+export function blockStats(
+  game: DemoGameSummary,
+  num: number,
+  window?: SwingWindow,
+  opponent?: number
+): BlockStats {
   const byNum = new Map<number, BlockOpponentStats>();
   const ensure = (other: number): BlockOpponentStats => {
     let entry = byNum.get(other);
@@ -628,6 +835,7 @@ export function blockStats(game: DemoGameSummary, num: number, window?: SwingWin
 
   for (const player of game.players) {
     if (player.num === num) continue;
+    if (opponent !== undefined && player.num !== opponent) continue;
     if (player.team === 3 && player.kills === 0 && player.deaths === 0) continue;
     ensure(player.num);
   }
@@ -636,10 +844,14 @@ export function blockStats(game: DemoGameSummary, num: number, window?: SwingWin
   let lost = 0;
   for (const block of game.blocks ?? []) {
     if (window && (block.time < window.from || block.time > window.to)) continue;
-    if (block.winner === num && block.loser !== num) {
+    if (
+      block.winner === num &&
+      block.loser !== num &&
+      (opponent === undefined || block.loser === opponent)
+    ) {
       won++;
       ensure(block.loser).won++;
-    } else if (block.loser === num) {
+    } else if (block.loser === num && (opponent === undefined || block.winner === opponent)) {
       lost++;
       if (block.winner >= 0 && block.winner !== num) ensure(block.winner).lost++;
     }

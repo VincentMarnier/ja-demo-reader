@@ -104,6 +104,8 @@ export interface HeatmapGrid {
 export interface DamageHeatmapFilter {
   team?: number;
   player?: number;
+  /** Keep only exchanges between `player` and this opponent. */
+  opponent?: number;
 }
 
 /** Latest team per client. Teams can change between games, not inside one. */
@@ -220,6 +222,10 @@ export function rasterizeHeatmap(
       const num = kind === 'given' ? event.attacker : event.target;
       if (num !== filter.player) continue;
     }
+    if (filter.opponent !== undefined) {
+      const other = kind === 'given' ? event.target : event.attacker;
+      if (other !== filter.opponent) continue;
+    }
     if (filter.team !== undefined) {
       const team = kind === 'given' ? event.attackerTeam : event.targetTeam;
       if (team !== filter.team) continue;
@@ -262,10 +268,14 @@ export function combinedMax(grids: readonly HeatmapGrid[]): number {
   return max;
 }
 
-/** A damage total per client, for the legend and the detail view. */
+/**
+ * A damage total per client, for the legend and the detail view. With
+ * `opponent` set, only damage passed between that pair is counted.
+ */
 export function playerDamageTotals(
   game: DemoGameSummary,
-  num: number
+  num: number,
+  opponent?: number
 ): { dealt: number; received: number; placedDealt: number; placedReceived: number } {
   let dealt = 0;
   let received = 0;
@@ -273,11 +283,11 @@ export function playerDamageTotals(
   let placedReceived = 0;
   for (const damage of game.damages ?? []) {
     if (!(damage.damage > 0)) continue;
-    if (damage.attacker === num) {
+    if (damage.attacker === num && (opponent === undefined || damage.target === opponent)) {
       dealt += damage.damage;
       if (typeof damage.ax === 'number') placedDealt += damage.damage;
     }
-    if (damage.target === num) {
+    if (damage.target === num && (opponent === undefined || damage.attacker === opponent)) {
       received += damage.damage;
       if (typeof damage.tx === 'number') placedReceived += damage.damage;
     }

@@ -100,9 +100,12 @@ different summary views.
   each game's cumulative chart. Team heat is a team view, not a player view, so
   it lives with the global damage chart rather than in player detail.
 - **Demo summary → Player detail → Player damage heatmaps** shows only the
-  player given/received pair for the selected game and player, placed below the
-  **By saber & stance** table, with totals and the same coverage wording. When
-  the player has no swing rows the pair follows the empty-swing note.
+  player given/received pair for the selected game and player, with totals and
+  the same coverage wording. It follows the **Against opponents** scope: with
+  one opponent selected, the given layer keeps only damage this player dealt
+  to them and the received layer only damage taken from them, and the coverage
+  totals use the same pair. The panel's `opponent` prop is the filter; team
+  layers ignore it.
 
 ## Limits
 

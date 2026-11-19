@@ -1640,6 +1640,20 @@ summary { cursor: pointer; color: var(--muted); }
   background: rgba(255, 255, 255, 0.02);
 }
 .detail-empty { margin: 6px 0; font-size: 12px; }
+.detail-section {
+  margin-top: 18px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.detail-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 14px;
+  margin-bottom: 4px;
+}
+.detail-section-head .detail-heading { margin: 0; }
+.detail-section-head .detail-opponent { margin: 0; }
 .detail-inline-stats {
   display: flex;
   flex-wrap: wrap;

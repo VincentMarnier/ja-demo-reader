@@ -151,7 +151,10 @@ The summary cache key moved to `v10` because the event/damage shape changed.
 `app/src/saber.ts` owns the move labels, the stance/saber labels and the
 aggregation (per saber+stance, per swing type, buckets, opponent pairs, blocks,
 movement). `app/src/components/PlayerDetailView.tsx` is the UI, opened from the
-demo summary's view selector:
+demo summary's view selector. It has two parts.
+
+**Global player summary** — always for the whole game, independent of the
+opponent scope:
 
 - game and player pickers, defaulting to the longest game and the recorded POV;
 - totals: swings, swings that hit, hit rate, hit events, global damage given
@@ -160,16 +163,33 @@ demo summary's view selector:
 - a saber × stance table with the same numbers per combination;
 - a hit-rate-over-time chart with one series per combination (plus all swings);
   the legend shows each combination's overall rate, and the hover value is the
-  bucket under the pointer;
-- a swing-type table grouped by saber × stance, with swings, successful swings,
-  hit rate, hit events and damage for every move;
-- a block table with wins and losses against every other player, plus totals
-  and win rate;
+  bucket under the pointer.
+
+**Against opponents** — one shared select at the top defaults to
+**All players (global)** and can be narrowed to a single opponent. The scope
+applies to every section in this part:
+
+- damage over time: a cumulative given/received chart plus the per-opponent
+  table (all players when global; the selected pair otherwise). The global
+  series is raw and positive, matching the pairings; the **Damage given** KPI
+  above is the one that subtracts ally damage;
+- the player damage heatmaps, scoped to damage passed between the pair (both
+  ends of the exchange, and the coverage totals, use the same filter);
+- a swing-type table grouped by saber × stance. Global keeps swings,
+  successful swings, hit rate, hit events, damage and average. A single
+  opponent drops **Swings** and **Hit rate** and keeps **Successful swings**,
+  because a swing has no target on the wire: every saber contact is joined to
+  the attacker's most recent swing within the engine's 2 s pending-hit window,
+  and only swings that connected with that opponent are shown. Damage is
+  attached only to those already-connected swings, so an unrelated blaster
+  loss near a swing cannot invent a hit;
+- a block table with wins and losses (scoped to the selected opponent, or
+  every other player when global), plus totals and win rate;
 - a movement table with saber hits dealt and received while airborne, on the
-  ground and just after landing;
-- an opponent table with damage given, received and net for every other player,
-  plus a cumulative given/received chart for the selected opponent.
+  ground and just after landing (scoped to contacts with the selected
+  opponent, or every player when global).
 
 A slot can be reused after a player leaves; the view scopes the stats to the
-selected player record's `firstSeen..lastSeen` window.
+selected player record's `firstSeen..lastSeen` window. Changing the game or the
+player resets the opponent scope to global.
 

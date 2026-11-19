@@ -441,9 +441,10 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   given uses the attacker's position, received the victim's. Player layers
   follow the panel's player pick, else the camera subject, else the POV. Team
   modes also appear under **Demo summary → Damage over time** (two cards); the
-  player modes appear in **Player detail** below **By saber & stance** (or the
-  empty-swing note) for the selected player. A cached `v11` summary has no
-  positions and must be rescanned.
+  player modes appear in **Player detail → Against opponents** for the selected
+  player. The opponent select scopes the player layers to damage passed between
+  that pair (`DamageHeatmapFilter.opponent`); team layers ignore it. A cached
+  `v11` summary has no positions and must be rescanned.
 - The map panel sits at the top right on desktop (208 px) and moves below the
   score strip on narrow layouts (118 px). Keep the kill-feed offset in sync if
   the size changes.
