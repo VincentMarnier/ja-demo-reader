@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { DemoGameSummary } from '../types';
 import { formatTime } from '../format';
+import { ChartMomentBar } from './ChartMomentBar';
 
 export type TrendMetric = 'kills' | 'kd' | 'damage' | 'net';
 
@@ -187,11 +188,16 @@ function seriesPath(series: TrendSeries, x: (time: number) => number, y: (value:
 interface DemoTrendChartProps {
   game: DemoGameSummary;
   metric: TrendMetric;
+  /** Start the demo at an absolute demo time, in ms. */
+  onPlayFrom?: (timeMs: number) => void;
+  busy?: boolean;
+  canPlay?: boolean;
 }
 
-export function DemoTrendChart({ game, metric }: DemoTrendChartProps) {
+export function DemoTrendChart({ game, metric, onPlayFrom, busy, canPlay }: DemoTrendChartProps) {
   const series = useMemo(() => buildTrendSeries(game, metric), [game, metric]);
   const [hover, setHover] = useState<number | null>(null);
+  const [selected, setSelected] = useState<number | null>(null);
   const duration = Math.max(1, game.duration);
 
   const model = useMemo(() => {
@@ -221,11 +227,25 @@ export function DemoTrendChart({ game, metric }: DemoTrendChartProps) {
     return <p className="muted demo-trend-empty">{emptyText}</p>;
   }
 
-  const onHoverMove = (event: ReactPointerEvent<SVGRectElement>) => {
+  const timeAt = (event: ReactPointerEvent<SVGRectElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
     const ratio = (event.clientX - rect.left) / Math.max(1, rect.width);
-    setHover(Math.min(duration, Math.max(0, ratio * duration)));
+    return Math.min(duration, Math.max(0, ratio * duration));
   };
+
+  const onHoverMove = (event: ReactPointerEvent<SVGRectElement>) => {
+    setHover(timeAt(event));
+  };
+
+  // Clicking pins the moment so it stays visible after the pointer leaves.
+  const onSelect = (event: ReactPointerEvent<SVGRectElement>) => {
+    const time = timeAt(event);
+    setSelected(time);
+    setHover(time);
+  };
+
+  // The crosshair follows the pointer, then falls back to the pinned moment.
+  const cursor = hover ?? selected;
 
   const label =
     metric === 'kills'
@@ -282,7 +302,17 @@ export function DemoTrendChart({ game, metric }: DemoTrendChartProps) {
           />
         ))}
 
-        {hover !== null ? (
+        {selected !== null ? (
+          <line
+            className="demo-trend-select"
+            x1={model.x(selected)}
+            x2={model.x(selected)}
+            y1={PAD_TOP}
+            y2={HEIGHT - PAD_BOTTOM}
+          />
+        ) : null}
+
+        {hover !== null && hover !== selected ? (
           <g>
             <line
               className="demo-trend-hover"
@@ -304,6 +334,21 @@ export function DemoTrendChart({ game, metric }: DemoTrendChartProps) {
           </g>
         ) : null}
 
+        {cursor !== null ? (
+          <g>
+            {series.map(entry => (
+              <circle
+                className="demo-trend-dot"
+                key={`cursor-${entry.key}`}
+                cx={model.x(cursor)}
+                cy={model.y(valueAt(entry, cursor))}
+                r={2.4}
+                style={{ fill: entry.color }}
+              />
+            ))}
+          </g>
+        ) : null}
+
         <rect
           x={PAD_LEFT}
           y={PAD_TOP}
@@ -312,21 +357,32 @@ export function DemoTrendChart({ game, metric }: DemoTrendChartProps) {
           fill="none"
           pointerEvents="all"
           onPointerMove={onHoverMove}
-          onPointerDown={onHoverMove}
+          onPointerDown={onSelect}
           onPointerLeave={() => setHover(null)}
         />
       </svg>
 
       <div className="demo-trend-legend">
-        <span className="demo-trend-time">{hover !== null ? `at ${formatTime(hover)}` : 'final'}</span>
+        <span className="demo-trend-time">{cursor !== null ? `at ${formatTime(cursor)}` : 'final'}</span>
         {series.map(entry => (
           <span className="demo-trend-key" key={entry.key}>
             <i style={{ background: entry.color }} />
             <span className="demo-trend-name">{entry.label}</span>
-            <b>{formatValue(hover !== null ? valueAt(entry, hover) : entry.final, metric)}</b>
+            <b>{formatValue(cursor !== null ? valueAt(entry, cursor) : entry.final, metric)}</b>
           </span>
         ))}
       </div>
+
+      {onPlayFrom ? (
+        <ChartMomentBar
+          selected={selected}
+          duration={duration}
+          onPlay={time => onPlayFrom(game.startTime + time)}
+          onClear={() => setSelected(null)}
+          busy={busy}
+          canPlay={canPlay}
+        />
+      ) : null}
     </div>
   );
 }

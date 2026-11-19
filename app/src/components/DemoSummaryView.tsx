@@ -8,6 +8,10 @@ import { PlayerDetailView } from './PlayerDetailView';
 
 interface DemoSummaryViewProps {
   summary: DemoSummary | null;
+  /** Start the demo at an absolute demo time, in ms. */
+  onPlayFrom?: (timeMs: number) => void;
+  busy?: boolean;
+  canPlay?: boolean;
 }
 
 type SummaryView = 'table' | 'player' | TrendMetric;
@@ -16,7 +20,7 @@ function stripColors(name: string): string {
   return name.replace(/\^[0-9a-zA-Z]/g, '').replace(/\^/g, '');
 }
 
-export function DemoSummaryView({ summary }: DemoSummaryViewProps) {
+export function DemoSummaryView({ summary, onPlayFrom, busy, canPlay }: DemoSummaryViewProps) {
   const [view, setView] = useState<SummaryView>('table');
 
   if (!summary || summary.games.length === 0) return null;
@@ -42,7 +46,13 @@ export function DemoSummaryView({ summary }: DemoSummaryViewProps) {
         pairings stay raw.
       </p>
       {view === 'player' ? (
-        <PlayerDetailView key={`${summary.first}-${summary.duration}`} summary={summary} />
+        <PlayerDetailView
+          key={`${summary.first}-${summary.duration}`}
+          summary={summary}
+          onPlayFrom={onPlayFrom}
+          busy={busy}
+          canPlay={canPlay}
+        />
       ) : (
         summary.games.map((game, index) => {
           const players = [...game.players]
@@ -57,7 +67,13 @@ export function DemoSummaryView({ summary }: DemoSummaryViewProps) {
                 {game.levelTime > 0 ? <span className="muted">match clock {formatTime(game.levelTime)}</span> : null}
               </div>
               {view !== 'table' ? (
-                <DemoTrendChart game={game} metric={view} />
+                <DemoTrendChart
+                  game={game}
+                  metric={view}
+                  onPlayFrom={onPlayFrom}
+                  busy={busy}
+                  canPlay={canPlay}
+                />
               ) : players.length === 0 ? (
                 <p className="muted">No players were seen in this demo.</p>
               ) : (

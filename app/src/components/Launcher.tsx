@@ -43,6 +43,8 @@ interface LauncherProps {
   onShowMissingAssets: () => void;
   /** Start/seek to a flagged moment and follow that player (-1 = demo POV). */
   onWatchScript: (time: number, followNum: number) => void;
+  /** Start the demo at a chosen absolute demo time, in ms. */
+  onPlayFrom: (timeMs: number) => void;
   onPlay: () => void;
   onStep: (step: WizardStep) => void;
 }
@@ -199,7 +201,12 @@ export function Launcher(props: LauncherProps) {
               </div>
             ) : null}
 
-            <DemoSummaryView summary={props.summary} />
+            <DemoSummaryView
+              summary={props.summary}
+              onPlayFrom={props.onPlayFrom}
+              busy={props.busy || props.addingPk3s}
+              canPlay={!!mapName && !mapMissing}
+            />
 
             {props.summary ? (
               <ScriptFlagsPanel

@@ -1199,7 +1199,7 @@ summary { cursor: pointer; color: var(--muted); }
   background: rgba(255, 255, 255, 0.02);
   padding: 8px 10px 6px;
 }
-.demo-trend-svg { display: block; width: 100%; height: auto; }
+.demo-trend-svg { display: block; width: 100%; height: auto; cursor: crosshair; }
 .demo-trend-axis {
   fill: var(--muted);
   font-size: 9px;
@@ -1214,6 +1214,7 @@ summary { cursor: pointer; color: var(--muted); }
   stroke-linecap: round;
 }
 .demo-trend-hover { stroke: rgba(255, 255, 255, 0.4); stroke-width: 1; stroke-dasharray: 3 3; }
+.demo-trend-select { stroke: var(--accent); stroke-width: 1.4; }
 .demo-trend-legend {
   display: flex;
   flex-wrap: wrap;
@@ -1235,6 +1236,19 @@ summary { cursor: pointer; color: var(--muted); }
 .detail-chart .demo-trend-name { max-width: 190px; }
 .demo-trend-key b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
 .demo-trend-empty { margin: 4px 0; font-size: 12px; }
+.chart-moment {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.chart-moment-play { padding: 5px 10px; font-size: 12px; }
+.chart-moment-at { font-size: 11px; color: var(--text); font-variant-numeric: tabular-nums; }
+.chart-moment-clear { font-size: 11.5px; }
+.chart-moment-hint { margin: 8px 0 0; }
 
 /* M10 per-player saber detail */
 .player-detail { margin-top: 8px; }

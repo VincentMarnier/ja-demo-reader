@@ -17,6 +17,7 @@ import {
   swingTotals
 } from '../saber';
 import type { SaberComboStats, SwingWindow } from '../saber';
+import { ChartMomentBar } from './ChartMomentBar';
 
 const SERIES_COLORS = [
   '#5fb3ff',
@@ -31,6 +32,10 @@ const SERIES_COLORS = [
 
 interface PlayerDetailViewProps {
   summary: DemoSummary;
+  /** Start the demo at an absolute demo time, in ms. */
+  onPlayFrom?: (timeMs: number) => void;
+  busy?: boolean;
+  canPlay?: boolean;
 }
 
 function initialGameIndex(games: DemoGameSummary[]): number {
@@ -110,6 +115,10 @@ interface LineChartProps {
   emptyText: string;
   /** Legend word for the non-hover value; "final" for cumulative charts. */
   summaryLabel?: string;
+  /** Start playback at the pinned moment (relative to the chart). */
+  onPlayFrom?: (timeMs: number) => void;
+  busy?: boolean;
+  canPlay?: boolean;
 }
 
 const WIDTH = 560;
@@ -167,8 +176,20 @@ function valueAt(series: ChartSeries, time: number): number {
   return value;
 }
 
-function LineChart({ series, duration, yMax, yFormat, ariaLabel, emptyText, summaryLabel = 'final' }: LineChartProps) {
+function LineChart({
+  series,
+  duration,
+  yMax,
+  yFormat,
+  ariaLabel,
+  emptyText,
+  summaryLabel = 'final',
+  onPlayFrom,
+  busy,
+  canPlay
+}: LineChartProps) {
   const [hover, setHover] = useState<number | null>(null);
+  const [selected, setSelected] = useState<number | null>(null);
   const plotDuration = Math.max(1, duration);
   const scale = niceScale(series, yMax);
   const x = (time: number) => PAD_LEFT + (Math.min(plotDuration, Math.max(0, time)) / plotDuration) * PLOT_WIDTH;
@@ -186,6 +207,17 @@ function LineChart({ series, duration, yMax, yFormat, ariaLabel, emptyText, summ
     const ratio = (event.clientX - rect.left) / Math.max(1, rect.width);
     setHover(Math.min(plotDuration, Math.max(0, ratio * plotDuration)));
   };
+
+  const onSelect = (event: ReactPointerEvent<SVGRectElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const ratio = (event.clientX - rect.left) / Math.max(1, rect.width);
+    const time = Math.min(plotDuration, Math.max(0, ratio * plotDuration));
+    setSelected(time);
+    setHover(time);
+  };
+
+  // The crosshair follows the pointer, then falls back to the pinned moment.
+  const cursor = hover ?? selected;
 
   return (
     <div className="detail-chart">
@@ -223,7 +255,16 @@ function LineChart({ series, duration, yMax, yFormat, ariaLabel, emptyText, summ
             .join(' ');
           return <path className="demo-trend-line" key={entry.key} d={path} style={{ stroke: entry.color }} />;
         })}
-        {hover !== null ? (
+        {selected !== null ? (
+          <line
+            className="demo-trend-select"
+            x1={x(selected)}
+            x2={x(selected)}
+            y1={PAD_TOP}
+            y2={HEIGHT - PAD_BOTTOM}
+          />
+        ) : null}
+        {hover !== null && hover !== selected ? (
           <g>
             <line className="demo-trend-hover" x1={x(hover)} x2={x(hover)} y1={PAD_TOP} y2={HEIGHT - PAD_BOTTOM} />
             {series.map(entry => (
@@ -238,6 +279,20 @@ function LineChart({ series, duration, yMax, yFormat, ariaLabel, emptyText, summ
             ))}
           </g>
         ) : null}
+        {cursor !== null ? (
+          <g>
+            {series.map(entry => (
+              <circle
+                className="demo-trend-dot"
+                key={`cursor-${entry.key}`}
+                cx={x(cursor)}
+                cy={y(valueAt(entry, cursor))}
+                r={2.4}
+                style={{ fill: entry.color }}
+              />
+            ))}
+          </g>
+        ) : null}
         <rect
           x={PAD_LEFT}
           y={PAD_TOP}
@@ -246,28 +301,38 @@ function LineChart({ series, duration, yMax, yFormat, ariaLabel, emptyText, summ
           fill="none"
           pointerEvents="all"
           onPointerMove={onMove}
-          onPointerDown={onMove}
+          onPointerDown={onSelect}
           onPointerLeave={() => setHover(null)}
         />
       </svg>
       <div className="demo-trend-legend">
-        <span className="demo-trend-time">{hover !== null ? `at ${formatTime(hover)}` : summaryLabel}</span>
+        <span className="demo-trend-time">{cursor !== null ? `at ${formatTime(cursor)}` : summaryLabel}</span>
         {series.map(entry => {
           const lastValue = entry.points[entry.points.length - 1]?.value ?? 0;
           return (
             <span className="demo-trend-key" key={entry.key}>
               <i style={{ background: entry.color }} />
               <span className="demo-trend-name">{entry.label}</span>
-              <b>{yFormat(hover !== null ? valueAt(entry, hover) : entry.summary ?? lastValue)}</b>
+              <b>{yFormat(cursor !== null ? valueAt(entry, cursor) : entry.summary ?? lastValue)}</b>
             </span>
           );
         })}
       </div>
+      {onPlayFrom ? (
+        <ChartMomentBar
+          selected={selected}
+          duration={plotDuration}
+          onPlay={onPlayFrom}
+          onClear={() => setSelected(null)}
+          busy={busy}
+          canPlay={canPlay}
+        />
+      ) : null}
     </div>
   );
 }
 
-export function PlayerDetailView({ summary }: PlayerDetailViewProps) {
+export function PlayerDetailView({ summary, onPlayFrom, busy, canPlay }: PlayerDetailViewProps) {
   const games = summary.games;
   const [gameIndex, setGameIndex] = useState(() => initialGameIndex(games));
   const game = games[Math.min(gameIndex, Math.max(0, games.length - 1))];
@@ -504,6 +569,7 @@ export function PlayerDetailView({ summary }: PlayerDetailViewProps) {
             Successful swings that hit at least one player. Buckets are {Math.round(bucketMs / 1000)} s wide.
           </p>
           <LineChart
+            key={`${game.map}-${game.startTime}-rate`}
             series={rateSeries}
             duration={game.duration}
             yMax={100}
@@ -511,6 +577,9 @@ export function PlayerDetailView({ summary }: PlayerDetailViewProps) {
             ariaLabel={`Swing success rate over time for ${playerLabel(game, num)} on ${game.map}`}
             emptyText="Not enough swings to chart a hit rate."
             summaryLabel="overall"
+            onPlayFrom={onPlayFrom ? time => onPlayFrom(game.startTime + time) : undefined}
+            busy={busy}
+            canPlay={canPlay}
           />
 
           <h4 className="detail-heading">Swing types</h4>
@@ -663,11 +732,15 @@ export function PlayerDetailView({ summary }: PlayerDetailViewProps) {
             </label>
           ) : null}
           <LineChart
+            key={`${game.map}-${game.startTime}-pairs`}
             series={pairSeries}
             duration={game.duration}
             yFormat={value => String(Math.round(value))}
             ariaLabel={`Damage given and received by ${playerLabel(game, num)}`}
             emptyText="No attributed damage against other players was recorded."
+            onPlayFrom={onPlayFrom ? time => onPlayFrom(game.startTime + time) : undefined}
+            busy={busy}
+            canPlay={canPlay}
           />
           <div className="detail-scroll">
             <table className="detail-table">

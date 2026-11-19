@@ -1079,21 +1079,22 @@ export default function App() {
     }
   }, [demoFile, demoInfo]);
 
-  // "Watch this moment" from the input-script panel: start playback if needed,
-  // seek to just before the flagged burst, then follow the flagged player.
-  // The recorded POV has no entity in a demo, so following it would clear the
-  // follow; its first-person demo camera already is the right POV.
-  const watchScriptMoment = useCallback(
-    async (time: number, followNum: number) => {
+  // Start the demo at an absolute demo time, booting the engine first when the
+  // summary is still only a launcher preview.  The optional lead-in backs the
+  // seek up a little (the script panel wants to show the approach to a burst).
+  const playFromMoment = useCallback(
+    async (time: number, options?: { leadInMs?: number; followNum?: number }) => {
       if (!demoFile || mapMissing || !demoInfo || !canvasRef.current) return;
       if (playbackActionRef.current) return;
       playbackActionRef.current = true;
       playbackRequestedRef.current = true;
+      const leadInMs = options?.leadInMs ?? 0;
+      const followNum = options?.followNum ?? -1;
       const position = Math.max(
         0,
         Math.min(
           Math.max(0, demoInfo.duration - 250),
-          Math.round(time - demoInfo.first - 2500)
+          Math.round(time - demoInfo.first - leadInMs)
         )
       );
       const target = demoInfo.first + position;
@@ -1110,7 +1111,7 @@ export default function App() {
         }
         engine.disableFreeCam();
         engine.followClient(-1);
-        engine.markStage(`script-watch:start target=${target}`);
+        engine.markStage(`play-from:start target=${target}`);
         const name = demoBase(demoFile.name);
         const ended = statusRef.current?.ended === 1;
         const prepared = !ended && (await ensurePrepared(engine, name));
@@ -1120,7 +1121,9 @@ export default function App() {
           await engine.playDemo(name);
         }
         preparedDemoRef.current = name;
-        if (position > 0) {
+        // A fresh play starts at the first snapshot; a warm demo can be
+        // anywhere, so always seek it to the chosen moment (also at 0:00).
+        if (prepared || position > 0) {
           setPhase('seeking');
           await engine.setPaused(false);
           await engine.seekDemo(name, target);
@@ -1129,7 +1132,7 @@ export default function App() {
           engine.followClient(followNum);
           setFollowClient(followNum);
         }
-        engine.markStage('script-watch:done');
+        engine.markStage('play-from:done');
         setPhase('playing');
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
@@ -1139,6 +1142,22 @@ export default function App() {
       }
     },
     [bootPk3Files, bootEngine, demoFile, demoInfo, ensurePrepared, mapMissing]
+  );
+
+  // "Watch this moment" from the input-script panel: start playback if needed,
+  // seek to just before the flagged burst, then follow the flagged player.
+  // The recorded POV has no entity in a demo, so following it would clear the
+  // follow; its first-person demo camera already is the right POV.
+  const watchScriptMoment = useCallback(
+    (time: number, followNum: number) =>
+      playFromMoment(time, { leadInMs: 2500, followNum }),
+    [playFromMoment]
+  );
+
+  // A moment picked on a summary chart: play from exactly there.
+  const playFromChart = useCallback(
+    (time: number) => playFromMoment(time),
+    [playFromMoment]
   );
 
   const stop = useCallback(async () => {
@@ -1389,6 +1408,7 @@ export default function App() {
                   onMapFileInput={handleMapFileInput}
                   onShowMissingAssets={() => setShowMissingAssets(true)}
                   onWatchScript={watchScriptMoment}
+                  onPlayFrom={playFromChart}
                   onPlay={startPlay}
                   onStep={setStep}
                 />
