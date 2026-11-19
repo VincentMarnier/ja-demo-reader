@@ -668,6 +668,29 @@ static int			jka_lastPovHits;
 static char			jka_summary[JKA_SUMMARY_SIZE];
 static qboolean		jka_summaryValid = qfalse;
 
+// Player trajectories for the minimap trails.  A demo is a recording, so the
+// "next five seconds" only exists inside the scan: the parse-only pass samples
+// every player's position and the page asks for a time window around the live
+// server time.  Samples use the same clock as JKA_RadarJson so they line up
+// with the live dots; positions are rounded later, in the JSON writer.
+#define JKA_MAX_TRAJECTORY_SAMPLES	262144
+#define JKA_TRAJECTORY_INTERVAL_MS	150
+#define JKA_TRAJECTORY_BUFFER_SIZE	(256 * 1024)
+
+typedef struct {
+	int		time;
+	float	x;
+	float	y;
+	short	num;
+	short	pad;
+} jkaTrajectorySample_t;
+
+static jkaTrajectorySample_t	jka_trajectory[JKA_MAX_TRAJECTORY_SAMPLES];
+static int						jka_trajectoryCount;
+static int						jka_trajectoryLastTime = -1;
+static qboolean					jka_trajectoryOverflow;
+static char						jka_trajectoryJson[JKA_TRAJECTORY_BUFFER_SIZE];
+
 // Incremented by CL_ParseGamestate; lets the scan split map loads and restarts
 // into separate games.  Defined with C++ linkage, so keep it outside the
 // extern "C" block above.
@@ -751,6 +774,9 @@ static void JKA_ResetSummary( void )
 	Com_Memset( jka_pendingHitCount, 0, sizeof( jka_pendingHitCount ) );
 	jka_summary[0] = 0;
 	jka_summaryValid = qfalse;
+	jka_trajectoryCount = 0;
+	jka_trajectoryLastTime = -1;
+	jka_trajectoryOverflow = qfalse;
 	for ( int i = 0; i < MAX_CLIENTS; i++ ) {
 		jka_slotRecord[i] = -1;
 		jka_slotHash[i] = 0;
@@ -2316,6 +2342,67 @@ static void JKA_TrackScriptInputs( int now )
 	}
 }
 
+/// Record one position sample for the minimap trails.  The scan calls this for
+/// every player the radar JSON would report; playback and seek replays must
+/// not append, so only the scan-only pass reaches it.
+static void JKA_AddTrajectorySample( int now, int num, float x, float y )
+{
+	jkaTrajectorySample_t *sample;
+
+	if ( num < 0 || num >= MAX_CLIENTS ) {
+		return;
+	}
+	if ( x != x || y != y ) {
+		// A NaN would poison the whole line; the push/interpolation paths can
+		// leave one in a demo origin.
+		return;
+	}
+	if ( jka_trajectoryCount >= JKA_MAX_TRAJECTORY_SAMPLES ) {
+		jka_trajectoryOverflow = qtrue;
+		return;
+	}
+	sample = &jka_trajectory[jka_trajectoryCount++];
+	sample->time = now;
+	sample->x = x;
+	sample->y = y;
+	sample->num = (short)num;
+	sample->pad = 0;
+}
+
+static void JKA_TrackTrajectory( int now )
+{
+	int pov;
+	int i;
+
+	if ( !jka_scanOnly ) {
+		return;
+	}
+	// ~7 Hz is enough for a five-second trail and keeps the scan buffer small
+	// even for a long demo.
+	if ( jka_trajectoryLastTime >= 0 && now - jka_trajectoryLastTime < JKA_TRAJECTORY_INTERVAL_MS ) {
+		return;
+	}
+	jka_trajectoryLastTime = now;
+
+	// The recorded client's own entity is absent from demos, so its position
+	// comes from the snapshot player state, like the radar JSON.
+	pov = cl.snap.ps.clientNum;
+	if ( pov >= 0 && pov < MAX_CLIENTS ) {
+		JKA_AddTrajectorySample( now, pov, cl.snap.ps.origin[0], cl.snap.ps.origin[1] );
+	}
+
+	for ( i = 0; i < cl.snap.numEntities && i < MAX_PARSE_ENTITIES; i++ ) {
+		entityState_t *state = &cl.parseEntities[( cl.snap.parseEntitiesNum + i ) &
+			( MAX_PARSE_ENTITIES - 1 )];
+
+		if ( state->eType != ET_PLAYER || state->number < 0 || state->number >= MAX_CLIENTS ||
+			state->number == pov ) {
+			continue;
+		}
+		JKA_AddTrajectorySample( now, state->number, state->pos.trBase[0], state->pos.trBase[1] );
+	}
+}
+
 static void JKA_ProcessSnapshot( int now, int resumeOffset )
 {
 	jkaGame_t *game = JKA_CurrentGame();
@@ -2381,6 +2468,7 @@ static void JKA_ProcessSnapshot( int now, int resumeOffset )
 	JKA_TrackSelfGround( now );
 	JKA_TrackDuelHealth( now );
 	JKA_TrackScriptInputs( now );
+	JKA_TrackTrajectory( now );
 
 	if ( jka_keyframeCount < JKA_MAX_KEYFRAMES &&
 		( jka_keyframeCount == 0 || now - jka_lastKeyframeTime >= 10000 ) ) {
@@ -2803,6 +2891,44 @@ static void JKA_BuildSummary( void )
 	JKA_Append( &out, &left, "]}" );
 	*out = 0;
 	jka_summaryValid = qtrue;
+}
+
+// A window of recorded player positions for the minimap trails, as
+// [clientNum, serverTime, x, y] entries.  The page asks for roughly ten
+// seconds around the live time and refreshes as playback advances, so the
+// buffer stays small and no full-demo dump is transferred.
+EMSCRIPTEN_KEEPALIVE const char *JKA_TrajectoryJson( int from, int to )
+{
+	char *out = jka_trajectoryJson;
+	size_t left = sizeof( jka_trajectoryJson );
+	qboolean first = qtrue;
+	int i;
+
+	if ( to < from ) {
+		int swap = from;
+		from = to;
+		to = swap;
+	}
+
+	JKA_Append( &out, &left, "{\"overflow\":%s,\"samples\":[",
+		jka_trajectoryOverflow ? "true" : "false" );
+	for ( i = 0; i < jka_trajectoryCount; i++ ) {
+		jkaTrajectorySample_t *sample = &jka_trajectory[i];
+
+		if ( sample->time < from || sample->time > to ) {
+			continue;
+		}
+		if ( left < 64 ) {
+			// A very wide window or an unusual player count: return the part
+			// that fits rather than a truncated JSON document.
+			break;
+		}
+		JKA_Append( &out, &left, "%s[%d,%d,%.0f,%.0f]",
+			first ? "" : ",", sample->num, sample->time, sample->x, sample->y );
+		first = qfalse;
+	}
+	JKA_Append( &out, &left, "]}" );
+	return jka_trajectoryJson;
 }
 
 EMSCRIPTEN_KEEPALIVE const char *JKA_DemoSummaryJson( void )

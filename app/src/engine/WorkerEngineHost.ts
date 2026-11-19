@@ -1,4 +1,4 @@
-import type { DemoInfo, DemoSummary, FreeCamPose, LocalFile, RadarData, ScoreboardData } from '../types';
+import type { DemoInfo, DemoSummary, FreeCamPose, LocalFile, RadarData, ScoreboardData, TrajectoryData } from '../types';
 import type { BootOptions, EngineCallbacks, EngineHostApi } from './shared';
 import { buildEngineArgs, ENGINE_BASE, WorkerUnsupportedError } from './shared';
 import { EngineAudioOutput } from './audio';
@@ -567,6 +567,17 @@ export class WorkerEngineHost implements EngineHostApi {
 
   async getRadar(): Promise<RadarData | null> {
     return this.radar;
+  }
+
+  async getTrajectory(from: number, to: number): Promise<TrajectoryData | null> {
+    try {
+      return await this.call<TrajectoryData | null>('trajectory', {
+        from: Math.round(from),
+        to: Math.round(to)
+      });
+    } catch {
+      return null;
+    }
   }
 
   followClient(clientNum: number): void {

@@ -6,7 +6,8 @@ import type {
   LocalFile,
   RadarData,
   ScoreboardData,
-  StageProgress
+  StageProgress,
+  TrajectoryData
 } from '../types';
 import type { TextureMipmapMode } from '../settings';
 
@@ -88,6 +89,11 @@ export interface EngineHostApi {
   getScoreboard(): Promise<ScoreboardData | null>;
   /** Live player positions for the minimap; null while a long call is running. */
   getRadar(): Promise<RadarData | null>;
+  /**
+   * Player positions recorded by the demo scan in [from, to] server time.
+   * Returns null while the engine is unavailable or has not scanned the demo.
+   */
+  getTrajectory(from: number, to: number): Promise<TrajectoryData | null>;
   followClient(clientNum: number): void;
   enableFreeCam(): Promise<FreeCamPose | null>;
   setFreeCamPose(pose: FreeCamPose): void;

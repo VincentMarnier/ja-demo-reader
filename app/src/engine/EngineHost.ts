@@ -1,4 +1,4 @@
-import type { DemoInfo, DemoStatus, DemoSummary, FreeCamPose, LocalFile, RadarData, ScoreboardData } from '../types';
+import type { DemoInfo, DemoStatus, DemoSummary, FreeCamPose, LocalFile, RadarData, ScoreboardData, TrajectoryData } from '../types';
 import { prepareAndStage } from '../fs/stage';
 import type { BootOptions, EngineCallbacks, EngineHostApi } from './shared';
 import { buildEngineArgs, ENGINE_BASE } from './shared';
@@ -586,6 +586,24 @@ export class MainThreadEngineHost implements EngineHostApi {
       if (!raw) return null;
       const data = JSON.parse(raw) as RadarData;
       if (!data || !Array.isArray(data.players)) return null;
+      return data;
+    } catch {
+      return null;
+    }
+  }
+
+  async getTrajectory(from: number, to: number): Promise<TrajectoryData | null> {
+    if (!this.module?.ccall || this.asyncInFlight) return null;
+    try {
+      const raw = this.module.ccall(
+        'JKA_TrajectoryJson',
+        'string',
+        ['number', 'number'],
+        [Math.round(from), Math.round(to)]
+      ) as string;
+      if (!raw) return null;
+      const data = JSON.parse(raw) as TrajectoryData;
+      if (!data || !Array.isArray(data.samples)) return null;
       return data;
     } catch {
       return null;

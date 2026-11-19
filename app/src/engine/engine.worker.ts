@@ -6,7 +6,7 @@
 /// read-only with WORKERFS; only demos and added map PK3s are copied into the
 /// writable `/userdata/base` MEMFS.
 
-import type { DemoStatus, FreeCamPose, RadarData, ScoreboardData } from '../types';
+import type { DemoStatus, FreeCamPose, RadarData, ScoreboardData, TrajectoryData } from '../types';
 import type { WorkerMemory, WorkerRequest, WorkerResponse } from './protocol';
 
 // Keep CA_ACTIVE inline: Vite dev serves a classic worker as an unbundled
@@ -657,6 +657,17 @@ async function handle(request: WorkerRequest): Promise<unknown> {
       const raw = ccallString('JKA_DemoSummaryJson', [], []);
       if (!raw) return null;
       return JSON.parse(raw) as unknown;
+    }
+    case 'trajectory': {
+      // A short, synchronous read of the scan's position buffer; it is safe
+      // inside this serialized task and never enters Asyncify.
+      const raw = ccallString('JKA_TrajectoryJson', ['number', 'number'], [
+        Math.round(request.from),
+        Math.round(request.to)
+      ]);
+      if (!raw) return null;
+      const data = JSON.parse(raw) as TrajectoryData;
+      return Array.isArray(data?.samples) ? data : null;
     }
     case 'seek': {
       await ccallAsync('JKA_SeekDemo', ['string', 'number'], [request.name, Math.max(0, Math.round(request.target))]);

@@ -172,19 +172,37 @@ export function SettingsPanel({ settings, onChange, onClose, onClearLocalData }:
             />
             <span>Show the top-down minimap with live player positions</span>
           </label>
+        </section>
+
+        <section className="settings-section">
+          <h3>Minimap trails</h3>
           <label className="toggle-row">
             <input
               type="checkbox"
-              checked={settings.swapMinimap}
-              onChange={event =>
-                onChange({
-                  swapMinimap: event.target.checked,
-                  showMinimap: event.target.checked || settings.showMinimap
-                })
-              }
+              checked={settings.trailsPast}
+              onChange={event => onChange({ trailsPast: event.target.checked })}
             />
-            <span>Swap the demo and the map: the demo plays in the map's corner and the map fills the stage</span>
+            <span>Draw the past five seconds of each player's movement, fading into the current position</span>
           </label>
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={settings.trailsFuture}
+              onChange={event => onChange({ trailsFuture: event.target.checked })}
+            />
+            <span>Draw the next five seconds as a dashed, dimmer line (from the demo scan)</span>
+          </label>
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={settings.trailsFollowOnly}
+              onChange={event => onChange({ trailsFollowOnly: event.target.checked })}
+            />
+            <span>Only draw trails for the player you follow, not everyone</span>
+          </label>
+          <p className="muted settings-note">
+            The trails line up with the player dots and need one demo scan per session, like the seek keyframes.
+          </p>
         </section>
 
         <section className="settings-section">

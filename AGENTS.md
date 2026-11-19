@@ -194,9 +194,9 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
 - Worker host (`app/src/engine/engine.worker.ts`): every long/async wasm call
   goes through the worker's own `runExclusive` queue, and `play` stays
   single-flight on both sides. Short synchronous calls (status/scoreboard
-  polls, cvar, follow, free-cam) are only made while no async call is in
-  flight. Do not add a call path that can enter wasm during an Asyncify
-  suspension.
+  polls, radar and trajectory-window reads, cvar, follow, free-cam) are only
+  made while no async call is in flight. Do not add a call path that can enter
+  wasm during an Asyncify suspension.
 - `JKA_DemoInfo` pauses the loop, disconnects and scans; since Phase 5 it does
   not load a map, but it must still be an **async** ccall in both hosts. The
   worker uses `ccallAsyncString`; a synchronous call aborts with Emscripten's
@@ -311,6 +311,10 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   either rule overcounts kills/deaths.
 - `jka_demoGamestates` is incremented in `CL_ParseGamestate`; the bridge uses it
   for game segments.
+- The scan also records the coarse player trajectory used by the minimap trails
+  (one sample per 150 ms, POV plus snapshot players). It is reset with the
+  summary at the start of every scan and is deliberately not part of the cached
+  summary.
 - The app overrides the cgame's incomplete K/D with the parsed event summary in
   `app/src/summary.ts`/`mergeScoreboard`. Keep that merge; cgame-only counters
   are wrong after seeks and map restarts.
@@ -386,12 +390,36 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   with the demo camera), and no highlight in free cam.
   `AppSettings.showMinimap` and the action-bar map button toggle the panel; the
   stage's `data-minimap` attribute moves the kill feed down.
-- The action-bar swap button (`AppSettings.swapMinimap`, stage `data-swapped`)
-  exchanges the two: the demo canvas becomes the top-right corner player at the
-  stage aspect (208 px, 118 px on narrow layouts) and the minimap fills the
-  stage. The big map drops to z-index 3 so the score strip, kill feed and player
-  chrome stay above it, the kill feed moves to the left, and hiding the map
-  leaves swap mode. Swapping turns the map on when it was hidden.
+- There is no swap button: clicking the corner map promotes it
+  (`AppSettings.mapExpanded`, stage `data-swapped`) and clicking the corner demo
+  promotes the demo. In map view the minimap fills the stage (z-index 3, with
+  the chrome above), the kill feed moves left, and the demo canvas becomes a
+  corner window (z-index 6) at the stage aspect. Its corner and width are
+  `AppSettings.pipCorner`/`pipWidth`: bottom-right and 33% by default, 15–55%
+  allowed. `CornerDemo.tsx` drags it to the nearest corner and its inner grip
+  resizes it while keeping the aspect; the bottom corners clear the seek/action
+  bar with `--pip-bottom-gap`. Hiding the map leaves map view.
+- Map view navigation ("Google Maps"): the wheel and two-finger pinch zoom
+  (1–8×, around the pointer), a drag pans, double-click zooms in and a second
+  double-click resets. `Minimap.tsx` keeps the view in a ref, clamped so the
+  image never leaves a gap; the corner map always draws the fitted overview and
+  the view is remembered across a collapse but reset when the map changes.
+  A click without movement still follows a dot (and a corner-map click
+  promotes).
+- Minimap trails come from the scan, never from the future of live playback:
+  `JKA_TrackTrajectory` samples the POV (`cl.snap.ps`) and every `ET_PLAYER` in
+  the parse ring every 150 ms while `jka_scanOnly` is set, into a 4 MB static
+  buffer (262,144 entries). `JKA_TrajectoryJson(from,to)` returns
+  `[num,serverTime,x,y]` on the radar clock; the page requests a ±7 s window and
+  refreshes near its edges. Playback and seek replays must not append, and the
+  samples are engine memory like the keyframes (not the summary cache; `v11`
+  stays). A release or an unscanned engine session therefore has no trails.
+- `Minimap.tsx` draws the past five seconds solid and fading into the current
+  dot and the next five seconds dashed and dimmer, above the cones and below the
+  dots; gaps over 800 ms or a >600-unit step break the line and dead players
+  are skipped.
+  `trailsPast` defaults on, `trailsFuture` and `trailsFollowOnly` default off
+  (every player is drawn); `trailsFollowOnly` keeps only `highlightClient`.
 - The jump effect uses `z - baseZ`, where `baseZ` is the last grounded `z`.
   Reset the baseline on the >600-unit snap (respawn/teleport/seek). Scale the
   aura, team ring, white lift ring, pulse and dot radius with
@@ -431,11 +459,12 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
 - Summary cache keys are versioned (`v11:name:size:lastModified`). Bump the
   version when the summary shape or game-boundary logic changes; otherwise old
   one-game summaries are reused. The IndexedDB cache self-heals a missing store.
-- A cached summary does not contain the in-memory seek keyframes. The app's
-  `keyframesReady` flag forces one scan per engine/demo (including after
-  Release or a demo switch); with keyframes present, Check map can use the
-  cached summary. Do not remove that condition or warm seek silently falls
-  back to the full keyframe reload.
+- A cached summary does not contain the in-memory seek keyframes or the trail
+  trajectory. The app's `keyframesReady` flag forces one scan per
+  engine/demo (including after Release or a demo switch); with keyframes
+  present, Check map can use the cached summary. Do not remove that condition
+  or warm seek silently falls back to the full keyframe reload and the trails
+  have no samples.
 - Check map now uses the parse-only scan, so it does not load a map/cgame. Map
   presence is still checked with `JKA_HasMap`; map/asset errors surface during
   the background prepare or Play instead of at Check map.

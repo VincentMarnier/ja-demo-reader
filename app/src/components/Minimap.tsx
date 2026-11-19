@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { loadMapImage } from '../map/mapImage';
 import type { MapBounds } from '../map/bsp';
-import type { RadarData, ScoreboardData } from '../types';
+import type { RadarData, ScoreboardData, TrajectoryData } from '../types';
 
 interface MinimapProps {
   mapName: string;
@@ -14,6 +14,61 @@ interface MinimapProps {
   /** Camera subject: the demo POV or the player the camera follows. */
   highlightClient: number | null;
   onFollow: (clientNum: number) => void;
+  /** The map fills the stage: drag to pan, scroll/pinch to zoom. */
+  expanded: boolean;
+  /** Promote the corner map to the full stage (a click on the small map). */
+  onExpand: () => void;
+  /** Movement trails: the recorded window on each side of the live time. */
+  showPastTrails: boolean;
+  showFutureTrails: boolean;
+  trailsFollowOnly: boolean;
+  loadTrajectory: (from: number, to: number) => Promise<TrajectoryData | null>;
+}
+
+interface TrailPoint {
+  /** Server time, the same clock as RadarData.time. */
+  t: number;
+  x: number;
+  y: number;
+}
+
+/** Visible trail length on each side of the current dot. */
+const TRAIL_LENGTH_MS = 5000;
+/** Fetched window: the visible five seconds plus headroom before a refetch. */
+const TRAIL_WINDOW_MS = 7000;
+/** Refetch once the live time comes this close to a cached window edge. */
+const TRAIL_REFRESH_MARGIN_MS = 2000;
+/** A longer sample gap is a PVS exit or a seek, not a movement line. */
+const TRAIL_GAP_MS = 800;
+/** A jump this large in one step is a respawn/teleport, like the dot snap. */
+const TRAIL_SNAP_UNITS = 600;
+/** Map view zoom limits and the click/drag threshold. */
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 8;
+const PAN_SLOP = 4;
+
+interface MapFit {
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+  worldWidth: number;
+  worldHeight: number;
+}
+
+interface PanGesture {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  panX: number;
+  panY: number;
+  moved: boolean;
+}
+
+interface PinchGesture {
+  distance: number;
+  zoom: number;
+  baseX: number;
+  baseY: number;
 }
 
 interface Pose {
@@ -84,7 +139,21 @@ function toneColor(tone: Tone, alpha = 1): string {
     : `hsla(${tone.h}, ${tone.s}%, ${tone.l}%, ${alpha})`;
 }
 
-export function Minimap({ mapName, files, radar, scores, fov, highlightClient, onFollow }: MinimapProps) {
+export function Minimap({
+  mapName,
+  files,
+  radar,
+  scores,
+  fov,
+  highlightClient,
+  onFollow,
+  expanded,
+  onExpand,
+  showPastTrails,
+  showFutureTrails,
+  trailsFollowOnly,
+  loadTrajectory
+}: MinimapProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const layerRef = useRef<HTMLCanvasElement | null>(null);
   const boundsRef = useRef<MapBounds | null>(null);
@@ -95,7 +164,168 @@ export function Minimap({ mapName, files, radar, scores, fov, highlightClient, o
   const posesRef = useRef<Map<number, Pose>>(new Map());
   const dotsRef = useRef<DotHit[]>([]);
   const onFollowRef = useRef(onFollow);
+  const trailsRef = useRef<Map<number, TrailPoint[]>>(new Map());
+  const trailWindowRef = useRef<{ from: number; to: number } | null>(null);
+  const trailLoadingRef = useRef(false);
+  const trailRetryAtRef = useRef(0);
+  const trailsPastRef = useRef(showPastTrails);
+  const trailsFutureRef = useRef(showFutureTrails);
+  const trailsFollowOnlyRef = useRef(trailsFollowOnly);
+  const loadTrajectoryRef = useRef(loadTrajectory);
+  const mountedRef = useRef(true);
+  const onExpandRef = useRef(onExpand);
+  const expandedRef = useRef(expanded);
+  const fitRef = useRef<MapFit | null>(null);
+  const viewRef = useRef({ zoom: 1, panX: 0, panY: 0 });
+  const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const panRef = useRef<PanGesture | null>(null);
+  const pinchRef = useRef<PinchGesture | null>(null);
+  const [dragging, setDragging] = useState(false);
   const [status, setStatus] = useState<'loading' | 'ready' | 'missing'>(mapName ? 'loading' : 'missing');
+
+  useEffect(() => {
+    onExpandRef.current = onExpand;
+  }, [onExpand]);
+
+  useEffect(() => {
+    expandedRef.current = expanded;
+  }, [expanded]);
+
+  // Pan/zoom keep the map image centred at zoom 1 and clamp so an edge cannot
+  // leave a gap; a panned view is remembered while the map is in the corner.
+  const clampView = useCallback((width: number, height: number) => {
+    const fit = fitRef.current;
+    const view = viewRef.current;
+    if (!fit) {
+      view.panX = 0;
+      view.panY = 0;
+      return;
+    }
+    if (view.zoom <= MIN_ZOOM + 0.001) {
+      view.zoom = MIN_ZOOM;
+      view.panX = 0;
+      view.panY = 0;
+      return;
+    }
+    const halfWidth = (fit.worldWidth * fit.scale * view.zoom) / 2;
+    const halfHeight = (fit.worldHeight * fit.scale * view.zoom) / 2;
+    const limitX = Math.max(0, halfWidth - width / 2);
+    const limitY = Math.max(0, halfHeight - height / 2);
+    view.panX = Math.min(limitX, Math.max(-limitX, view.panX));
+    view.panY = Math.min(limitY, Math.max(-limitY, view.panY));
+  }, []);
+
+  const zoomAt = useCallback(
+    (localX: number, localY: number, factor: number) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const width = canvas.clientWidth || 200;
+      const height = canvas.clientHeight || 200;
+      const view = viewRef.current;
+      const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, view.zoom * factor));
+      if (Math.abs(next - view.zoom) < 0.001) return;
+      const centerX = width / 2;
+      const centerY = height / 2;
+      // Base (zoom 1) coordinates under the cursor stay under it.
+      const baseX = (localX - centerX - view.panX) / view.zoom + centerX;
+      const baseY = (localY - centerY - view.panY) / view.zoom + centerY;
+      view.zoom = next;
+      view.panX = localX - centerX - (baseX - centerX) * next;
+      view.panY = localY - centerY - (baseY - centerY) * next;
+      clampView(width, height);
+    },
+    [clampView]
+  );
+
+  useEffect(() => {
+    const element = canvasRef.current?.closest<HTMLElement>('.minimap');
+    if (!element) return;
+    const onWheel = (event: WheelEvent) => {
+      if (!expandedRef.current) return;
+      event.preventDefault();
+      const rect = element.getBoundingClientRect();
+      zoomAt(
+        event.clientX - rect.left,
+        event.clientY - rect.top,
+        Math.exp(-event.deltaY * 0.0015)
+      );
+    };
+    element.addEventListener('wheel', onWheel, { passive: false });
+    return () => element.removeEventListener('wheel', onWheel);
+  }, [zoomAt]);
+
+  useEffect(() => {
+    trailsPastRef.current = showPastTrails;
+  }, [showPastTrails]);
+
+  useEffect(() => {
+    trailsFutureRef.current = showFutureTrails;
+  }, [showFutureTrails]);
+
+  useEffect(() => {
+    trailsFollowOnlyRef.current = trailsFollowOnly;
+  }, [trailsFollowOnly]);
+
+  useEffect(() => {
+    loadTrajectoryRef.current = loadTrajectory;
+  }, [loadTrajectory]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // The scan holds the whole trajectory; ask only for a window around the
+  // live time and refresh it as playback advances (or after a seek).
+  useEffect(() => {
+    const time = radar?.time ?? 0;
+    if (!time || (!showPastTrails && !showFutureTrails)) return;
+    if (trailLoadingRef.current || performance.now() < trailRetryAtRef.current) return;
+    const windowed = trailWindowRef.current;
+    if (
+      windowed &&
+      time >= windowed.from + TRAIL_REFRESH_MARGIN_MS &&
+      time <= windowed.to - TRAIL_REFRESH_MARGIN_MS
+    ) {
+      return;
+    }
+    const from = time - TRAIL_WINDOW_MS;
+    const to = time + TRAIL_WINDOW_MS;
+    trailLoadingRef.current = true;
+    void loadTrajectoryRef
+      .current(from, to)
+      .then(data => {
+        trailLoadingRef.current = false;
+        if (!data) {
+          // The engine may still be between scans; do not ask on every radar
+          // tick until it has data.
+          trailRetryAtRef.current = performance.now() + 2000;
+          return;
+        }
+        if (!mountedRef.current) return;
+        const next = new Map<number, TrailPoint[]>();
+        for (const sample of data?.samples ?? []) {
+          const [num, t, x, y] = sample;
+          if (!Number.isFinite(num) || !Number.isFinite(t) || !Number.isFinite(x) || !Number.isFinite(y)) {
+            continue;
+          }
+          let list = next.get(num);
+          if (!list) {
+            list = [];
+            next.set(num, list);
+          }
+          list.push({ t, x, y });
+        }
+        trailsRef.current = next;
+        trailWindowRef.current = { from, to };
+      })
+      .catch(() => {
+        trailLoadingRef.current = false;
+        trailRetryAtRef.current = performance.now() + 2000;
+      });
+  }, [radar, showPastTrails, showFutureTrails]);
 
   useEffect(() => {
     radarRef.current = radar;
@@ -124,6 +354,12 @@ export function Minimap({ mapName, files, radar, scores, fov, highlightClient, o
     layerRef.current = null;
     boundsRef.current = null;
     posesRef.current.clear();
+    trailsRef.current = new Map();
+    trailWindowRef.current = null;
+    viewRef.current = { zoom: 1, panX: 0, panY: 0 };
+    pointersRef.current.clear();
+    panRef.current = null;
+    pinchRef.current = null;
     if (!mapName) {
       setStatus('missing');
       return;
@@ -182,15 +418,35 @@ export function Minimap({ mapName, files, radar, scores, fov, highlightClient, o
       if (layer && bounds) {
         const worldWidth = Math.max(1, bounds.maxX - bounds.minX);
         const worldHeight = Math.max(1, bounds.maxY - bounds.minY);
-        const scale = Math.min(width / worldWidth, height / worldHeight) * 0.98;
-        const offsetX = (width - worldWidth * scale) / 2;
-        const offsetY = (height - worldHeight * scale) / 2;
+        const fitScale = Math.min(width / worldWidth, height / worldHeight) * 0.98;
+        const fitOffsetX = (width - worldWidth * fitScale) / 2;
+        const fitOffsetY = (height - worldHeight * fitScale) / 2;
+        fitRef.current = {
+          scale: fitScale,
+          offsetX: fitOffsetX,
+          offsetY: fitOffsetY,
+          worldWidth,
+          worldHeight
+        };
+
+        // The corner map is always the fitted overview; the full-stage map
+        // pans and zooms, and remembers its view across a collapse.
+        const view = viewRef.current;
+        if (expandedRef.current) clampView(width, height);
+        const zoom = expandedRef.current ? view.zoom : MIN_ZOOM;
+        const panX = expandedRef.current ? view.panX : 0;
+        const panY = expandedRef.current ? view.panY : 0;
+        const centerX = width / 2;
+        const centerY = height / 2;
+        const imageX = centerX + (fitOffsetX - centerX) * zoom + panX;
+        const imageY = centerY + (fitOffsetY - centerY) * zoom + panY;
+        const scale = fitScale * zoom;
         context.imageSmoothingEnabled = true;
         context.imageSmoothingQuality = 'high';
-        context.drawImage(layer, offsetX, offsetY, worldWidth * scale, worldHeight * scale);
+        context.drawImage(layer, imageX, imageY, worldWidth * scale, worldHeight * scale);
         toScreen = (x, y) => ({
-          x: offsetX + (x - bounds.minX) * scale,
-          y: offsetY + (bounds.maxY - y) * scale
+          x: imageX + (x - bounds.minX) * scale,
+          y: imageY + (bounds.maxY - y) * scale
         });
       }
 
@@ -301,6 +557,96 @@ export function Minimap({ mapName, files, radar, scores, fov, highlightClient, o
         context.restore();
       }
 
+      // Movement trails from the demo scan.  The past is solid and fades into
+      // the current dot; the future is dashed, dimmer and fades away from it,
+      // so the same player's two directions read apart at minimap size.
+      const liveTime = radarRef.current?.time ?? 0;
+      if (liveTime && (trailsPastRef.current || trailsFutureRef.current)) {
+        const trailSamples = trailsRef.current;
+        const scale = Math.min(width, height);
+        const trailWidth = Math.max(1.25, Math.min(3.2, scale * 0.005));
+        const dashSize = Math.max(3, Math.min(8, scale * 0.012));
+
+        for (const num of ordered) {
+          const pose = poses.get(num);
+          if (!pose || pose.dead) continue;
+          if (trailsFollowOnlyRef.current && num !== highlightRef.current) continue;
+          const samples = trailSamples.get(num);
+          if (!samples || samples.length === 0) continue;
+          const tone = playerTone(num, teams.get(num));
+          const dot = toScreen(pose.x, pose.y);
+
+          if (trailsPastRef.current) {
+            const points: Array<{ x: number; y: number; t: number; wx: number; wy: number }> = [];
+            for (const sample of samples) {
+              if (sample.t > liveTime) break;
+              if (sample.t < liveTime - TRAIL_LENGTH_MS) continue;
+              const point = toScreen(sample.x, sample.y);
+              points.push({ x: point.x, y: point.y, t: sample.t, wx: sample.x, wy: sample.y });
+            }
+            points.push({ x: dot.x, y: dot.y, t: liveTime, wx: pose.x, wy: pose.y });
+            context.setLineDash([]);
+            for (let i = 1; i < points.length; i++) {
+              if (points[i].t - points[i - 1].t > TRAIL_GAP_MS) continue;
+              if (Math.hypot(points[i].wx - points[i - 1].wx, points[i].wy - points[i - 1].wy) > TRAIL_SNAP_UNITS) {
+                continue;
+              }
+              const fade = 1 - Math.max(0, liveTime - points[i].t) / TRAIL_LENGTH_MS;
+              context.beginPath();
+              context.moveTo(points[i - 1].x, points[i - 1].y);
+              context.lineTo(points[i].x, points[i].y);
+              context.strokeStyle = toneColor(tone, 0.1 + 0.6 * fade);
+              context.lineWidth = trailWidth * (0.7 + 0.3 * fade);
+              context.stroke();
+            }
+          }
+
+          if (trailsFutureRef.current) {
+            const points: Array<{ x: number; y: number; t: number; wx: number; wy: number }> = [
+              { x: dot.x, y: dot.y, t: liveTime, wx: pose.x, wy: pose.y }
+            ];
+            for (const sample of samples) {
+              if (sample.t <= liveTime) continue;
+              if (sample.t > liveTime + TRAIL_LENGTH_MS) break;
+              const point = toScreen(sample.x, sample.y);
+              points.push({ x: point.x, y: point.y, t: sample.t, wx: sample.x, wy: sample.y });
+            }
+            if (points.length > 1) {
+              const head = points[0];
+              const tail = points[points.length - 1];
+              // One path keeps the dash pattern continuous; the spatial
+              // gradient dims it toward the recorded end.
+              const fade = context.createLinearGradient(head.x, head.y, tail.x, tail.y);
+              fade.addColorStop(0, toneColor(tone, 0.45));
+              fade.addColorStop(1, toneColor(tone, 0.1));
+              context.strokeStyle = fade;
+              context.lineWidth = trailWidth * 0.85;
+              context.setLineDash([dashSize, dashSize * 1.4]);
+              context.beginPath();
+              let pen = false;
+              for (let i = 1; i < points.length; i++) {
+                if (
+                  points[i].t - points[i - 1].t > TRAIL_GAP_MS ||
+                  Math.hypot(points[i].wx - points[i - 1].wx, points[i].wy - points[i - 1].wy) > TRAIL_SNAP_UNITS
+                ) {
+                  pen = false;
+                  continue;
+                }
+                if (!pen) {
+                  context.moveTo(points[i - 1].x, points[i - 1].y);
+                  pen = true;
+                }
+                context.lineTo(points[i].x, points[i].y);
+              }
+              context.stroke();
+              context.setLineDash([]);
+            }
+          }
+        }
+        context.lineWidth = 1;
+        context.globalAlpha = 1;
+      }
+
       for (const num of ordered) {
         const pose = poses.get(num);
         if (!pose) continue;
@@ -404,12 +750,12 @@ export function Minimap({ mapName, files, radar, scores, fov, highlightClient, o
     return () => cancelAnimationFrame(frame);
   }, []);
 
-  const handleClick = useCallback((event: MouseEvent<HTMLDivElement>) => {
+  const dotAt = useCallback((clientX: number, clientY: number): DotHit | null => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
     let best: DotHit | null = null;
     let bestDistance = 15;
     for (const dot of dotsRef.current) {
@@ -419,15 +765,142 @@ export function Minimap({ mapName, files, radar, scores, fov, highlightClient, o
         bestDistance = distance;
       }
     }
-    if (best) onFollowRef.current(best.num);
+    return best;
   }, []);
+
+  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    const element = event.currentTarget;
+    pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    element.setPointerCapture(event.pointerId);
+
+    if (expandedRef.current && pointersRef.current.size === 2) {
+      const [a, b] = [...pointersRef.current.values()];
+      const rect = element.getBoundingClientRect();
+      const view = viewRef.current;
+      const centerX = rect.width / 2;
+      const centerY = rect.height / 2;
+      const midX = (a.x + b.x) / 2 - rect.left;
+      const midY = (a.y + b.y) / 2 - rect.top;
+      pinchRef.current = {
+        distance: Math.max(1, Math.hypot(b.x - a.x, b.y - a.y)),
+        zoom: view.zoom,
+        baseX: (midX - centerX - view.panX) / view.zoom + centerX,
+        baseY: (midY - centerY - view.panY) / view.zoom + centerY
+      };
+      panRef.current = null;
+      setDragging(false);
+      return;
+    }
+    if (pointersRef.current.size > 2) return;
+
+    const view = viewRef.current;
+    panRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      panX: view.panX,
+      panY: view.panY,
+      moved: false
+    };
+  };
+
+  const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!pointersRef.current.has(event.pointerId)) return;
+    pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    if (expandedRef.current && pointersRef.current.size >= 2 && pinchRef.current) {
+      const [a, b] = [...pointersRef.current.values()];
+      const rect = canvas.getBoundingClientRect();
+      const pinch = pinchRef.current;
+      const view = viewRef.current;
+      const distance = Math.max(1, Math.hypot(b.x - a.x, b.y - a.y));
+      const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, pinch.zoom * (distance / pinch.distance)));
+      const centerX = rect.width / 2;
+      const centerY = rect.height / 2;
+      const midX = (a.x + b.x) / 2 - rect.left;
+      const midY = (a.y + b.y) / 2 - rect.top;
+      view.zoom = zoom;
+      view.panX = midX - centerX - (pinch.baseX - centerX) * zoom;
+      view.panY = midY - centerY - (pinch.baseY - centerY) * zoom;
+      clampView(rect.width, rect.height);
+      event.preventDefault();
+      return;
+    }
+
+    const pan = panRef.current;
+    if (!pan || pan.pointerId !== event.pointerId) return;
+    const dx = event.clientX - pan.startX;
+    const dy = event.clientY - pan.startY;
+    if (!pan.moved && Math.hypot(dx, dy) > PAN_SLOP) {
+      pan.moved = true;
+      if (expandedRef.current) setDragging(true);
+    }
+    if (pan.moved && expandedRef.current) {
+      const view = viewRef.current;
+      view.panX = pan.panX + dx;
+      view.panY = pan.panY + dy;
+      clampView(canvas.clientWidth, canvas.clientHeight);
+      event.preventDefault();
+    }
+  };
+
+  const handlePointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    pointersRef.current.delete(event.pointerId);
+    if (pointersRef.current.size < 2) pinchRef.current = null;
+    const pan = panRef.current;
+    if (!pan || pan.pointerId !== event.pointerId) return;
+    panRef.current = null;
+    setDragging(false);
+    if (pan.moved) return;
+    const hit = dotAt(event.clientX, event.clientY);
+    if (hit) onFollowRef.current(hit.num);
+    // Clicking the small map promotes it to the full stage.
+    if (!expandedRef.current) onExpandRef.current();
+  };
+
+  const handlePointerCancel = (event: ReactPointerEvent<HTMLDivElement>) => {
+    pointersRef.current.delete(event.pointerId);
+    if (pointersRef.current.size < 2) pinchRef.current = null;
+    if (panRef.current?.pointerId === event.pointerId) panRef.current = null;
+    setDragging(false);
+  };
 
   return (
     <div
-      className="minimap"
+      className={expanded ? 'minimap is-expanded' : 'minimap'}
       data-state={status}
-      onClick={handleClick}
-      title="Top-down map: click a player dot to follow"
+      data-expanded={expanded ? '1' : undefined}
+      data-dragging={dragging ? '1' : undefined}
+      role={expanded ? undefined : 'button'}
+      tabIndex={expanded ? undefined : 0}
+      aria-label={expanded ? undefined : 'Open the top-down map'}
+      title={
+        expanded
+          ? 'Map: drag to pan, scroll or pinch to zoom, click a player dot to follow'
+          : 'Click to open the map'
+      }
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerCancel}
+      onDoubleClick={event => {
+        if (!expandedRef.current) return;
+        if (viewRef.current.zoom > MIN_ZOOM + 0.001) {
+          viewRef.current = { zoom: MIN_ZOOM, panX: 0, panY: 0 };
+          return;
+        }
+        const rect = event.currentTarget.getBoundingClientRect();
+        zoomAt(event.clientX - rect.left, event.clientY - rect.top, 2);
+      }}
+      onKeyDown={event => {
+        if (!expandedRef.current && (event.key === 'Enter' || event.key === ' ')) {
+          event.preventDefault();
+          onExpandRef.current();
+        }
+      }}
     >
       <canvas ref={canvasRef} className="minimap-canvas" aria-label="Top-down map with player positions" />
       {status === 'ready' ? null : (

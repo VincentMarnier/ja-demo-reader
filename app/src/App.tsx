@@ -25,8 +25,9 @@ import { ProgressOverlay } from './components/ProgressOverlay';
 import { ErrorPanel } from './components/ErrorPanel';
 import { ScoreboardPanel } from './components/ScoreboardPanel';
 import { SettingsPanel } from './components/SettingsPanel';
-import type { AppSettings } from './settings';
+import type { AppSettings, PipCorner } from './settings';
 import { loadSettings, saveSettings } from './settings';
+import { CornerDemo } from './components/CornerDemo';
 import { collectMissingAssets } from './missingAssets';
 import type { MissingAsset } from './missingAssets';
 import { MissingAssetsPanel } from './components/MissingAssetsPanel';
@@ -66,6 +67,12 @@ export default function App() {
   const [paused, setPaused] = useState(false);
   const [savedHandle, setSavedHandle] = useState<FileSystemDirectoryHandle | null>(null);
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
+  // The corner player lives while the map is enlarged; its live size/corner
+  // avoid touching persisted settings on every pointer move.
+  const [pip, setPip] = useState(() => ({
+    corner: settings.pipCorner,
+    width: settings.pipWidth
+  }));
   const [showSettings, setShowSettings] = useState(false);
   const [scoreboard, setScoreboard] = useState<ScoreboardData | null>(null);
   const [radar, setRadar] = useState<RadarData | null>(null);
@@ -439,6 +446,30 @@ export default function App() {
     engine.followClient(-1);
     setFollowClient(null);
   }, [freeCam]);
+
+  // The minimap asks for recorded positions around the live time so it can
+  // draw the past and future trails; the scan owns the full trajectory.
+  const loadTrajectory = useCallback(async (from: number, to: number) => {
+    const engine = engineRef.current;
+    return engine ? engine.getTrajectory(from, to) : null;
+  }, []);
+
+  const resizePip = useCallback((width: number) => {
+    setPip(current => (current.width === width ? current : { ...current, width }));
+  }, []);
+
+  const commitPip = useCallback((corner: PipCorner, width: number) => {
+    setPip({ corner, width });
+    setSettings(current => ({ ...current, pipCorner: corner, pipWidth: width }));
+  }, []);
+
+  const expandMap = useCallback(() => {
+    setSettings(current => ({ ...current, showMinimap: true, mapExpanded: true }));
+  }, []);
+
+  const expandDemo = useCallback(() => {
+    setSettings(current => ({ ...current, mapExpanded: false }));
+  }, []);
 
   // Mount the whole base selection, not just the four retail assets: a
   // GameData/base folder usually also holds the demo's map PK3 and the model,
@@ -1352,10 +1383,18 @@ export default function App() {
             <div
               className="stage"
               ref={stageRef}
-              style={{ '--stage-aspect': stageAspect.toFixed(4) } as CSSProperties}
+              style={
+                {
+                  '--stage-aspect': stageAspect.toFixed(4),
+                  '--pip-width': `${pip.width}%`
+                } as CSSProperties
+              }
               data-minimap={showPlayer && settings.showMinimap ? '1' : undefined}
               data-swapped={
-                showPlayer && settings.showMinimap && settings.swapMinimap ? '1' : undefined
+                showPlayer && settings.showMinimap && settings.mapExpanded ? '1' : undefined
+              }
+              data-pip-corner={
+                showPlayer && settings.showMinimap && settings.mapExpanded ? pip.corner : undefined
               }
             >
               <svg className="gamma-filter" aria-hidden="true" focusable="false">
@@ -1375,6 +1414,16 @@ export default function App() {
                 className="screen"
                 style={{ filter: gammaFilter }}
               />
+
+              {showPlayer && settings.showMinimap && settings.mapExpanded ? (
+                <CornerDemo
+                  corner={pip.corner}
+                  width={pip.width}
+                  onWidthChange={resizePip}
+                  onCommit={commitPip}
+                  onExpand={expandDemo}
+                />
+              ) : null}
 
               {showWizard ? (
                 <Launcher
@@ -1455,7 +1504,12 @@ export default function App() {
                   showScores={settings.showScores}
                   showTimer={settings.showTimer}
                   showMinimap={settings.showMinimap}
-                  swapMinimap={settings.swapMinimap}
+                  mapExpanded={settings.mapExpanded}
+                  onExpandMap={expandMap}
+                  showPastTrails={settings.trailsPast}
+                  showFutureTrails={settings.trailsFuture}
+                  trailsFollowOnly={settings.trailsFollowOnly}
+                  loadTrajectory={loadTrajectory}
                   mapName={status?.map || mapName}
                   mapFiles={minimapFiles}
                   radar={radar}
@@ -1465,15 +1519,8 @@ export default function App() {
                   onToggleMinimap={() =>
                     setSettings(current => {
                       const showMinimap = !current.showMinimap;
-                      // Without the map there is nothing to swap with, so hiding
-                      // it returns the demo to the full stage.
-                      return { ...current, showMinimap, swapMinimap: showMinimap && current.swapMinimap };
-                    })
-                  }
-                  onToggleSwap={() =>
-                    setSettings(current => {
-                      const swapMinimap = !current.swapMinimap;
-                      return { ...current, swapMinimap, showMinimap: swapMinimap || current.showMinimap };
+                      // Hiding the map returns the demo to the full stage.
+                      return { ...current, showMinimap, mapExpanded: showMinimap && current.mapExpanded };
                     })
                   }
                   currentMs={demoPosition}

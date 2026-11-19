@@ -1,7 +1,8 @@
 # M11 — Minimap
 
 Status: implemented. UI: the top-right map panel in the player (toggle in the
-action bar or **Settings → HUD → Show the top-down minimap**).
+action bar or **Settings → HUD → Show the top-down minimap**). Clicking the map
+promotes it to the whole stage; clicking the small demo returns to the demo.
 
 The player shows a static top-down image of the map with live player dots:
 team colours where the game has teams, a small per-player tone so teammates stay
@@ -95,25 +96,93 @@ small white core. The effect is deliberately soft so it reads as elevation
 without pulling focus from the game. Everything is smoothed so the 10–12 Hz
 radar data does not flicker.
 
+## Movement trails
+
+A demo is a recording, so both sides of the live position come from the scan:
+
+- `JKA_TrackTrajectory` runs from `JKA_ProcessSnapshot` only while the
+  parse-only scan is active (`jka_scanOnly`). It samples the recorded POV from
+  `cl.snap.ps` and every `ET_PLAYER` in the snapshot's parse ring about every
+  150 ms (~7 Hz) into a 262,144-entry static buffer (4 MB). Playback and seek
+  replays never append, so a seek cannot duplicate samples.
+- `JKA_TrajectoryJson(from, to)` returns
+  `{"overflow":false,"samples":[[num,serverTime,x,y],…]}` on the radar clock
+  (the same `serverTime` as `JKA_RadarJson`). The page asks for ±7 s around the
+  live time and refreshes when the live time comes within 2 s of a window edge;
+  a seek outside the cached window refetches immediately. The JSON buffer is
+  256 KB and stops early instead of truncating the document.
+- The minimap draws the past five seconds as a solid line in the player's tone,
+  fading from nearly transparent at the oldest sample into the current dot. The
+  next five seconds are dashed and dimmer, fading away from the dot, so the same
+  player's two directions read apart. A sample gap over 800 ms (PVS exit, seek)
+  or a >600-unit step (respawn, teleport) breaks the line instead of drawing
+  across the map, and dead players get no trail. Trails are drawn above the view
+  cones and below the dots; the smoothed radar position is the hand-over point.
+- `AppSettings.trailsPast` is on by default, `trailsFuture` and
+  `trailsFollowOnly` are off (so every player gets trails). With
+  `trailsFollowOnly` only `highlightClient` is drawn. Settings → **Minimap
+  trails** exposes the three toggles.
+
+The samples live in engine memory, not in the summary cache (its key stays
+`v11`). Like the seek keyframes, a cached summary alone is not enough: the app
+scans once per engine session and demo, and Release drops the data.
+
+## Map view and the corner demo
+
+The map and the demo exchange places by clicking the smaller one; there is no
+separate toggle button. The state is `AppSettings.mapExpanded` / the stage's
+`data-swapped`, and the action-bar map button still shows/hides the map.
+
+- **Map view**: the minimap fills the stage and behaves like a map viewer. The
+  wheel or a two-finger pinch zooms from 1× to 8× around the pointer, a drag
+  pans, a double-click zooms in and a second double-click resets the fitted
+  view. `Minimap.tsx` keeps `{zoom, panX, panY}` in a ref and clamps the pan so
+  the image never leaves a gap; the fitted image is centred at 1×. The corner
+  map always draws the fitted overview, and the view survives collapsing and
+  re-opening but resets when the map changes. A click without movement still
+  follows a player dot.
+- **Corner demo**: the demo canvas becomes a window at the stage aspect,
+  bottom-right by default and 33% of the stage width (15–55% allowed). Drag it
+  to snap to any corner, or drag the inner grip to resize; both keep the aspect
+  so the stretched world picture is not distorted. The bottom corners sit above
+  the seek/action bar (`--pip-bottom-gap`), and a top-right window pushes the
+  fullscreen scoreboard left. `AppSettings.pipCorner`/`pipWidth` persist, and
+  the live gesture state stays in `App.tsx`/`CornerDemo.tsx` so pointer moves do
+  not rewrite localStorage.
+- A click (no drag) on the corner demo returns to the demo view; a click on the
+  corner map promotes the map. The big map drops to z-index 3, the corner demo
+  sits at 6 and the player chrome at 7; the kill feed moves to the left in map
+  view.
+
 ## Files and UI
 
-- `app/src/components/Minimap.tsx` draws the cached image, cones and dots, and
-  handles click-to-follow. It draws in `requestAnimationFrame` with a device
-  pixel ratio capped at 2.
-- `app/src/App.tsx` owns the radar poll and the PK3 list (every PK3 in the
-  selected base folder plus the PK3s added this session). The stage gets
-  `data-minimap="1"` while the panel is shown, which moves the kill feed below
-  it.
-- `AppSettings.showMinimap` defaults to true and persists.
-- The panel is 208 px on desktop, 118 px on narrow layouts; the kill feed is
-  offset in both.
+- `app/src/components/Minimap.tsx` draws the cached image, cones, trails and
+  dots, owns the pan/zoom/pinch view, handles click-to-follow and promotes
+  itself on a click while in the corner, and fetches the trajectory window. It
+  draws in `requestAnimationFrame` with a device pixel ratio capped at 2.
+- `app/src/components/CornerDemo.tsx` is the interaction layer over the corner
+  demo: click to enlarge, drag to a corner, inner grip to resize.
+- `app/src/App.tsx` owns the radar poll, the PK3 list (every PK3 in the selected
+  base folder plus the PK3s added this session), the `pipCorners`/`pipWidth`
+  live state and the stage attributes. The stage gets `data-minimap="1"` while
+  the panel is shown (which moves the kill feed below it), `data-swapped="1"`
+  in map view and `data-pip-corner` for the corner window.
+- `AppSettings.showMinimap` defaults to true and persists; `pipCorner` defaults
+  to bottom-right and `pipWidth` to 33%.
+- The corner map panel is 208 px on desktop, 118 px on narrow layouts; the kill
+  feed is offset in both.
 
 ## Limitations
 
 - It is a stylised top-down image: texture *averages* and lighting are derived
   from the BSP, not a screenshot of the rendered map.
 - Demos only carry entities in the recorded POV's PVS, so a player who is not in
-  the snapshot stream has no dot for those moments.
+  the snapshot stream has no dot or trail sample for those moments; the trail
+  breaks at the gap rather than drawing through it.
+- Trails need the demo scan. A demo played from a summary by an engine session
+  that never scanned it has no recorded positions, and the sample buffer keeps
+  the oldest ~40 minutes at the full player count (then `overflow` is set and the
+  newest positions are missing).
 - Patch tessellation is fixed at 8 steps. Very large terrain patches are
   simplified; the footprint and colour are correct, fine detail is not.
 - Maps without a readable BSP, or whose map PK3 was not added, show the dots

@@ -14,6 +14,9 @@ export type FreeCamKeys = Record<FreeCamAction, string>;
 
 export type TextureMipmapMode = 'off' | 'bilinear' | 'trilinear';
 
+/** Corner the small demo player snaps to while the map fills the stage. */
+export type PipCorner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+
 export interface AppSettings {
   cgFov: number;
   rGamma: number;
@@ -23,8 +26,18 @@ export interface AppSettings {
   showScores: boolean;
   showTimer: boolean;
   showMinimap: boolean;
-  /** Play the demo in the map's small corner slot while the map fills the stage. */
-  swapMinimap: boolean;
+  /** The map fills the stage and the demo plays in the corner. */
+  mapExpanded: boolean;
+  /** Corner of the small demo player while the map fills the stage. */
+  pipCorner: PipCorner;
+  /** Width of the small demo player, in percent of the stage width. */
+  pipWidth: number;
+  /** The last five seconds of movement, fading into the current position. */
+  trailsPast: boolean;
+  /** The next five seconds of movement, dashed and dimmer. */
+  trailsFuture: boolean;
+  /** Only draw trails for the camera subject instead of every player. */
+  trailsFollowOnly: boolean;
   playbackSpeed: number;
   volumeEffects: number;
   volumeMusic: number;
@@ -67,7 +80,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showScores: true,
   showTimer: true,
   showMinimap: true,
-  swapMinimap: false,
+  mapExpanded: false,
+  pipCorner: 'bottom-right',
+  pipWidth: 33,
+  trailsPast: true,
+  trailsFuture: false,
+  trailsFollowOnly: false,
   playbackSpeed: 1,
   // The engine's own defaults: s_volume 0.5, s_musicvolume 0.25, s_volumeVoice 1.
   volumeEffects: 0.5,
@@ -86,6 +104,9 @@ const MAX_PICMIP = 6;
 const MIN_SPEED = 0.25;
 const MAX_SPEED = 2.5;
 const SPEED_STEP = 0.25;
+const MIN_PIP_WIDTH = 15;
+const MAX_PIP_WIDTH = 55;
+const PIP_CORNERS: readonly PipCorner[] = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
 
 function clampFov(value: unknown): number {
   const n = typeof value === 'number' ? value : Number(value);
@@ -112,6 +133,16 @@ export function clampSpeed(value: unknown): number {
   return Math.min(MAX_SPEED, Math.max(MIN_SPEED, Number(stepped.toFixed(2))));
 }
 
+export function clampPipWidth(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n)) return DEFAULT_SETTINGS.pipWidth;
+  return Math.min(MAX_PIP_WIDTH, Math.max(MIN_PIP_WIDTH, Math.round(n)));
+}
+
+function parsePipCorner(value: unknown): PipCorner {
+  return PIP_CORNERS.includes(value as PipCorner) ? (value as PipCorner) : DEFAULT_SETTINGS.pipCorner;
+}
+
 export function clampVolume(value: unknown, fallback: number): number {
   const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n)) return fallback;
@@ -122,7 +153,10 @@ export function loadSettings(): AppSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { ...DEFAULT_SETTINGS, freeCamKeys: { ...DEFAULT_FREE_CAM_KEYS } };
-    const parsed = JSON.parse(raw) as Partial<AppSettings> & { textureQuality?: string };
+    const parsed = JSON.parse(raw) as Partial<AppSettings> & {
+      textureQuality?: string;
+      swapMinimap?: boolean;
+    };
     const keys = (parsed.freeCamKeys ?? {}) as Partial<FreeCamKeys>;
     const freeCamKeys = { ...DEFAULT_FREE_CAM_KEYS };
     for (const { action } of FREE_CAM_ACTIONS) {
@@ -151,7 +185,13 @@ export function loadSettings(): AppSettings {
       showScores: parsed.showScores !== false,
       showTimer: parsed.showTimer !== false,
       showMinimap: parsed.showMinimap !== false,
-      swapMinimap: parsed.swapMinimap === true,
+      // `swapMinimap` was the short-lived action-bar switch name.
+      mapExpanded: parsed.mapExpanded === true || parsed.swapMinimap === true,
+      pipCorner: parsePipCorner(parsed.pipCorner),
+      pipWidth: clampPipWidth(parsed.pipWidth),
+      trailsPast: parsed.trailsPast !== false,
+      trailsFuture: parsed.trailsFuture === true,
+      trailsFollowOnly: parsed.trailsFollowOnly === true,
       playbackSpeed: clampSpeed(parsed.playbackSpeed),
       volumeEffects: clampVolume(parsed.volumeEffects, DEFAULT_SETTINGS.volumeEffects),
       volumeMusic: clampVolume(parsed.volumeMusic, DEFAULT_SETTINGS.volumeMusic),

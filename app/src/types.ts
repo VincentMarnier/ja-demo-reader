@@ -102,6 +102,17 @@ export interface RadarData {
   players: RadarPlayer[];
 }
 
+/**
+ * Recorded positions around the live time, from the demo scan.  Each entry is
+ * [clientNum, serverTime, x, y]; `serverTime` is the same clock as RadarData.time
+ * so the minimap can draw trails on either side of the current position.
+ */
+export interface TrajectoryData {
+  /** True when the scan hit its sample cap; the newest positions are missing. */
+  overflow?: boolean;
+  samples: Array<[number, number, number, number]>;
+}
+
 export interface DemoInfo {
   first: number;
   duration: number;

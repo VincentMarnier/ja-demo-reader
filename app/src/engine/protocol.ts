@@ -1,4 +1,4 @@
-import type { DemoInfo, DemoStatus, DemoSummary, FreeCamPose, RadarData, ScoreboardData, StageProgress } from '../types';
+import type { DemoInfo, DemoStatus, DemoSummary, FreeCamPose, RadarData, ScoreboardData, StageProgress, TrajectoryData } from '../types';
 
 export interface BootFile {
   name: string;
@@ -30,6 +30,7 @@ export type WorkerRequest =
   | { id: number; type: 'add-pk3s'; files: File[] }
   | { id: number; type: 'demo-info'; name: string }
   | { id: number; type: 'summary' }
+  | { id: number; type: 'trajectory'; from: number; to: number }
   | { id: number; type: 'seek'; name: string; target: number }
   | { id: number; type: 'freecam-on' }
   | { type: 'cvar'; name: string; value: string }
@@ -71,5 +72,6 @@ export interface WorkerValueMap {
   'has-map': boolean;
   'demo-info': DemoInfo | null;
   summary: DemoSummary | null;
+  trajectory: TrajectoryData | null;
   'freecam-on': FreeCamPose | null;
 }
