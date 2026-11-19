@@ -140,6 +140,12 @@ own. See [docs/github-pages.md](docs/github-pages.md).
   is open and while the bar is hovered). The health/armor/saber HUD and the
   score strip stay on screen; hovering the seek bar previews the time under the
   pointer. **‹** at the top left stops the demo.
+- **Fullscreen** — the picture fills the whole screen at the screen's own
+  aspect ratio. The engine renders at the screen's aspect/resolution (capped)
+  and the cgame widens the horizontal FOV for displays that are not 4:3, so
+  the screen fills without letterboxing and the picture is not distorted. The
+  cgame's teammate markers and "Following …" banner are off; the app draws its
+  own UI.
 - **Demo selector** — when several demos are available it sits above the video
   and the scoreboard.
 - **Seek bar** — jump through the demo. Forward seeks use a keyframe; backward
@@ -159,8 +165,9 @@ own. See [docs/github-pages.md](docs/github-pages.md).
   (`cg_killMessage 0`, patch `0011`).
 - **Minimap** — the top-right panel is a static top-down image of the map with
   live dots. Red/blue teammates use eight distinct tones of their team colour;
-  free-for-all uses a palette. Each dot shows a soft 97° view cone that fades
-  with distance, dead players are dimmed, the camera subject (demo POV or
+  free-for-all uses a palette. Each dot shows a soft view cone matching the
+  displayed horizontal FOV (97° at 4:3) that fades with distance, dead players
+  are dimmed, the camera subject (demo POV or
   followed player) gets a pulsing white/amber highlight, and a jump adds a halo
   that grows with height. Clicking a dot follows that player.
   Toggle it from the map button in the action bar or Settings; the kill feed

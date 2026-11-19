@@ -26,6 +26,36 @@ export interface BootOptions {
   signal: AbortSignal;
   texturePicmip?: number;
   textureMipmaps?: TextureMipmapMode;
+  renderWidth: number;
+  renderHeight: number;
+}
+
+export interface RenderSize {
+  width: number;
+  height: number;
+}
+
+function evenPixels(value: number): number {
+  return Math.max(2, Math.round(value / 2) * 2);
+}
+
+/**
+ * The render target is sized to the screen, not to the 4:3 stage: the canvas
+ * is stretched to fill the stage, and cg_fovAspect tells the cgame the real
+ * displayed aspect so the projection stays square.  Fullscreen therefore uses
+ * the screen's aspect and resolution instead of showing a 4:3 picture inside
+ * a 16:9 screen.
+ */
+export function resolveRenderSize(): RenderSize {
+  const low = new URLSearchParams(window.location.search).get('quality') === 'low';
+  const screenWidth = Math.max(640, Math.round(window.screen?.width || window.innerWidth || 1280));
+  const screenHeight = Math.max(480, Math.round(window.screen?.height || window.innerHeight || 720));
+  const maxWidth = low ? 960 : 1920;
+  const maxHeight = low ? 540 : 1080;
+  const scale = Math.min(1, maxWidth / screenWidth, maxHeight / screenHeight);
+  const width = evenPixels(Math.min(maxWidth, Math.max(640, screenWidth * scale)));
+  const height = evenPixels(Math.min(maxHeight, Math.max(360, screenHeight * scale)));
+  return { width, height };
 }
 
 /**
@@ -87,6 +117,8 @@ export interface EngineArgs {
   diagnostics: boolean;
   picmip: number;
   textureMipmaps: TextureMipmapMode;
+  renderWidth: number;
+  renderHeight: number;
 }
 
 /**
@@ -97,9 +129,13 @@ export interface EngineArgs {
 export function buildEngineArgs(options: {
   texturePicmip?: number;
   textureMipmaps?: TextureMipmapMode;
+  renderWidth?: number;
+  renderHeight?: number;
 }): EngineArgs {
   const textureMipmaps = options.textureMipmaps ?? 'off';
   const picmip = Math.min(16, Math.max(0, Math.round(options.texturePicmip ?? 2)));
+  const renderWidth = Math.max(320, Math.round(options.renderWidth ?? 800));
+  const renderHeight = Math.max(240, Math.round(options.renderHeight ?? 600));
   const textureMode =
     textureMipmaps === 'trilinear'
       ? 'GL_LINEAR_MIPMAP_LINEAR'
@@ -115,7 +151,11 @@ export function buildEngineArgs(options: {
     '+set', 's_initsound', '1',
     '+set', 'com_bootlogo', '0',
     '+set', 'r_fullscreen', '0',
-    '+set', 'r_mode', '4',
+    // The canvas element carries the render size in the worker; the SDL
+    // fallback takes the same custom mode so both hosts render the same target.
+    '+set', 'r_mode', '-1',
+    '+set', 'r_customwidth', String(renderWidth),
+    '+set', 'r_customheight', String(renderHeight),
     '+set', 'r_hdr', '0',
     '+set', 'r_cubeMapping', '0',
     '+set', 'r_ssao', '0',
@@ -129,6 +169,11 @@ export function buildEngineArgs(options: {
     '+set', 'cg_drawStatus', '0',
     '+set', 'cg_hudFiles', '0',
     '+set', 'cg_drawCrosshair', '0',
+    '+set', 'cg_drawFriend', '0',
+    '+set', 'cg_drawFollow', '0',
+    '+set', 'cg_fovAspectAdjust', '1',
+    // Overridden from the stage size by the app; 4:3 is the windowed stage.
+    '+set', 'cg_fovAspect', '1.333333',
     '+set', 'cg_killMessage', '0',
     '+set', 'com_maxfps', '60',
     '+set', 'logfile', '0',
@@ -148,10 +193,10 @@ export function buildEngineArgs(options: {
     args.push('+set', 's_initsound', '0');
   }
   if (params.get('quality') === 'low') {
-    // Software rasterisers / low-end GPUs: fewer texture pixels and a lower
-    // frame cap, while keeping the same rd-rend2 path.
+    // Software rasterisers / low-end GPUs: fewer texture pixels, a smaller
+    // render target (resolveRenderSize caps it) and a lower frame cap, while
+    // keeping the same rd-rend2 path.
     args.push(
-      '+set', 'r_mode', '4',
       '+set', 'r_picmip', '3',
       '+set', 'com_maxfps', '10',
       '+set', 'r_swapInterval', '0'
@@ -167,5 +212,5 @@ export function buildEngineArgs(options: {
     args.push('+set', 'jka_profile', '1');
   }
 
-  return { args, fastProfile, diagnostics, picmip, textureMipmaps };
+  return { args, fastProfile, diagnostics, picmip, textureMipmaps, renderWidth, renderHeight };
 }

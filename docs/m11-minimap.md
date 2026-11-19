@@ -5,8 +5,9 @@ action bar or **Settings → HUD → Show the top-down minimap**).
 
 The player shows a static top-down image of the map with live player dots:
 team colours where the game has teams, a small per-player tone so teammates stay
-distinguishable, a 97° field-of-view cone for the direction the player is
-looking, and a dimmed dot for dead players. The followed player has a pulsing
+distinguishable, a field-of-view cone matching the displayed horizontal FOV
+(97° at 4:3) for the direction the player is looking, and a dimmed dot for dead
+players. The followed player has a pulsing
 white/amber highlight. Airborne players get a glow whose size and intensity
 grow with their height above the surface they jumped from. Void areas of the
 map are transparent.

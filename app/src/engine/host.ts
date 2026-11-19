@@ -2,8 +2,8 @@ import { MainThreadEngineHost } from './EngineHost';
 import { WorkerEngineHost, workerHostSupported } from './WorkerEngineHost';
 import type { EngineCallbacks, EngineHostApi, EngineMode } from './shared';
 
-export type { BootOptions, EngineCallbacks, EngineHostApi, EngineMode } from './shared';
-export { WorkerUnsupportedError } from './shared';
+export type { BootOptions, EngineCallbacks, EngineHostApi, EngineMode, RenderSize } from './shared';
+export { WorkerUnsupportedError, resolveRenderSize } from './shared';
 export { workerHostSupported };
 
 /**

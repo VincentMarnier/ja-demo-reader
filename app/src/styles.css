@@ -91,9 +91,27 @@ body {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  /* The engine renders at the screen's aspect and cg_fovAspect corrects the
+     projection, so the canvas can fill any stage without letterboxing. */
+  object-fit: fill;
   background: #000;
   image-rendering: auto;
+}
+
+/* The stage is normally capped at --stage-max and forced to 4:3.  As the
+   fullscreen element it must fill the screen; the extra element selector wins
+   over .play-row > .stage without !important. */
+div.stage:fullscreen {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  aspect-ratio: auto;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 button {

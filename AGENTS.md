@@ -77,7 +77,7 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
 - `engine/platform/jka_bridge.cpp` is copied into `codemp/client/` by the build
   script; editing it needs no patch change.
 - Changes to upstream/cgame/client source belong in a patch. The current patch
-  set is `0001`–`0014`; `0004` contains the linked cgame/rend2 changes,
+  set is `0001`–`0015`; `0004` contains the linked cgame/rend2 changes,
   `0005` keeps the last frame when a demo ends, `0006` adds M9 `jka_profile`
   diagnostics (timings, image counters, shader usage), `0007` adds the hybrid
   eager/lazy shader compile, `0008` selects the OffscreenCanvas window layer
@@ -96,6 +96,13 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   the target's last pose while its entity is missing from the snapshots (the
   demo only carries remote players inside the recorded POV's PVS) instead of
   snapping back to the demo camera; the follow resumes when the entity returns.
+  `0015` adds `cg_drawFollow` (default 0, so the cgame's "Following …" banner
+  is never painted while the function still suppresses warmup text) and
+  `cg_fovAspect`, the displayed aspect used by `cg_fovAspectAdjust` and by the
+  vertical-FOV `atan` instead of `refdef.width/height`. The app stretches the
+  canvas to fill the stage, and with a non-4:3 display the anamorphic
+  projection keeps square world pixels; zero keeps the old target-aspect
+  behaviour.
   Prefer a new patch over editing a large existing one.
   Verify every patch with a clean worktree: apply all patches from the pin and
   compare the affected files.
@@ -455,6 +462,19 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   it and it would otherwise warn on every demo.
 - `r_gamma` is applied to the engine at boot only; runtime changes use the
   canvas gamma filter. Setting `r_gamma` live does not re-upload textures.
+- Video sizing is owned by the app. `resolveRenderSize()` in
+  `app/src/engine/shared.ts` sizes the canvas backing store to the screen's
+  aspect and pixel count (capped at 1920×1080, or 960×540 with `?quality=low`);
+  `bootEngine` sets the canvas attributes and passes the same size to
+  `buildEngineArgs`, which boots `r_mode -1`/custom width/height for the SDL
+  fallback. The windowed stage stays 4:3 and the canvas uses `object-fit: fill`,
+  so the render target is intentionally a different aspect from the stage. A
+  `ResizeObserver`/`fullscreenchange` effect writes the stage's real aspect to
+  `cg_fovAspect`; do not remove that or the stretched frame distorts.
+  `div.stage:fullscreen` (higher specificity than `.play-row > .stage`) is what
+  makes fullscreen fill the screen. The boot args also set `cg_drawFriend 0`,
+  `cg_drawFollow 0` and `cg_fovAspectAdjust 1`; the cgame's follow banner stays
+  off, and the minimap uses the aspect-adjusted horizontal FOV.
 - Remote follow cameras use the entity's yaw and pitch; the recorded POV client
   stays first-person. Dead players use a level pitch.
 - The launcher/overlay panels are flex-centered with `.launcher-layer > .panel,

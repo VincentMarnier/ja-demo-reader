@@ -1,0 +1,111 @@
+diff --git a/codemp/cgame/cg_draw.c b/codemp/cgame/cg_draw.c
+index 44aac18..116fdd8 100644
+--- a/codemp/cgame/cg_draw.c
++++ b/codemp/cgame/cg_draw.c
+@@ -6709,10 +6709,14 @@ static qboolean CG_DrawFollow( void )
+ 		s = CG_GetStringEdString("MP_INGAME", "FOLLOWING");
+ 	}
+ 
+-	CG_Text_Paint ( 320 - CG_Text_Width ( s, 1.0f, FONT_MEDIUM ) / 2, 60, 1.0f, colorWhite, s, 0, 0, 0, FONT_MEDIUM );
++	// The demo player hides this banner; keeping the function's return value
++	// still suppresses CG_DrawWarmup while following.
++	if ( cg_drawFollow.integer ) {
++		CG_Text_Paint ( 320 - CG_Text_Width ( s, 1.0f, FONT_MEDIUM ) / 2, 60, 1.0f, colorWhite, s, 0, 0, 0, FONT_MEDIUM );
+ 
+-	s = cgs.clientinfo[ cg.snap->ps.clientNum ].name;
+-	CG_Text_Paint ( 320 - CG_Text_Width ( s, 2.0f, FONT_MEDIUM ) / 2, 80, 2.0f, colorWhite, s, 0, 0, 0, FONT_MEDIUM );
++		s = cgs.clientinfo[ cg.snap->ps.clientNum ].name;
++		CG_Text_Paint ( 320 - CG_Text_Width ( s, 2.0f, FONT_MEDIUM ) / 2, 80, 2.0f, colorWhite, s, 0, 0, 0, FONT_MEDIUM );
++	}
+ 
+ 	return qtrue;
+ }
+diff --git a/codemp/cgame/cg_view.c b/codemp/cgame/cg_view.c
+index f95a771..5a56cae 100644
+--- a/codemp/cgame/cg_view.c
++++ b/codemp/cgame/cg_view.c
+@@ -1267,6 +1267,23 @@ Fixed fov at intermissions, otherwise account for fov variable and zooms.
+ #define	WAVE_FREQUENCY	0.4
+ float zoomFov; //this has to be global client-side
+ 
++/*
++====================
++CG_FovDisplayAspect
++
++The canvas can be stretched to fill a window whose aspect ratio is not the
++render target's (the app does this in fullscreen).  cg_fovAspect carries the
++displayed aspect so the horizontal/vertical FOV pair stays square there.  A
++zero value keeps the old behaviour: use the render target's aspect.
++====================
++*/
++static float CG_FovDisplayAspect( void ) {
++	if ( cg_fovAspect.value > 0.0f ) {
++		return cg_fovAspect.value;
++	}
++	return (float)cg.refdef.width / (float)cg.refdef.height;
++}
++
+ static int CG_CalcFov( void ) {
+ 	float	x;
+ 	float	phase;
+@@ -1372,15 +1389,17 @@ static int CG_CalcFov( void ) {
+ 		// Based on LordHavoc's code for Darkplaces
+ 		// http://www.quakeworld.nu/forum/topic/53/what-does-your-qw-look-like/page/30
+ 		const float baseAspect = 0.75f; // 3/4
+-		const float aspect = (float)cgs.glconfig.vidWidth/(float)cgs.glconfig.vidHeight;
++		const float aspect = CG_FovDisplayAspect();
+ 		const float desiredFov = fov_x;
+ 
+ 		fov_x = atan( tan( desiredFov*M_PI / 360.0f ) * baseAspect*aspect )*360.0f / M_PI;
+ 	}
+ 
+-	x = cg.refdef.width / tan( fov_x / 360 * M_PI );
+-	fov_y = atan2( cg.refdef.height, x );
+-	fov_y = fov_y * 360 / M_PI;
++	// Derive the vertical FOV from the displayed aspect, not the render target:
++	// a 4:3 target stretched to 16:9 needs the anamorphic projection for the
++	// scene to keep square pixels.
++	x = tan( fov_x / 360 * M_PI ) / CG_FovDisplayAspect();
++	fov_y = atan( x ) * 360 / M_PI;
+ 
+ 	// warp if underwater
+ 	cg.refdef.viewContents = CG_PointContents( cg.refdef.vieworg, -1 );
+@@ -1917,15 +1936,14 @@ void CG_DrawSkyBoxPortal(const char *cstr)
+ 		// Based on LordHavoc's code for Darkplaces
+ 		// http://www.quakeworld.nu/forum/topic/53/what-does-your-qw-look-like/page/30
+ 		const float baseAspect = 0.75f; // 3/4
+-		const float aspect = (float)cgs.glconfig.vidWidth / (float)cgs.glconfig.vidHeight;
++		const float aspect = CG_FovDisplayAspect();
+ 		const float desiredFov = fov_x;
+ 
+ 		fov_x = atan(tan(desiredFov*M_PI / 360.0f) * baseAspect*aspect)*360.0f / M_PI;
+ 	}
+ 
+-	x = cg.refdef.width / tan( fov_x / 360 * M_PI );
+-	fov_y = atan2( cg.refdef.height, x );
+-	fov_y = fov_y * 360 / M_PI;
++	x = tan( fov_x / 360 * M_PI ) / CG_FovDisplayAspect();
++	fov_y = atan( x ) * 360 / M_PI;
+ 
+ 	cg.refdef.fov_x = fov_x;
+ 	cg.refdef.fov_y = fov_y;
+diff --git a/codemp/cgame/cg_xcvar.h b/codemp/cgame/cg_xcvar.h
+index 3f5b5df..f8d30e1 100644
+--- a/codemp/cgame/cg_xcvar.h
++++ b/codemp/cgame/cg_xcvar.h
+@@ -60,6 +60,7 @@ XCVAR_DEF( cg_drawCrosshair,					"1",					NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_drawCrosshairNames,				"1",					NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_drawEnemyInfo,					"1",					NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_drawFPS,							"0",					NULL,					CVAR_ARCHIVE )
++XCVAR_DEF( cg_drawFollow,						"0",					NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_drawFriend,						"1",					NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_drawGun,							"1",					NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_drawIcons,						"1",					NULL,					CVAR_ARCHIVE )
+@@ -87,6 +88,7 @@ XCVAR_DEF( cg_fallingBob,						"1",					NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_footsteps,						"3",					NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_forceModel,						"0",					CG_ForceModelChange,	CVAR_ARCHIVE )
+ XCVAR_DEF( cg_fov,								"97",					NULL,					CVAR_ARCHIVE )
++XCVAR_DEF( cg_fovAspect,						"0",					NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_fovAspectAdjust,					"0",					NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_fovViewmodel,						"0",					NULL,					CVAR_ARCHIVE )
+ XCVAR_DEF( cg_fovViewmodelAdjust,				"1",					NULL,					CVAR_ARCHIVE )

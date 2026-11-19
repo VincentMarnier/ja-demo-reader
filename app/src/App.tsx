@@ -16,7 +16,7 @@ import { clearLegacyAssetCache } from './fs/assetCache';
 import { clearMapImageCache, loadMapImage } from './map/mapImage';
 import { chooseGame, mergeScoreboard } from './summary';
 import { formatTime } from './format';
-import { createEngineHost, WorkerUnsupportedError } from './engine/host';
+import { createEngineHost, resolveRenderSize, WorkerUnsupportedError } from './engine/host';
 import type { EngineHostApi, EngineMode } from './engine/host';
 import { Launcher } from './components/Launcher';
 import { KillFeed } from './components/KillFeed';
@@ -81,6 +81,9 @@ export default function App() {
   const [followClient, setFollowClient] = useState<number | null>(null);
   const [pointerLocked, setPointerLocked] = useState(false);
   const [stageFullscreen, setStageFullscreen] = useState(false);
+  // The windowed stage is 4:3 and the fullscreen stage is the screen, so the
+  // cgame needs the displayed aspect to keep the stretched canvas square.
+  const [stageAspect, setStageAspect] = useState(4 / 3);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -178,6 +181,36 @@ export default function App() {
     document.addEventListener('fullscreenchange', handler);
     return () => document.removeEventListener('fullscreenchange', handler);
   }, []);
+
+  // The canvas always fills the stage, so the stage's CSS aspect is the real
+  // display aspect.  Feed it to cgame: with cg_fovAspectAdjust=1 the engine
+  // widens the horizontal FOV instead of showing a stretched 4:3 picture.
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    let frame = 0;
+    const apply = () => {
+      frame = 0;
+      const rect = stage.getBoundingClientRect();
+      if (rect.width <= 1 || rect.height <= 1) return;
+      const aspect = rect.width / rect.height;
+      setStageAspect(aspect);
+      engineRef.current?.setCvar('cg_fovAspect', aspect.toFixed(5));
+    };
+    const schedule = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(apply);
+    };
+    schedule();
+    const observer = new ResizeObserver(schedule);
+    observer.observe(stage);
+    document.addEventListener('fullscreenchange', schedule);
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      observer.disconnect();
+      document.removeEventListener('fullscreenchange', schedule);
+    };
+  }, [phase, engineActive]);
 
   useEffect(() => {
     if ((!freeCam || phase !== 'playing' || showSettings) && document.pointerLockElement) {
@@ -431,6 +464,13 @@ export default function App() {
     const canvas = canvasRef.current;
     if (!canvas) throw new Error('The engine canvas is not ready.');
 
+    // The render target follows the screen rather than the 4:3 stage.  The
+    // canvas is stretched over the stage, and cg_fovAspect corrects the
+    // projection, so fullscreen fills the screen at its own aspect.
+    const renderSize = resolveRenderSize();
+    canvas.width = renderSize.width;
+    canvas.height = renderSize.height;
+
     const controller = new AbortController();
     abortRef.current = controller;
     bootForegroundRef.current = foreground;
@@ -479,7 +519,9 @@ export default function App() {
           files,
           signal: controller.signal,
           texturePicmip: settings.texturePicmip,
-          textureMipmaps: settings.textureMipmaps
+          textureMipmaps: settings.textureMipmaps,
+          renderWidth: renderSize.width,
+          renderHeight: renderSize.height
         });
         setEngineActive(true);
         return host;
@@ -1186,6 +1228,12 @@ export default function App() {
   // reload, and without double-correcting after a reload.
   const gammaExponent = (bootGammaRef.current || 1) / Math.max(0.5, Math.min(3, settings.rGamma));
   const gammaFilter = Math.abs(gammaExponent - 1) > 0.01 ? 'url(#jka-gamma)' : undefined;
+  // The cgame widens the horizontal FOV for a display that is not 4:3; the
+  // minimap's view cone should show that same angle.
+  const displayFov = useMemo(() => {
+    const half = (settings.cgFov * Math.PI) / 360;
+    return (2 * Math.atan(Math.tan(half) * 0.75 * stageAspect) * 180) / Math.PI;
+  }, [settings.cgFov, stageAspect]);
   const demoPosition = demoInfo && status ? Math.max(0, status.serverTime - demoInfo.first) : 0;
   // Obituary events with a real attacker are kills; colour them by the killer's
   // team.  Environment deaths and self-kills have no killer and get no marker.
@@ -1386,7 +1434,7 @@ export default function App() {
                   mapName={status?.map || mapName}
                   mapFiles={minimapFiles}
                   radar={radar}
-                  fov={settings.cgFov}
+                  fov={displayFov}
                   highlightClient={minimapHighlight}
                   onFollow={followPlayer}
                   onToggleMinimap={() =>
