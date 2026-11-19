@@ -42,6 +42,10 @@ Academy and select your own `assets0..3.pk3` and demo files. Nothing is uploaded
 - Follow camera for any player, a free-fly camera with mouse look, and the
   original recorded demo camera.
 - Custom Health/Armor/saber HUD, score strip, timer and scoreboard.
+- Non-fatal missing-content warnings: models, textures, shader stages, skins,
+  animations and sounds the engine skipped while loading the map are collected
+  from its log, shown on the map step and listed under **View details** (and
+  **Missing assets** in the top bar during playback). Play is never blocked.
 - Top-down minimap with a static map image built from the demo's BSP: team
   dots in eight red/blue tones, the 97° view cone and live positions. The
   camera subject (the demo POV or the followed player) pulses white/amber, and
@@ -187,7 +191,11 @@ own. See [docs/github-pages.md](docs/github-pages.md).
   borrows from are found without re-selecting them; the map step still accepts
   several extra PK3s at once via **Add extra .pk3**. A map that references a
   decorative `misc_model_static` model from a PK3 you do not have skips that
-  prop with an engine warning instead of aborting the load.
+  prop with an engine warning instead of aborting the load; the map step lists
+  those skipped items under its missing-content warning. The list is parsed from
+  the engine's non-fatal warnings, so it covers what the engine reports (models,
+  textures/shader stages, skins, animations and sounds), not every file a mod
+  might silently substitute.
 - A seek to the very first snapshot can briefly show that snapshot's gamestate
   score/timer until the next configstring updates arrive.
 - The first engine shader initialization can take several seconds on software

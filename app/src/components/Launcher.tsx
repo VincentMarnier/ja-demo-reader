@@ -1,5 +1,6 @@
 import type { ChangeEvent, RefObject } from 'react';
 import type { AssetSelection, DemoSummary, LocalFile, StageProgress, ValidationResult } from '../types';
+import type { MissingAsset } from '../missingAssets';
 import type { EngineMode } from '../engine/host';
 import { DemoSummaryView } from './DemoSummaryView';
 
@@ -14,6 +15,7 @@ interface LauncherProps {
   mapName: string;
   mapMissing: boolean;
   mapError: string | null;
+  missingAssets: MissingAsset[];
   addedPk3s: string[];
   addingPk3s: boolean;
   summary: DemoSummary | null;
@@ -37,6 +39,7 @@ interface LauncherProps {
   onDemoFileInput: (event: ChangeEvent<HTMLInputElement>) => void;
   onCheckMap: () => void;
   onMapFileInput: (event: ChangeEvent<HTMLInputElement>) => void;
+  onShowMissingAssets: () => void;
   onPlay: () => void;
   onStep: (step: WizardStep) => void;
 }
@@ -179,6 +182,19 @@ export function Launcher(props: LauncherProps) {
             ) : null}
 
             {props.mapError ? <ul className="alerts error"><li>{props.mapError}</li></ul> : null}
+
+            {props.missingAssets.length ? (
+              <div className="asset-issues-note" role="status">
+                <strong>
+                  {props.missingAssets.length} missing map{' '}
+                  {props.missingAssets.length === 1 ? 'asset' : 'assets'}
+                </strong>
+                <span>Playback continues; some models, textures or sounds may be missing.</span>
+                <button type="button" className="text-link" onClick={props.onShowMissingAssets}>
+                  View details
+                </button>
+              </div>
+            ) : null}
 
             <DemoSummaryView summary={props.summary} />
 

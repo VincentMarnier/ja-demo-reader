@@ -417,6 +417,16 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   selection before one `JKA_RestartFS`. Do not restart the FS per file. Adding
   PK3s after a background prepare must stop the warm demo first; otherwise
   `JKA_PrepareDemo` sees the old `jka_preparedDemo` and skips the reload.
+- The map step's missing-content warning is informational only: never gate the
+  Play button on it. `app/src/missingAssets.ts` parses the engine's non-fatal
+  missing-asset warnings; keep its matchers in sync with the engine strings
+  (`misc_model_static skipped missing model`, `R_FindImageFile could not find`,
+  `has no image`, `failed to load`, `missing animation file`, sound/music
+  fallbacks). `App.tsx` accumulates them per map load from the host's full
+  `logText` (not the 300-line panel buffer), dedupes by `MissingAsset.key`, and
+  resets on Check map, demo switch, PK3 add and Release. The stock
+  `fonts/reallybigfont` fallback is filtered because retail JKA does not ship
+  it and it would otherwise warn on every demo.
 - `r_gamma` is applied to the engine at boot only; runtime changes use the
   canvas gamma filter. Setting `r_gamma` live does not re-upload textures.
 - Remote follow cameras use the entity's yaw and pitch; the recorded POV client

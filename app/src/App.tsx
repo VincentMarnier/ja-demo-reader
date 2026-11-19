@@ -27,6 +27,9 @@ import { ScoreboardPanel } from './components/ScoreboardPanel';
 import { SettingsPanel } from './components/SettingsPanel';
 import type { AppSettings } from './settings';
 import { loadSettings, saveSettings } from './settings';
+import { collectMissingAssets } from './missingAssets';
+import type { MissingAsset } from './missingAssets';
+import { MissingAssetsPanel } from './components/MissingAssetsPanel';
 
 type WizardStep = 'assets' | 'demo' | 'map';
 
@@ -58,6 +61,8 @@ export default function App() {
   const [status, setStatus] = useState<DemoStatus | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [showLogs, setShowLogs] = useState(false);
+  const [missingAssets, setMissingAssets] = useState<MissingAsset[]>([]);
+  const [showMissingAssets, setShowMissingAssets] = useState(false);
   const [paused, setPaused] = useState(false);
   const [savedHandle, setSavedHandle] = useState<FileSystemDirectoryHandle | null>(null);
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
@@ -100,6 +105,18 @@ export default function App() {
   // The scan builds the in-memory seek keyframes.  After a demo/engine change
   // a cached summary alone is not enough for a warm seek.
   const keyframesReadyRef = useRef(false);
+  // Missing content is accumulated per map load from the engine log, not
+  // re-derived from the short log-panel buffer, so a warning keeps its place
+  // after later lines push it out of the visible tail.
+  const missingAssetsRef = useRef<MissingAsset[]>([]);
+  const missingAssetKeysRef = useRef<Set<string>>(new Set());
+
+  const resetMissingAssets = useCallback(() => {
+    missingAssetsRef.current = [];
+    missingAssetKeysRef.current = new Set();
+    setMissingAssets([]);
+    setShowMissingAssets(false);
+  }, []);
 
   useEffect(() => {
     loadDirectoryHandle().then(handle => setSavedHandle(handle));
@@ -115,9 +132,22 @@ export default function App() {
       const engine = engineRef.current;
       if (!engine) return;
       const all = engine.logText ? engine.logText.split('\n') : [];
-      if (all.length !== logCursorRef.current) {
-        logCursorRef.current = all.length;
-        setLogs(all.slice(-300));
+      if (all.length === logCursorRef.current) return;
+      const start = all.length >= logCursorRef.current ? logCursorRef.current : 0;
+      const fresh = all.slice(start);
+      logCursorRef.current = all.length;
+      setLogs(all.slice(-300));
+
+      if (fresh.length) {
+        const found = collectMissingAssets(fresh);
+        let added = false;
+        for (const asset of found) {
+          if (missingAssetKeysRef.current.has(asset.key)) continue;
+          missingAssetKeysRef.current.add(asset.key);
+          missingAssetsRef.current.push(asset);
+          added = true;
+        }
+        if (added) setMissingAssets([...missingAssetsRef.current]);
       }
     }, 500);
     return () => window.clearInterval(timer);
@@ -539,6 +569,7 @@ export default function App() {
       setDemoInfo(null);
       setDemoSummary(null);
       keyframesReadyRef.current = false;
+      resetMissingAssets();
       if (result.errors.length === 0) {
         const bootFiles = pk3Files(next.files);
         const key = assetSetKey(bootFiles);
@@ -562,7 +593,7 @@ export default function App() {
     } finally {
       setChecking(false);
     }
-  }, [bootEngine]);
+  }, [bootEngine, resetMissingAssets]);
 
   const handlePickAssets = useCallback(async () => {
     if (!window.showDirectoryPicker) {
@@ -642,12 +673,13 @@ export default function App() {
       setDemoInfo(null);
       setDemoSummary(null);
       keyframesReadyRef.current = false;
+      resetMissingAssets();
       if (file) {
         const warning = await validateDemoFile(file.file);
         setDemoWarning(warning);
       }
     },
-    []
+    [resetMissingAssets]
   );
 
   const handleDemoSelect = useCallback(
@@ -724,6 +756,7 @@ export default function App() {
     setChecking(true);
     setMapError(null);
     setError(null);
+    resetMissingAssets();
 
     let engine = engineRef.current;
     if (!engine || bootPromiseRef.current) {
@@ -815,7 +848,7 @@ export default function App() {
       void loadMapImage(map, minimapSources());
       void ensurePrepared(engine, name);
     }
-  }, [assetSelection, bootPk3Files, demoFile, bootEngine, ensurePrepared, minimapSources]);
+  }, [assetSelection, bootPk3Files, demoFile, bootEngine, ensurePrepared, minimapSources, resetMissingAssets]);
 
   const startPlay = useCallback(async () => {
     if (!demoFile || mapMissing || !canvasRef.current) return;
@@ -868,6 +901,7 @@ export default function App() {
       }
       setAddingPk3s(true);
       setMapError(null);
+      resetMissingAssets();
       try {
         // FS_Restart must not run inside a map load.  A community map can also
         // depend on models or textures from another PK3, so this accepts
@@ -920,7 +954,7 @@ export default function App() {
         setAddingPk3s(false);
       }
     },
-    [demoFile, ensurePrepared, minimapSources]
+    [demoFile, ensurePrepared, minimapSources, resetMissingAssets]
   );
 
   const togglePause = useCallback(async () => {
@@ -1052,6 +1086,7 @@ export default function App() {
     preparedDemoRef.current = null;
     preparePromiseRef.current = null;
     keyframesReadyRef.current = false;
+    resetMissingAssets();
     setPreparingDemo(null);
     setEngineActive(false);
     setEngineMode(null);
@@ -1071,7 +1106,7 @@ export default function App() {
     // The new engine has no demo/map staged.  Send the user back through the
     // demo/map check instead of offering a Play that would fail.
     setStep('demo');
-  }, []);
+  }, [resetMissingAssets]);
 
   const fullscreen = useCallback(() => {
     stageRef.current?.requestFullscreen?.().catch(() => undefined);
@@ -1143,6 +1178,11 @@ export default function App() {
           </div>
         </div>
         <div className="top-actions">
+          {missingAssets.length ? (
+            <button className="ghost missing-action" onClick={() => setShowMissingAssets(true)}>
+              Missing assets ({missingAssets.length})
+            </button>
+          ) : null}
           <button className="ghost" onClick={() => setShowSettings(true)}>Settings</button>
           <button className="ghost" onClick={() => setShowLogs(v => !v)}>
             {showLogs ? 'Hide log' : 'Show log'}
@@ -1213,6 +1253,7 @@ export default function App() {
                   mapName={mapName}
                   mapMissing={mapMissing}
                   mapError={mapError}
+                  missingAssets={missingAssets}
                   addedPk3s={addedPk3s}
                   addingPk3s={addingPk3s}
                   summary={demoSummary}
@@ -1236,6 +1277,7 @@ export default function App() {
                   onDemoFileInput={handleDemoFileInput}
                   onCheckMap={checkMap}
                   onMapFileInput={handleMapFileInput}
+                  onShowMissingAssets={() => setShowMissingAssets(true)}
                   onPlay={startPlay}
                   onStep={setStep}
                 />
@@ -1318,6 +1360,13 @@ export default function App() {
           onChange={updateSettings}
           onClose={() => setShowSettings(false)}
           onClearLocalData={clearLocalData}
+        />
+      ) : null}
+
+      {showMissingAssets && missingAssets.length ? (
+        <MissingAssetsPanel
+          assets={missingAssets}
+          onClose={() => setShowMissingAssets(false)}
         />
       ) : null}
 
