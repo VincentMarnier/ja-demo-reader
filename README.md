@@ -146,7 +146,8 @@ own. See [docs/github-pages.md](docs/github-pages.md).
   score strip stay on screen; hovering the seek bar previews the time under the
   pointer. **‹** at the top left stops the demo.
 - **Fullscreen** — the picture fills the whole screen at the screen's own
-  aspect ratio. The engine renders at the screen's aspect/resolution (capped)
+  aspect ratio; the same action-bar button (now an inward-arrows icon) leaves
+  fullscreen again. The engine renders at the screen's aspect/resolution (capped)
   and the cgame widens the horizontal FOV for displays that are not 4:3, so
   the screen fills without letterboxing and the picture is not distorted. The
   cgame's teammate markers and "Following …" banner are off; the app draws its

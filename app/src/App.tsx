@@ -1277,7 +1277,15 @@ export default function App() {
   }, [resetMissingAssets]);
 
   const fullscreen = useCallback(() => {
-    stageRef.current?.requestFullscreen?.().catch(() => undefined);
+    const stage = stageRef.current;
+    if (!stage) return;
+    // The action-bar button toggles: when the stage is the fullscreen element,
+    // it leaves fullscreen instead of asking for it again.
+    if (document.fullscreenElement === stage) {
+      document.exitFullscreen?.().catch(() => undefined);
+      return;
+    }
+    stage.requestFullscreen?.().catch(() => undefined);
   }, []);
 
   const reload = useCallback(() => window.location.reload(), []);
@@ -1557,6 +1565,7 @@ export default function App() {
                   onPause={togglePause}
                   onRestart={restart}
                   onStop={stop}
+                  fullscreen={stageFullscreen}
                   onFullscreen={fullscreen}
                   onSeek={handleSeek}
                 />
