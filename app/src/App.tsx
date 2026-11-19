@@ -31,6 +31,7 @@ import { CornerDemo } from './components/CornerDemo';
 import { collectMissingAssets } from './missingAssets';
 import type { MissingAsset } from './missingAssets';
 import { MissingAssetsPanel } from './components/MissingAssetsPanel';
+import { formatLogLine } from './logFormat';
 
 type WizardStep = 'assets' | 'demo' | 'map';
 
@@ -1613,7 +1614,20 @@ export default function App() {
               <button className="ghost" onClick={() => setShowLogs(false)}>Close</button>
             </div>
           </div>
-          <pre>{logs.length ? logs.join('\n') : 'No engine output yet.'}</pre>
+          <div className="log-lines">
+            {logs.length ? (
+              logs.map((line, index) => {
+                const entry = formatLogLine(line);
+                return (
+                  <div key={index} className={`log-line log-${entry.kind}`}>
+                    {entry.text || '\u00a0'}
+                  </div>
+                );
+              })
+            ) : (
+              <div className="log-line log-normal">No engine output yet.</div>
+            )}
+          </div>
         </aside>
       ) : null}
     </div>
