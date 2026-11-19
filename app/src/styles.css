@@ -641,14 +641,20 @@ summary { cursor: pointer; color: var(--muted); }
 .score-strip.solo .score-timer { border: 0; }
 
 /* Static top-down map.  The image itself keeps void pixels transparent; the
-   panel only provides the glass background and keeps dots legible. */
+   panel only provides the glass background and keeps dots legible.  The corner
+   map is moved and resized like the corner demo; the size is capped relative to
+   the stage so it cannot swallow a narrow frame. */
+.stage[data-minimap='1'] {
+  --minimap-gap: 10px;
+  --minimap-top-gap: 10px;
+  --minimap-bottom-gap: 88px;
+}
 .minimap {
   position: absolute;
-  top: 10px;
-  right: 10px;
   z-index: 4;
-  width: 208px;
-  height: 208px;
+  width: min(var(--minimap-size, 208px), 40%);
+  aspect-ratio: 1 / 1;
+  height: auto;
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(8, 12, 17, 0.66);
@@ -657,7 +663,14 @@ summary { cursor: pointer; color: var(--muted); }
   overflow: hidden;
   pointer-events: auto;
   cursor: pointer;
+  touch-action: none;
+  transform: translate(var(--minimap-dx, 0px), var(--minimap-dy, 0px));
 }
+.minimap[data-corner='top-left'] { top: var(--minimap-top-gap, 10px); left: var(--minimap-gap, 10px); }
+.minimap[data-corner='top-right'] { top: var(--minimap-top-gap, 10px); right: var(--minimap-gap, 10px); }
+.minimap[data-corner='bottom-left'] { bottom: var(--minimap-bottom-gap, 88px); left: var(--minimap-gap, 10px); }
+.minimap[data-corner='bottom-right'] { bottom: var(--minimap-bottom-gap, 88px); right: var(--minimap-gap, 10px); }
+.minimap.is-dragging { cursor: grabbing; }
 .minimap:not([data-expanded='1']):hover { border-color: rgba(242, 177, 52, 0.55); }
 /* Map view: the map fills the stage and the demo plays in a corner window.
    The window keeps the stage aspect so the stretched canvas never distorts;
@@ -711,6 +724,8 @@ summary { cursor: pointer; color: var(--muted); }
   left: 0;
   width: auto;
   height: auto;
+  aspect-ratio: auto;
+  transform: none;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -733,12 +748,14 @@ summary { cursor: pointer; color: var(--muted); }
   z-index: 8;
 }
 /* In the map view the corner panel is gone, so the fullscreen scoreboard
-   starts at the top; a top-right demo window pushes it left. */
+   starts at the top; a top-right demo window pushes it below, like the corner
+   map. Its height is published by CornerDemo, since it follows the width and
+   stage aspect. */
 .stage[data-swapped='1'][data-minimap='1'] .stage-scoreboard {
   top: 12px;
 }
 .stage[data-swapped='1'][data-pip-corner='top-right'] .stage-scoreboard {
-  right: calc(var(--pip-width, 33%) + var(--pip-gap, 10px) + 12px);
+  top: calc(var(--pip-gap, 10px) + var(--pip-height-px, 0px) + 12px);
 }
 /* Interaction layer over the corner demo: click enlarges, dragging snaps it
    to a corner, and the inner grip resizes it. */
@@ -775,7 +792,8 @@ summary { cursor: pointer; color: var(--muted); }
 .pip-overlay:focus-visible .pip-hint {
   opacity: 1;
 }
-.pip-resize {
+.pip-resize,
+.minimap-resize {
   position: absolute;
   display: grid;
   place-items: center;
@@ -790,15 +808,36 @@ summary { cursor: pointer; color: var(--muted); }
   touch-action: none;
 }
 .pip-overlay:hover .pip-resize,
-.pip-overlay.is-resizing .pip-resize {
+.pip-overlay.is-resizing .pip-resize,
+.minimap:hover .minimap-resize,
+.minimap.is-resizing .minimap-resize {
   opacity: 1;
   border-color: var(--accent);
 }
-.pip-resize svg { display: block; width: 12px; height: 12px; }
+.pip-resize svg,
+.minimap-resize svg { display: block; width: 12px; height: 12px; }
+/* The grip glyph's short stroke points out of the window toward its corner:
+   as drawn it fits top-left, then one quarter turn per corner around it. */
+.minimap[data-corner='top-right'] .minimap-resize svg,
+.stage[data-pip-corner='top-right'] .pip-resize svg {
+  transform: rotate(90deg);
+}
+.minimap[data-corner='bottom-right'] .minimap-resize svg,
+.stage[data-pip-corner='bottom-right'] .pip-resize svg {
+  transform: rotate(180deg);
+}
+.minimap[data-corner='bottom-left'] .minimap-resize svg,
+.stage[data-pip-corner='bottom-left'] .pip-resize svg {
+  transform: rotate(-90deg);
+}
 .stage[data-pip-corner='top-left'] .pip-resize { right: 6px; bottom: 6px; cursor: nwse-resize; }
 .stage[data-pip-corner='top-right'] .pip-resize { left: 6px; bottom: 6px; cursor: nesw-resize; }
 .stage[data-pip-corner='bottom-left'] .pip-resize { right: 6px; top: 6px; cursor: nesw-resize; }
 .stage[data-pip-corner='bottom-right'] .pip-resize { left: 6px; top: 6px; cursor: nwse-resize; }
+.minimap[data-corner='top-left'] .minimap-resize { right: 6px; bottom: 6px; cursor: nwse-resize; }
+.minimap[data-corner='top-right'] .minimap-resize { left: 6px; bottom: 6px; cursor: nesw-resize; }
+.minimap[data-corner='bottom-left'] .minimap-resize { right: 6px; top: 6px; cursor: nesw-resize; }
+.minimap[data-corner='bottom-right'] .minimap-resize { left: 6px; top: 6px; cursor: nwse-resize; }
 
 /* Map-view navigation: fitted overview in the corner, pan/zoom when enlarged. */
 .minimap[data-expanded='1'] {
@@ -898,14 +937,16 @@ summary { cursor: pointer; color: var(--muted); }
   0%, 100% { opacity: 0.45; }
   50% { opacity: 0.9; }
 }
-/* Keep the kill feed clear of the map while it is visible. */
-.stage[data-minimap='1'] .kill-feed { top: 228px; }
+/* Keep the kill feed clear of the map while it sits in the top-right corner.
+   The map can be resized, so the offset follows its rendered edge length. */
+.stage[data-minimap='1'][data-minimap-corner='top-right'] .kill-feed {
+  top: calc(var(--minimap-top-gap, 10px) + var(--minimap-size-px, 208px) + 10px);
+}
 
 /* A narrower stage (usually the scoreboard panel is open) puts the centered
    score strip under the map's left edge; drop the map below the strip. */
 @media (max-width: 1100px) {
-  .minimap { top: 62px; }
-  .stage[data-minimap='1'] .kill-feed { top: 280px; }
+  .stage[data-minimap='1'] { --minimap-top-gap: 62px; }
 }
 
 .kill-feed {
@@ -1050,8 +1091,11 @@ summary { cursor: pointer; color: var(--muted); }
 @media (max-width: 720px) {
   .score-strip { top: 54px; transform: translateX(-50%) scale(0.92); }
   .kill-feed { top: 92px; max-width: 64%; }
-  .minimap { top: 96px; right: 8px; width: 118px; height: 118px; }
-  .stage[data-minimap='1'] .kill-feed { top: 222px; }
+  .stage[data-minimap='1'] {
+    --minimap-gap: 8px;
+    --minimap-top-gap: 96px;
+    --minimap-bottom-gap: 92px;
+  }
   /* Map view on a narrow stage: tighter corner gaps and a smaller chrome. */
   .stage[data-swapped='1'] { --pip-gap: 8px; --pip-bottom-gap: 92px; }
   .stage[data-swapped='1'][data-minimap='1'] .kill-feed { top: 92px; left: 8px; }
@@ -1108,9 +1152,10 @@ summary { cursor: pointer; color: var(--muted); }
   pointer-events: none;
   transition: opacity 0.2s ease;
 }
-/* The minimap owns the top-right corner; start below it when it is shown. */
-.stage[data-minimap='1'] .stage-scoreboard {
-  top: 230px;
+/* The map owns the top-right corner; start the panel below it when it sits
+   there, following the live map size. */
+.stage[data-minimap='1'][data-minimap-corner='top-right'] .stage-scoreboard {
+  top: calc(var(--minimap-top-gap, 10px) + var(--minimap-size-px, 208px) + 12px);
 }
 .stage-scoreboard .scoreboard-panel {
   width: 100%;
@@ -1126,7 +1171,7 @@ summary { cursor: pointer; color: var(--muted); }
 }
 @media (max-height: 620px) {
   /* Too little room below the map: overlap it rather than clip the panel. */
-  .stage[data-minimap='1'] .stage-scoreboard {
+  .stage[data-minimap='1'][data-minimap-corner='top-right'] .stage-scoreboard {
     top: 12px;
   }
 

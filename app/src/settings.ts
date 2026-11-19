@@ -44,6 +44,10 @@ export interface AppSettings {
   pipCorner: PipCorner;
   /** Width of the small demo player, in percent of the stage width. */
   pipWidth: number;
+  /** Corner of the small minimap while the demo fills the stage. */
+  minimapCorner: PipCorner;
+  /** Edge length of the small minimap, in pixels. */
+  minimapSize: number;
   /** The last five seconds of movement, fading into the current position. */
   trailsPast: boolean;
   /** The next five seconds of movement, dashed and dimmer. */
@@ -97,6 +101,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   mapExpanded: false,
   pipCorner: 'bottom-right',
   pipWidth: 33,
+  minimapCorner: 'top-right',
+  minimapSize: 208,
   trailsPast: true,
   trailsFuture: false,
   trailsFollowOnly: false,
@@ -121,6 +127,8 @@ const MAX_SPEED = 2.5;
 const SPEED_STEP = 0.25;
 const MIN_PIP_WIDTH = 15;
 const MAX_PIP_WIDTH = 55;
+const MIN_MINIMAP_SIZE = 120;
+const MAX_MINIMAP_SIZE = 420;
 const PIP_CORNERS: readonly PipCorner[] = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
 
 function clampFov(value: unknown): number {
@@ -154,8 +162,14 @@ export function clampPipWidth(value: unknown): number {
   return Math.min(MAX_PIP_WIDTH, Math.max(MIN_PIP_WIDTH, Math.round(n)));
 }
 
-function parsePipCorner(value: unknown): PipCorner {
-  return PIP_CORNERS.includes(value as PipCorner) ? (value as PipCorner) : DEFAULT_SETTINGS.pipCorner;
+export function clampMinimapSize(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n)) return DEFAULT_SETTINGS.minimapSize;
+  return Math.min(MAX_MINIMAP_SIZE, Math.max(MIN_MINIMAP_SIZE, Math.round(n)));
+}
+
+function parsePipCorner(value: unknown, fallback: PipCorner): PipCorner {
+  return PIP_CORNERS.includes(value as PipCorner) ? (value as PipCorner) : fallback;
 }
 
 function parseHeatmapMode(value: unknown): HeatmapMode {
@@ -206,8 +220,10 @@ export function loadSettings(): AppSettings {
       showMinimap: parsed.showMinimap !== false,
       // `swapMinimap` was the short-lived action-bar switch name.
       mapExpanded: parsed.mapExpanded === true || parsed.swapMinimap === true,
-      pipCorner: parsePipCorner(parsed.pipCorner),
+      pipCorner: parsePipCorner(parsed.pipCorner, DEFAULT_SETTINGS.pipCorner),
       pipWidth: clampPipWidth(parsed.pipWidth),
+      minimapCorner: parsePipCorner(parsed.minimapCorner, DEFAULT_SETTINGS.minimapCorner),
+      minimapSize: clampMinimapSize(parsed.minimapSize),
       trailsPast: parsed.trailsPast !== false,
       trailsFuture: parsed.trailsFuture === true,
       trailsFollowOnly: parsed.trailsFollowOnly === true,

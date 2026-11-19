@@ -1,8 +1,10 @@
 # M11 — Minimap
 
-Status: implemented. UI: the top-right map panel in the player (toggle in the
-action bar or **Settings → HUD → Show the top-down minimap**). Clicking the map
-promotes it to the whole stage; clicking the small demo returns to the demo.
+Status: implemented. UI: the map panel in the player (toggle in the action bar or
+**Settings → HUD → Show the top-down minimap**). It sits in a stage corner,
+top-right by default; drag it to another corner and drag its inner grip to
+resize it, like the corner demo. Clicking the map promotes it to the whole
+stage; clicking the small demo returns to the demo.
 
 The player shows a static top-down image of the map with live player dots:
 team colours where the game has teams, a small per-player tone so teammates stay
@@ -146,31 +148,48 @@ separate toggle button. The state is `AppSettings.mapExpanded` / the stage's
   to snap to any corner, or drag the inner grip to resize; both keep the aspect
   so the stretched world picture is not distorted. The bottom corners sit above
   the seek/action bar (`--pip-bottom-gap`), and a top-right window pushes the
-  fullscreen scoreboard left. `AppSettings.pipCorner`/`pipWidth` persist, and
+  fullscreen scoreboard below itself rather than beside it
+  (`--pip-height-px`, published by `CornerDemo.tsx`). `AppSettings.pipCorner`/`pipWidth` persist, and
   the live gesture state stays in `App.tsx`/`CornerDemo.tsx` so pointer moves do
   not rewrite localStorage.
 - A click (no drag) on the corner demo returns to the demo view; a click on the
   corner map promotes the map. The big map drops to z-index 3, the corner demo
   sits at 6 and the player chrome at 7; the kill feed moves to the left in map
   view.
+- **Corner map**: in the demo view the map is a movable window too. Drag it to
+  snap to any corner and drag the inner grip to resize it (120–420 px, capped at
+  40 % of the stage width). `AppSettings.minimapCorner`/`minimapSize` persist and
+  the live gesture state stays in `App.tsx`/`Minimap.tsx`. A drag never promotes
+  the map; a click without movement still follows a dot and opens map view, so
+  the gesture threshold (`CLICK_SLOP`, shared with `CornerDemo.tsx`) matters.
+  The kill feed and the fullscreen scoreboard offsets follow the measured map
+  size (`--minimap-size-px`), not the stored size, because the 40 % cap can
+  shrink the visible panel on a narrow stage.
 
 ## Files and UI
 
 - `app/src/components/Minimap.tsx` draws the cached image, cones, trails and
   dots, owns the pan/zoom/pinch view, handles click-to-follow and promotes
-  itself on a click while in the corner, and fetches the trajectory window. It
-  draws in `requestAnimationFrame` with a device pixel ratio capped at 2.
+  itself on a click while in the corner, and fetches the trajectory window. In
+  the corner it also moves to another corner and resizes from its inner grip,
+  like `CornerDemo.tsx`. It draws in `requestAnimationFrame` with a device pixel
+  ratio capped at 2.
+- `app/src/components/cornerGeometry.ts` and `CornerGrip.tsx` are shared by the
+  two corner windows: nearest-corner snapping, the click/drag threshold and the
+  resize grip glyph.
 - `app/src/components/CornerDemo.tsx` is the interaction layer over the corner
   demo: click to enlarge, drag to a corner, inner grip to resize.
 - `app/src/App.tsx` owns the radar poll, the PK3 list (every PK3 in the selected
-  base folder plus the PK3s added this session), the `pipCorners`/`pipWidth`
-  live state and the stage attributes. The stage gets `data-minimap="1"` while
-  the panel is shown (which moves the kill feed below it), `data-swapped="1"`
-  in map view and `data-pip-corner` for the corner window.
+  base folder plus the PK3s added this session), the `pipCorners`/`pipWidth` and
+  `minimapCorner`/`minimapSize` live state and the stage attributes. The stage
+  gets `data-minimap="1"` while the panel is shown, `data-swapped="1"` in map
+  view, `data-pip-corner` for the corner window and `data-minimap-corner` (plus
+  `--minimap-size`) for the corner map.
 - `AppSettings.showMinimap` defaults to true and persists; `pipCorner` defaults
-  to bottom-right and `pipWidth` to 33%.
-- The corner map panel is 208 px on desktop, 118 px on narrow layouts; the kill
-  feed is offset in both.
+  to bottom-right, `pipWidth` to 33%, `minimapCorner` to top-right and
+  `minimapSize` to 208 px.
+- The corner map panel is 208 px by default and resizable up to 420 px, capped
+  at 40 % of the stage width; the kill feed is offset from its measured edge.
 
 ## Limitations
 

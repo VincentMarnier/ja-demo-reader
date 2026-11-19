@@ -405,7 +405,16 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   `AppSettings.pipCorner`/`pipWidth`: bottom-right and 33% by default, 15–55%
   allowed. `CornerDemo.tsx` drags it to the nearest corner and its inner grip
   resizes it while keeping the aspect; the bottom corners clear the seek/action
-  bar with `--pip-bottom-gap`. Hiding the map leaves map view.
+  bar with `--pip-bottom-gap`. Hiding the map leaves map view. A top-right
+  corner demo pushes the fullscreen scoreboard below itself (`--pip-height-px`,
+  measured by `CornerDemo.tsx`), the same rule the corner map uses.
+- The corner map uses the same gesture: `AppSettings.minimapCorner`/
+  `minimapSize` (top-right, 208 px, 120–420) drive `data-minimap-corner` and
+  `--minimap-size`, and `Minimap.tsx` drags it between corners and resizes it
+  from its own grip. A drag must not promote the map; only a click without
+  movement opens the map view. The edge is capped at 40 % of the stage, and the
+  rendered width is published as `--minimap-size-px` (ResizeObserver) so the
+  kill feed and fullscreen scoreboard offsets follow the real size.
 - Map view navigation ("Google Maps"): the wheel and two-finger pinch zoom
   (1–8×, around the pointer), a drag pans, double-click zooms in and a second
   double-click resets. `Minimap.tsx` keeps the view in a ref, clamped so the

@@ -16,7 +16,10 @@ import {
 import { heatmapCanvas, teamHeatmapCanvas, TEAM_HEAT_HUE } from '../map/heatmapCanvas';
 import { playerTone, toneColor } from '../map/playerTone';
 import { stripColors } from '../saber';
+import { clampMinimapSize, type PipCorner } from '../settings';
 import type { DemoGameSummary, RadarData, ScoreboardData, TrajectoryData } from '../types';
+import { CLICK_SLOP, clamp, cornerAt } from './cornerGeometry';
+import { CornerGrip } from './CornerGrip';
 
 interface MinimapProps {
   mapName: string;
@@ -37,6 +40,14 @@ interface MinimapProps {
   expanded: boolean;
   /** Promote the corner map to the full stage (a click on the small map). */
   onExpand: () => void;
+  /** Corner of the small map while the demo fills the stage. */
+  corner: PipCorner;
+  /** Edge length of the small map, in pixels. */
+  size: number;
+  /** Live edge length while the resize grip is dragged. */
+  onSizeChange: (size: number) => void;
+  /** Persist the corner/size once a gesture ends. */
+  onCommit: (corner: PipCorner, size: number) => void;
   /** Movement trails: the recorded window on each side of the live time. */
   showPastTrails: boolean;
   showFutureTrails: boolean;
@@ -90,6 +101,21 @@ interface PinchGesture {
   baseY: number;
 }
 
+/** A corner-map gesture: move the window, or resize it from the grip. */
+interface FloatingDrag {
+  mode: 'move' | 'resize';
+  pointerId: number;
+  startX: number;
+  startY: number;
+  /** The map and stage rects when the gesture started. */
+  rect: DOMRect;
+  stage: DOMRect;
+  corner: PipCorner;
+  /** Rendered edge length in pixels when the gesture started. */
+  size: number;
+  moved: boolean;
+}
+
 interface Pose {
   x: number;
   y: number;
@@ -134,11 +160,16 @@ export function Minimap({
   onFollow,
   expanded,
   onExpand,
+  corner,
+  size,
+  onSizeChange,
+  onCommit,
   showPastTrails,
   showFutureTrails,
   trailsFollowOnly,
   loadTrajectory
 }: MinimapProps) {
+  const rootRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const layerRef = useRef<HTMLCanvasElement | null>(null);
   const boundsRef = useRef<MapBounds | null>(null);
@@ -165,7 +196,13 @@ export function Minimap({
   const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
   const panRef = useRef<PanGesture | null>(null);
   const pinchRef = useRef<PinchGesture | null>(null);
+  const floatingRef = useRef<FloatingDrag | null>(null);
+  const sizeRef = useRef(size);
+  const cornerRef = useRef(corner);
+  const onSizeChangeRef = useRef(onSizeChange);
+  const onCommitRef = useRef(onCommit);
   const [dragging, setDragging] = useState(false);
+  const [gesture, setGesture] = useState<'dragging' | 'resizing' | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'missing'>(mapName ? 'loading' : 'missing');
   const [mapBounds, setMapBounds] = useState<MapBounds | null>(null);
   const [heatmapPlayer, setHeatmapPlayer] = useState<number | null>(null);
@@ -178,6 +215,54 @@ export function Minimap({
   useEffect(() => {
     expandedRef.current = expanded;
   }, [expanded]);
+
+  useEffect(() => {
+    sizeRef.current = size;
+  }, [size]);
+
+  useEffect(() => {
+    cornerRef.current = corner;
+  }, [corner]);
+
+  useEffect(() => {
+    onSizeChangeRef.current = onSizeChange;
+    onCommitRef.current = onCommit;
+  }, [onSizeChange, onCommit]);
+
+  const stageOf = useCallback(
+    () => rootRef.current?.closest<HTMLElement>('.stage') ?? null,
+    []
+  );
+
+  const clearOffset = useCallback(() => {
+    const element = rootRef.current;
+    if (!element) return;
+    element.style.removeProperty('--minimap-dx');
+    element.style.removeProperty('--minimap-dy');
+  }, []);
+
+  useEffect(() => clearOffset, [clearOffset]);
+
+  // The kill feed and the fullscreen scoreboard sit under the corner map; they
+  // need its rendered edge length, which a CSS cap can shrink below the stored
+  // size. Publish it on the stage and leave the map view alone.
+  useEffect(() => {
+    const element = rootRef.current;
+    const stage = stageOf();
+    if (!element || !stage) return;
+    const publish = () => {
+      const edge = element.getBoundingClientRect().width;
+      if (expandedRef.current || edge <= 0) stage.style.removeProperty('--minimap-size-px');
+      else stage.style.setProperty('--minimap-size-px', `${Math.round(edge)}px`);
+    };
+    publish();
+    const observer = new ResizeObserver(publish);
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+      stage.style.removeProperty('--minimap-size-px');
+    };
+  }, [expanded, stageOf]);
 
   // Pan/zoom keep the map image centred at zoom 1 and clamp so an edge cannot
   // leave a gap; a panned view is remembered while the map is in the corner.
@@ -888,8 +973,32 @@ export function Minimap({
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     const element = event.currentTarget;
-    pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const stage = stageOf();
     element.setPointerCapture(event.pointerId);
+
+    // The corner map is moved and resized like the corner demo; one gesture at
+    // a time, and the click (no movement) still opens the map view.
+    if (!expandedRef.current) {
+      if (floatingRef.current || !stage) return;
+      const resize = !!(event.target as Element).closest('.minimap-resize');
+      const rect = element.getBoundingClientRect();
+      floatingRef.current = {
+        mode: resize ? 'resize' : 'move',
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        rect,
+        stage: stage.getBoundingClientRect(),
+        corner: cornerRef.current,
+        size: rect.width,
+        moved: false
+      };
+      setGesture(resize ? 'resizing' : 'dragging');
+      event.preventDefault();
+      return;
+    }
+
+    pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
 
     if (expandedRef.current && pointersRef.current.size === 2) {
       const [a, b] = [...pointersRef.current.values()];
@@ -923,6 +1032,31 @@ export function Minimap({
   };
 
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!expandedRef.current) {
+      const drag = floatingRef.current;
+      const element = rootRef.current;
+      if (!drag || !element || drag.pointerId !== event.pointerId) return;
+      const dx = event.clientX - drag.startX;
+      const dy = event.clientY - drag.startY;
+      if (!drag.moved && Math.hypot(dx, dy) > CLICK_SLOP) drag.moved = true;
+
+      if (drag.mode === 'resize') {
+        const right = drag.corner === 'top-right' || drag.corner === 'bottom-right';
+        onSizeChangeRef.current(clampMinimapSize(drag.size + (right ? -dx : dx)));
+        event.preventDefault();
+        return;
+      }
+
+      if (!drag.moved) return;
+      // Keep the map inside the stage while it follows the pointer.
+      const offsetX = clamp(dx, drag.stage.left + 4 - drag.rect.left, drag.stage.right - 4 - drag.rect.right);
+      const offsetY = clamp(dy, drag.stage.top + 4 - drag.rect.top, drag.stage.bottom - 4 - drag.rect.bottom);
+      element.style.setProperty('--minimap-dx', `${Math.round(offsetX)}px`);
+      element.style.setProperty('--minimap-dy', `${Math.round(offsetY)}px`);
+      event.preventDefault();
+      return;
+    }
+
     if (!pointersRef.current.has(event.pointerId)) return;
     pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     const canvas = canvasRef.current;
@@ -965,6 +1099,50 @@ export function Minimap({
   };
 
   const handlePointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!expandedRef.current) {
+      const drag = floatingRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      floatingRef.current = null;
+      setGesture(null);
+      clearOffset();
+
+      if (drag.mode === 'move') {
+        if (!drag.moved) {
+          const hit = dotAt(event.clientX, event.clientY);
+          if (hit) onFollowRef.current(hit.num);
+          // Clicking the small map promotes it to the full stage.
+          onExpandRef.current();
+          return;
+        }
+        const offsetX = clamp(
+          event.clientX - drag.startX,
+          drag.stage.left + 4 - drag.rect.left,
+          drag.stage.right - 4 - drag.rect.right
+        );
+        const offsetY = clamp(
+          event.clientY - drag.startY,
+          drag.stage.top + 4 - drag.rect.top,
+          drag.stage.bottom - 4 - drag.rect.bottom
+        );
+        const next = cornerAt(
+          drag.rect.left + drag.rect.width / 2 + offsetX,
+          drag.rect.top + drag.rect.height / 2 + offsetY,
+          drag.stage
+        );
+        onCommitRef.current(next, sizeRef.current);
+        return;
+      }
+
+      // Commit the edge length the map actually rendered at, so a CSS cap
+      // cannot make the stored value drift from the visible one.
+      const element = rootRef.current;
+      const stage = stageOf();
+      const rendered = element && stage ? element.getBoundingClientRect().width : NaN;
+      const next = Number.isFinite(rendered) ? clampMinimapSize(rendered) : sizeRef.current;
+      onCommitRef.current(drag.corner, next);
+      return;
+    }
+
     pointersRef.current.delete(event.pointerId);
     if (pointersRef.current.size < 2) pinchRef.current = null;
     const pan = panRef.current;
@@ -979,6 +1157,11 @@ export function Minimap({
   };
 
   const handlePointerCancel = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (floatingRef.current?.pointerId === event.pointerId) {
+      floatingRef.current = null;
+      setGesture(null);
+      clearOffset();
+    }
     pointersRef.current.delete(event.pointerId);
     if (pointersRef.current.size < 2) pinchRef.current = null;
     if (panRef.current?.pointerId === event.pointerId) panRef.current = null;
@@ -987,17 +1170,27 @@ export function Minimap({
 
   return (
     <div
-      className={expanded ? 'minimap is-expanded' : 'minimap'}
+      ref={rootRef}
+      className={
+        expanded
+          ? 'minimap is-expanded'
+          : gesture === 'resizing'
+            ? 'minimap is-resizing'
+            : gesture === 'dragging'
+              ? 'minimap is-dragging'
+              : 'minimap'
+      }
       data-state={status}
       data-expanded={expanded ? '1' : undefined}
+      data-corner={expanded ? undefined : corner}
       data-dragging={dragging ? '1' : undefined}
       role={expanded ? undefined : 'button'}
       tabIndex={expanded ? undefined : 0}
-      aria-label={expanded ? undefined : 'Open the top-down map'}
+      aria-label={expanded ? undefined : 'Top-down map: open, move to a corner, or resize'}
       title={
         expanded
           ? 'Map: drag to pan, scroll or pinch to zoom, click a player dot to follow'
-          : 'Click to open the map'
+          : 'Click to open the map · drag to a corner · drag the grip to resize'
       }
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
@@ -1020,6 +1213,11 @@ export function Minimap({
       }}
     >
       <canvas ref={canvasRef} className="minimap-canvas" aria-label="Top-down map with player positions" />
+      {expanded ? null : (
+        <span className="minimap-resize" role="presentation">
+          <CornerGrip />
+        </span>
+      )}
       {expanded && status === 'ready' ? (
         <div
           className="minimap-heat"

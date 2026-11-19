@@ -55,7 +55,9 @@ Academy and select your own `assets0..3.pk3` and demo files. Nothing is uploaded
   from its log, shown on the map step and listed under **View details** (and
   **Missing assets** in the top bar during playback). Play is never blocked.
 - Top-down minimap with a static map image built from the demo's BSP: team
-  dots in eight red/blue tones, the 97° view cone and live positions. The
+  dots in eight red/blue tones, the 97° view cone and live positions. The map
+  panel can be dragged to any stage corner and resized from its grip, like the
+  corner demo in map view. The
   camera subject (the demo POV or the followed player) pulses white/amber, and
   a jump produces a halo whose size and brightness grow with height. Void areas are transparent; the image is cached
   per map and regenerated when the game data changes. Damage heatmaps overlay the

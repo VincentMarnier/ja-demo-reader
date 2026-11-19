@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DemoGameSummary, KillMarker, Phase, RadarData, ScoreboardData, TrajectoryData, ViewStats } from '../types';
 import type { DamageHeatmapMode } from '../map/damageHeatmap';
+import type { PipCorner } from '../settings';
 import { ScoreStrip } from './ScoreStrip';
 import { SeekBar } from './SeekBar';
 import { VitalsHud } from './VitalsHud';
@@ -26,6 +27,11 @@ interface PlayerProps {
   /** The map fills the stage and the demo plays in the corner. */
   mapExpanded: boolean;
   onExpandMap: () => void;
+  /** Corner and edge length of the small map while the demo fills the stage. */
+  minimapCorner: PipCorner;
+  minimapSize: number;
+  onMinimapSizeChange: (size: number) => void;
+  onMinimapCommit: (corner: PipCorner, size: number) => void;
   showPastTrails: boolean;
   showFutureTrails: boolean;
   trailsFollowOnly: boolean;
@@ -244,6 +250,10 @@ export function Player(props: PlayerProps) {
           onFollow={props.onFollow}
           expanded={props.mapExpanded}
           onExpand={props.onExpandMap}
+          corner={props.minimapCorner}
+          size={props.minimapSize}
+          onSizeChange={props.onMinimapSizeChange}
+          onCommit={props.onMinimapCommit}
           showPastTrails={props.showPastTrails}
           showFutureTrails={props.showFutureTrails}
           trailsFollowOnly={props.trailsFollowOnly}

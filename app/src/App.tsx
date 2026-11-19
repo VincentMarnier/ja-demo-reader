@@ -73,6 +73,11 @@ export default function App() {
     corner: settings.pipCorner,
     width: settings.pipWidth
   }));
+  // The same live state for the corner minimap while the demo fills the stage.
+  const [minimapBox, setMinimapBox] = useState(() => ({
+    corner: settings.minimapCorner,
+    size: settings.minimapSize
+  }));
   const [showSettings, setShowSettings] = useState(false);
   const [scoreboard, setScoreboard] = useState<ScoreboardData | null>(null);
   const [radar, setRadar] = useState<RadarData | null>(null);
@@ -461,6 +466,15 @@ export default function App() {
   const commitPip = useCallback((corner: PipCorner, width: number) => {
     setPip({ corner, width });
     setSettings(current => ({ ...current, pipCorner: corner, pipWidth: width }));
+  }, []);
+
+  const resizeMinimap = useCallback((size: number) => {
+    setMinimapBox(current => (current.size === size ? current : { ...current, size }));
+  }, []);
+
+  const commitMinimap = useCallback((corner: PipCorner, size: number) => {
+    setMinimapBox({ corner, size });
+    setSettings(current => ({ ...current, minimapCorner: corner, minimapSize: size }));
   }, []);
 
   const expandMap = useCallback(() => {
@@ -1386,10 +1400,16 @@ export default function App() {
               style={
                 {
                   '--stage-aspect': stageAspect.toFixed(4),
-                  '--pip-width': `${pip.width}%`
+                  '--pip-width': `${pip.width}%`,
+                  '--minimap-size': `${minimapBox.size}px`
                 } as CSSProperties
               }
               data-minimap={showPlayer && settings.showMinimap ? '1' : undefined}
+              data-minimap-corner={
+                showPlayer && settings.showMinimap && !settings.mapExpanded
+                  ? minimapBox.corner
+                  : undefined
+              }
               data-swapped={
                 showPlayer && settings.showMinimap && settings.mapExpanded ? '1' : undefined
               }
@@ -1510,6 +1530,10 @@ export default function App() {
                   showMinimap={settings.showMinimap}
                   mapExpanded={settings.mapExpanded}
                   onExpandMap={expandMap}
+                  minimapCorner={minimapBox.corner}
+                  minimapSize={minimapBox.size}
+                  onMinimapSizeChange={resizeMinimap}
+                  onMinimapCommit={commitMinimap}
                   showPastTrails={settings.trailsPast}
                   showFutureTrails={settings.trailsFuture}
                   trailsFollowOnly={settings.trailsFollowOnly}

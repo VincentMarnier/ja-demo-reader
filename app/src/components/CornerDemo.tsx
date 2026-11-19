@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { PipCorner } from '../settings';
+import { CLICK_SLOP, clamp, cornerAt } from './cornerGeometry';
+import { CornerGrip } from './CornerGrip';
 
 interface CornerDemoProps {
   /** Corner the player currently snaps to. */
@@ -27,26 +29,6 @@ interface DragState {
 
 const MIN_WIDTH = 15;
 const MAX_WIDTH = 55;
-/** Movement below this is a click, not a drag. */
-const CLICK_SLOP = 5;
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
-function cornerAt(centerX: number, centerY: number, stage: DOMRect): PipCorner {
-  const right = centerX >= stage.left + stage.width / 2;
-  const bottom = centerY >= stage.top + stage.height / 2;
-  return `${bottom ? 'bottom' : 'top'}-${right ? 'right' : 'left'}` as PipCorner;
-}
-
-function GripIcon() {
-  return (
-    <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" aria-hidden="true">
-      <path d="M10.5 1.5 1.5 10.5M10.5 5.5 5.5 10.5" />
-    </svg>
-  );
-}
 
 /**
  * Interaction layer over the small demo player while the map fills the stage.
@@ -77,6 +59,25 @@ export function CornerDemo({ corner, width, onWidthChange, onCommit, onExpand }:
   }, [stageOf]);
 
   useEffect(() => clearOffset, [clearOffset]);
+
+  // The fullscreen scoreboard starts below a top-right corner window, so it
+  // needs the rendered height; the width and stage aspect decide it.
+  useEffect(() => {
+    const overlay = overlayRef.current;
+    const stage = stageOf();
+    if (!overlay || !stage) return;
+    const publish = () => {
+      const height = overlay.getBoundingClientRect().height;
+      if (height > 0) stage.style.setProperty('--pip-height-px', `${Math.round(height)}px`);
+    };
+    publish();
+    const observer = new ResizeObserver(publish);
+    observer.observe(overlay);
+    return () => {
+      observer.disconnect();
+      stage.style.removeProperty('--pip-height-px');
+    };
+  }, [stageOf]);
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.pointerType === 'mouse' && event.button !== 0) return;
@@ -206,7 +207,7 @@ export function CornerDemo({ corner, width, onWidthChange, onCommit, onExpand }:
     >
       <span className="pip-hint">Click to enlarge</span>
       <span className="pip-resize" role="presentation">
-        <GripIcon />
+        <CornerGrip />
       </span>
     </div>
   );
