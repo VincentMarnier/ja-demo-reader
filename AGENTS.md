@@ -13,7 +13,8 @@
   `docs/m9-phase6.md` covers seek state fidelity and added-map demos,
   `docs/m9-phase7.md` is the release-hardening checklist,
   `docs/m10-player-detail.md` covers the per-player swing scan and detail view,
-  and `docs/m11-minimap.md` covers the static top-down map image and radar.
+  `docs/m11-minimap.md` covers the static top-down map image and radar,
+  and `docs/m12-input-scan.md` covers the view-angle input-script scan.
 - The app is a single Vite/React app in `app/`. `App.tsx` owns the wizard and
   player state, `engine/WorkerEngineHost.ts` and `engine/EngineHost.ts` are the
   two implementations of the shared `engine/host.ts` interface, and `src/fs/`
@@ -387,9 +388,34 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   score strip on narrow layouts (118 px). Keep the kill-feed offset in sync if
   the size changes.
 
+## Input-script scan
+
+- `engine/platform/jka_bridge.cpp` carries the proxy's anti-macro detector
+  (`macroguard.rs`, `proxy_sv_antiMacro`) applied to demo data; see
+  `docs/m12-input-scan.md`. A demo has no usercmds, so the scan samples view
+  angles only: `cl.snap.ps.viewangles` for the recorded POV and
+  `entityState.apos.trBase` for remote players, once per snapshot in
+  `JKA_TrackScriptInputs`.
+- Keep the run semantics: reversals chain while the gap stays within 200 ms, a
+  400 ms sample gap (pause, PVS exit, POV switch) resets the baseline, and five
+  reversals (four while wary) with a ≤ 100 ms mean, a ≥ 2° swing and a ≥ 75 %
+  per-snapshot step consistency fire. Do not re-add the proxy's hold-spread test: snapshot
+  sampling quantises a `wait`'s exactness away. The proxy's movement and attack
+  channels cannot be scanned either — velocity and `saberMove` are outputs, not
+  input.
+- Findings are per game (`scripts`, capped at 128; `scriptOverflow`) and merge
+  within 1.5 s for the same player/channel; `bursts` counts merged presses while
+  `reversals` stays the per-run figure. `swing` is tenths of a degree and
+  `confidence` 1 means the stricter "strong" thresholds. The summary cache
+  version is `v11`.
+- `ScriptFlagsPanel` under the demo summary is informational and never gates
+  Play. Its watch link starts/seeks the demo to two seconds before the burst,
+  then follows the player; the recorded POV passes `-1` because its entity is
+  absent from demos and following it would clear the follow.
+
 ## App/caching gotchas
 
-- Summary cache keys are versioned (`v10:name:size:lastModified`). Bump the
+- Summary cache keys are versioned (`v11:name:size:lastModified`). Bump the
   version when the summary shape or game-boundary logic changes; otherwise old
   one-game summaries are reused. The IndexedDB cache self-heals a missing store.
 - A cached summary does not contain the in-memory seek keyframes. The app's

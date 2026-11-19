@@ -3,6 +3,7 @@ import type { AssetSelection, DemoSummary, LocalFile, StageProgress, ValidationR
 import type { MissingAsset } from '../missingAssets';
 import type { EngineMode } from '../engine/host';
 import { DemoSummaryView } from './DemoSummaryView';
+import { ScriptFlagsPanel } from './ScriptFlagsPanel';
 
 type WizardStep = 'assets' | 'demo' | 'map';
 
@@ -40,6 +41,8 @@ interface LauncherProps {
   onCheckMap: () => void;
   onMapFileInput: (event: ChangeEvent<HTMLInputElement>) => void;
   onShowMissingAssets: () => void;
+  /** Start/seek to a flagged moment and follow that player (-1 = demo POV). */
+  onWatchScript: (time: number, followNum: number) => void;
   onPlay: () => void;
   onStep: (step: WizardStep) => void;
 }
@@ -197,6 +200,14 @@ export function Launcher(props: LauncherProps) {
             ) : null}
 
             <DemoSummaryView summary={props.summary} />
+
+            {props.summary ? (
+              <ScriptFlagsPanel
+                summary={props.summary}
+                onWatch={props.onWatchScript}
+                busy={props.busy}
+              />
+            ) : null}
 
             {props.preparingDemo ? (
               <p className="scan-status">

@@ -810,7 +810,7 @@ export default function App() {
     // for the demo; otherwise scan again (the scan no longer loads the map).
     // Bump the cache key when the summary format or game-boundary logic
     // changes so old cached summaries are not reused.
-    const cacheKey = `v10:${demoFile.name}:${demoFile.file.size}:${demoFile.file.lastModified}`;
+    const cacheKey = `v11:${demoFile.name}:${demoFile.file.size}:${demoFile.file.lastModified}`;
     const hadKeyframes = keyframesReadyRef.current;
     let summary = hadKeyframes ? await loadDemoSummary(cacheKey) : null;
     let info: DemoInfo | null = null;
@@ -1036,6 +1036,68 @@ export default function App() {
       setPhase('error');
     }
   }, [demoFile, demoInfo]);
+
+  // "Watch this moment" from the input-script panel: start playback if needed,
+  // seek to just before the flagged burst, then follow the flagged player.
+  // The recorded POV has no entity in a demo, so following it would clear the
+  // follow; its first-person demo camera already is the right POV.
+  const watchScriptMoment = useCallback(
+    async (time: number, followNum: number) => {
+      if (!demoFile || mapMissing || !demoInfo || !canvasRef.current) return;
+      if (playbackActionRef.current) return;
+      playbackActionRef.current = true;
+      playbackRequestedRef.current = true;
+      const position = Math.max(
+        0,
+        Math.min(
+          Math.max(0, demoInfo.duration - 250),
+          Math.round(time - demoInfo.first - 2500)
+        )
+      );
+      const target = demoInfo.first + position;
+      setPaused(false);
+      setFreeCam(false);
+      setFollowClient(null);
+      setScoreboard(null);
+      setRadar(null);
+      setPhase('loading');
+      try {
+        let engine = engineRef.current;
+        if (!engine) {
+          engine = await bootEngine(bootPk3Files, true);
+        }
+        engine.disableFreeCam();
+        engine.followClient(-1);
+        engine.markStage(`script-watch:start target=${target}`);
+        const name = demoBase(demoFile.name);
+        const ended = statusRef.current?.ended === 1;
+        const prepared = !ended && (await ensurePrepared(engine, name));
+        if (prepared) {
+          await engine.resumeDemo();
+        } else {
+          await engine.playDemo(name);
+        }
+        preparedDemoRef.current = name;
+        if (position > 0) {
+          setPhase('seeking');
+          await engine.setPaused(false);
+          await engine.seekDemo(name, target);
+        }
+        if (followNum >= 0) {
+          engine.followClient(followNum);
+          setFollowClient(followNum);
+        }
+        engine.markStage('script-watch:done');
+        setPhase('playing');
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+        setPhase('error');
+      } finally {
+        playbackActionRef.current = false;
+      }
+    },
+    [bootPk3Files, bootEngine, demoFile, demoInfo, ensurePrepared, mapMissing]
+  );
 
   const stop = useCallback(async () => {
     const engine = engineRef.current;
@@ -1278,6 +1340,7 @@ export default function App() {
                   onCheckMap={checkMap}
                   onMapFileInput={handleMapFileInput}
                   onShowMissingAssets={() => setShowMissingAssets(true)}
+                  onWatchScript={watchScriptMoment}
                   onPlay={startPlay}
                   onStep={setStep}
                 />

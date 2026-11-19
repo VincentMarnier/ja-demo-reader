@@ -418,6 +418,150 @@ typedef struct {
 	unsigned char	source;
 } jkaPendingHit_t;
 
+// ---------------------------------------------------------------------------
+// Input-script (macro) scan
+//
+// Port of the proxy's anti-macro guard (`proxy_sv_antiMacro`) to demo data.
+// The proxy watches the *raw usercmd stream* and flags a channel that reverses
+// faster and more regularly than a hand can: a config macro flips a movement
+// axis or a turn key every few commands (`wait N`), and its hold lengths are
+// frame-exact.  A demo does not contain usercmds — only the server messages the
+// recorded client received — so the observable signal is the **view angles the
+// per-snapshot playerState/entityState carry**, sampled at the server frame
+// rate (JKA's `sv_fps` defaults to 40, i.e. 25 ms).
+//
+// Consequences for the port:
+//
+// * Only the **view** channel exists.  `forwardmove`/`rightmove`/`upmove` and
+//   the attack button mask are not in a demo, and the resulting velocity and
+//   saber move cannot be inverted back into the input that produced them.
+//   Flagging them from the output would be a guess, so they are not scanned.
+// * Detection is the proxy's **run** structure, not a time window: reversals
+//   are chained while the gap since the previous one stays within
+//   `JKA_SCRIPT_RUN_GAP_MS`, and a longer gap starts a new run.  A macro press
+//   is a burst of reversals; the gaps between presses are not part of it.
+// * The proxy's hold-spread test ("`wait N` is exact in milliseconds") is not
+//   usable here: at 25 ms sampling a 55 ms hold is two or three snapshots, so
+//   the exactness is quantised away.  The remaining tests are the ones that
+//   survive downsampling:
+//   1. **rate** — the mean interval between reversals is at most
+//      `JKA_SCRIPT_MAX_MEAN_MS` (100 ms ≈ 10 reversals/s).  At the stock
+//      `sv_fps 40` a macro burst shows a reversal every one to three snapshots;
+//      a hand alternates at 5-8/s (125-200 ms) and cannot build a run of five
+//      inside the threshold at that cadence.
+//   2. **shape** — every sample of the run moves the view by a similar step
+//      (mean at least 75 % of the peak).  A held turn key is full speed on
+//      every command, so its snapshots are bang-bang; a hand-driven mouse
+//      wiggle accelerates and decelerates (a sinusoid sits near 64 %).  This
+//      is the test that separates a key macro from a mouse, exactly as in the
+//      proxy, and it is only weakened by snapshot boundary samples that split
+//      a reversal.
+//   3. **swing** — the run moves the view by at least 2 degrees peak to peak;
+//      a sub-degree tremor is not the blade-wiggle payoff.
+// * A channel that has fired stays "wary" for `JKA_SCRIPT_WARY_MS`; the next
+//   burst is flagged after four reversals instead of five, so a bind pressed
+//   over and over is caught earlier.  Runs closer than `JKA_SCRIPT_MERGE_MS`
+//   to the same player's previous flag are merged into it, so one bind used
+//   repeatedly reads as one finding with its burst span.
+//
+// A run that is faster than the snapshot rate aliases: a 55 ms macro sampled
+// at 25 ms is still visible as a reversal per snapshot or two, but a burst
+// under one snapshot interval can fold into a constant angle, and a script
+// whose period matches the snapshot interval exactly can look steady.  The UI
+// wording ("possible") is deliberate; this is evidence, not proof.
+// ---------------------------------------------------------------------------
+
+#define JKA_SCRIPT_CHANNELS		2
+#define JKA_SCRIPT_CH_YAW		0
+#define JKA_SCRIPT_CH_PITCH		1
+
+#define JKA_SCRIPT_MAX_FLAGS	128
+
+/// A reversal chained to the previous one within this gap belongs to the same
+/// run (proxy `RUN_MAX_GAP_MS`).
+#define JKA_SCRIPT_RUN_GAP_MS	200
+
+/// A larger gap in a player's samples (pause, PVS exit, POV switch, seek)
+/// forgets the run and the angle baseline (proxy `STALE_GAP_MS`).
+#define JKA_SCRIPT_STALE_MS		400
+
+/// Reversals needed for the rate test, and the wary shortcut.  The proxy fires
+/// at four because per-command samples make four reversals machine-exact; a
+/// snapshot rate cannot tell four quick hand flicks from a four-hold bind, so a
+/// first press needs five here and a repeat of an already-flagged bind (wary)
+/// needs four.
+#define JKA_SCRIPT_MIN_REVERSALS	5
+#define JKA_SCRIPT_WARY_REVERSALS	4
+#define JKA_SCRIPT_WARY_MS			3000
+
+/// Mean interval ceiling between reversals, milliseconds.  Demo-calibrated:
+/// the proxy's 65 ms is a per-command figure; at snapshot resolution a burst
+/// shows one reversal every 25-75 ms and a hand's rhythm starts at 125 ms.
+#define JKA_SCRIPT_MAX_MEAN_MS		100
+
+/// View noise floor in `ANGLE2SHORT` units (36 ≈ 0.2°): a partially held turn
+/// frame between two snapshots says nothing (proxy `ANGLE_MIN_STEP`).
+#define JKA_SCRIPT_MIN_STEP			36
+
+/// Key-shape test: mean per-sample step as a percentage of the peak (proxy
+/// `VIEW_STEP_MEAN_PERCENT`).
+#define JKA_SCRIPT_STEP_PERCENT		75
+
+/// Minimum view swing over the run, `ANGLE2SHORT` units (364 ≈ 2° peak to
+/// peak; proxy `VIEW_MIN_SWING`).
+#define JKA_SCRIPT_MIN_SWING		364
+
+/// Consecutive findings for the same player and channel closer than this are
+/// one burst in the UI.
+#define JKA_SCRIPT_MERGE_MS			1500
+
+/// "Strong" needs a longer burst, a faster cadence, a key-like shape and a
+/// wider swing than the bare thresholds.
+#define JKA_SCRIPT_STRONG_REVERSALS	6
+#define JKA_SCRIPT_STRONG_MEAN_MS	60
+#define JKA_SCRIPT_STRONG_PERCENT	85
+#define JKA_SCRIPT_STRONG_SWING		546
+
+/// One channel's run accounting for one player.
+typedef struct {
+	qboolean	saw;			// a previous directional sample exists
+	int			sign;			// sign of the previous sample (-1/1)
+	int			flipTime;		// time of the previous reversal
+	int			unwrapped;		// continuous angle, for the swing measure
+	int			runCount;		// reversals in the current run
+	int			runFirstTime;	// first reversal of the run
+	int			waryUntil;		// wary deadline after a finding
+	long long		stepSum;		// per-sample |delta|: sum/count/max
+	int			stepCount;
+	int			stepMax;
+	int			swingMin;
+	int			swingMax;
+} jkaScriptRun_t;
+
+/// One player's view-angle baseline and per-channel run state.
+typedef struct {
+	qboolean		seen;
+	int				lastTime;
+	int				yaw;
+	int				pitch;
+	jkaScriptRun_t	run[JKA_SCRIPT_CHANNELS];
+} jkaScriptTrack_t;
+
+/// One finding, grouped per game and rendered in the UI.
+typedef struct {
+	int				time;		// first reversal of the burst
+	int				endTime;	// last reversal merged into it
+	short			num;
+	unsigned char	channel;	// JKA_SCRIPT_CH_*
+	unsigned char	reversals;
+	unsigned char	bursts;		// separate runs merged into this finding
+	unsigned char	confidence;	// 1 strong, 0 possible
+	short			meanMs;
+	short			swing;		// tenths of a degree
+	unsigned char	stepPercent;
+	unsigned char	samples;	// directional snapshots in the run
+} jkaScriptFlag_t;
+
 #define JKA_MAX_KEYFRAMES 96
 
 typedef struct {
@@ -465,6 +609,10 @@ typedef struct {
 	jkaBlock_t	blocks[JKA_MAX_BLOCKS];
 	int			blockCount;
 	qboolean	blockOverflow;
+	// View-angle input-script findings (see the input-script scan above).
+	jkaScriptFlag_t	scripts[JKA_SCRIPT_MAX_FLAGS];
+	int			scriptCount;
+	qboolean	scriptOverflow;
 	jkaSaber_t	sabers[JKA_MAX_SABERS];
 	int			saberCount;
 	int			pov;	// recorded client (clc.clientNum), -1 when unknown
@@ -571,6 +719,8 @@ static void JKA_JsonEscape( const char *src, char *dst, size_t size )
 	dst[d] = 0;
 }
 
+static void JKA_ResetScriptTracks( void );
+
 static void JKA_ResetSummary( void )
 {
 	Com_Memset( jka_games, 0, sizeof( jka_games ) );
@@ -593,6 +743,7 @@ static void JKA_ResetSummary( void )
 	jka_keyframeCount = 0;
 	jka_lastKeyframeTime = 0;
 	jka_lastPovHits = -1;
+	JKA_ResetScriptTracks();
 	Com_Memset( jka_eventEntitySeen, 0, sizeof( jka_eventEntitySeen ) );
 	Com_Memset( jka_eventEntityValue, 0, sizeof( jka_eventEntityValue ) );
 	Com_Memset( jka_predictablePain, 0, sizeof( jka_predictablePain ) );
@@ -1635,6 +1786,7 @@ static void JKA_StartGame( int now, int gamestateId )
 	Com_Memset( jka_missileEventValue, 0, sizeof( jka_missileEventValue ) );
 	Com_Memset( jka_pendingHitCount, 0, sizeof( jka_pendingHitCount ) );
 	jka_lastPovHits = -1;
+	JKA_ResetScriptTracks();
 
 	JKA_UpdatePlayers( now );
 }
@@ -1920,6 +2072,250 @@ static void JKA_TrackSelfVitals( int now )
 	JKA_SetVitals( now, num, health > 0 ? health : 0, health > 0 ? armor : 0, JKA_VITALS_SELF );
 }
 
+static jkaScriptTrack_t	jka_scriptTracks[MAX_CLIENTS];
+static int				jka_scriptPovClient = -1;
+
+static int JKA_AngleShort( float degrees )
+{
+	return ( (int)( degrees * ( 65536.0f / 360.0f ) ) ) & 0xFFFF;
+}
+
+/// Signed shortest-path difference of two `ANGLE2SHORT` angles.
+static int JKA_AngleDelta( int now, int before )
+{
+	return (int)(short)( ( now - before ) & 0xFFFF );
+}
+
+static void JKA_ResetScriptTracks( void )
+{
+	Com_Memset( jka_scriptTracks, 0, sizeof( jka_scriptTracks ) );
+	jka_scriptPovClient = -1;
+}
+
+static void JKA_ScriptFlag( jkaGame_t *game, jkaScriptRun_t *run, int now, int num,
+	int channel, int meanMs, int stepPercent, int swing )
+{
+	jkaScriptFlag_t *flag;
+	int confidence;
+	int i;
+
+	confidence = ( run->runCount >= JKA_SCRIPT_STRONG_REVERSALS &&
+		meanMs <= JKA_SCRIPT_STRONG_MEAN_MS && stepPercent >= JKA_SCRIPT_STRONG_PERCENT &&
+		swing >= JKA_SCRIPT_STRONG_SWING ) ? 1 : 0;
+
+	// Merge with the previous finding of the same player/channel when it is
+	// the same run or the next press of the same bind.
+	for ( i = game->scriptCount - 1; i >= 0; i-- ) {
+		flag = &game->scripts[i];
+		if ( flag->num != num || flag->channel != channel ) {
+			continue;
+		}
+		if ( run->runFirstTime > flag->endTime + JKA_SCRIPT_MERGE_MS ) {
+			break;
+		}
+		flag->endTime = now;
+		if ( run->runFirstTime != flag->time && flag->bursts < 255 ) {
+			// A new press of the same bind, not another reversal of one run.
+			flag->bursts++;
+		}
+		if ( run->runCount > flag->reversals ) {
+			flag->reversals = (unsigned char)( run->runCount > 255 ? 255 : run->runCount );
+		}
+		flag->meanMs = (short)meanMs;
+		flag->swing = (short)( swing * 10 / 182 );
+		flag->stepPercent = (unsigned char)stepPercent;
+		flag->samples = (unsigned char)( run->stepCount > 255 ? 255 : run->stepCount );
+		if ( confidence > flag->confidence ) {
+			flag->confidence = (unsigned char)confidence;
+		}
+		return;
+	}
+
+	if ( game->scriptCount >= JKA_SCRIPT_MAX_FLAGS ) {
+		game->scriptOverflow = qtrue;
+		return;
+	}
+	flag = &game->scripts[game->scriptCount++];
+	Com_Memset( flag, 0, sizeof( *flag ) );
+	flag->time = run->runFirstTime;
+	flag->endTime = now;
+	flag->num = (short)num;
+	flag->channel = (unsigned char)channel;
+	flag->reversals = (unsigned char)( run->runCount > 255 ? 255 : run->runCount );
+	flag->bursts = 1;
+	flag->confidence = (unsigned char)confidence;
+	flag->meanMs = (short)meanMs;
+	// `ANGLE2SHORT` units to tenths of a degree (65536 units = 360°).
+	flag->swing = (short)( swing * 10 / 182 );
+	flag->stepPercent = (unsigned char)stepPercent;
+	flag->samples = (unsigned char)( run->stepCount > 255 ? 255 : run->stepCount );
+}
+
+/// Feed one view sample for one channel.  Mirrors `ChannelState::observe` in
+/// the proxy: reversals only, chained into runs, with the rate, shape and
+/// swing verdicts.
+static void JKA_ScriptObserve( jkaGame_t *game, jkaScriptTrack_t *track, int now, int num,
+	int channel, int delta )
+{
+	jkaScriptRun_t *run = &track->run[channel];
+	int sign;
+	int step;
+	int holdMs;
+	int intervals;
+	int meanMs;
+	int stepPercent;
+	int swing;
+	int sustained;
+	int wary;
+	int verdict;
+
+	if ( delta > 0 ) {
+		sign = 1;
+	} else if ( delta < 0 ) {
+		sign = -1;
+		delta = -delta;
+	} else {
+		sign = 0;
+	}
+	if ( delta < JKA_SCRIPT_MIN_STEP ) {
+		// A partially held turn frame below the noise floor says nothing.
+		return;
+	}
+	step = delta;
+	run->unwrapped += sign * step;
+
+	// Every directional sample of a live run feeds the shape measure,
+	// including the same-direction ones the reversal logic ignores.
+	if ( run->runCount > 0 ) {
+		run->stepSum += step;
+		run->stepCount++;
+		if ( step > run->stepMax ) {
+			run->stepMax = step;
+		}
+	}
+	if ( !run->saw ) {
+		run->saw = qtrue;
+		run->sign = sign;
+		return;
+	}
+	if ( sign == run->sign ) {
+		return;
+	}
+
+	run->sign = sign;
+	holdMs = now - run->flipTime;
+	run->flipTime = now;
+
+	if ( run->runCount == 0 || holdMs > JKA_SCRIPT_RUN_GAP_MS ) {
+		// A fresh run starts at this reversal; its first hold is measured
+		// from the pre-run sample and is not part of the hold range.
+		run->runCount = 1;
+		run->runFirstTime = now;
+		run->stepSum = step;
+		run->stepCount = 1;
+		run->stepMax = step;
+		run->swingMin = run->unwrapped;
+		run->swingMax = run->unwrapped;
+		return;
+	}
+
+	run->runCount++;
+	if ( run->unwrapped < run->swingMin ) {
+		run->swingMin = run->unwrapped;
+	}
+	if ( run->unwrapped > run->swingMax ) {
+		run->swingMax = run->unwrapped;
+	}
+
+	intervals = run->runCount - 1;
+	meanMs = ( now - run->runFirstTime ) / intervals;
+	stepPercent = run->stepMax > 0
+		? (int)( ( (long long)run->stepSum * 100 ) /
+			( (long long)run->stepMax * run->stepCount ) )
+		: 0;
+	swing = run->swingMax - run->swingMin;
+
+	sustained = run->runCount >= JKA_SCRIPT_MIN_REVERSALS && meanMs <= JKA_SCRIPT_MAX_MEAN_MS;
+	wary = run->waryUntil > now && run->runCount >= JKA_SCRIPT_WARY_REVERSALS &&
+		meanMs <= JKA_SCRIPT_MAX_MEAN_MS;
+	verdict = ( sustained || wary ) && stepPercent >= JKA_SCRIPT_STEP_PERCENT &&
+		swing >= JKA_SCRIPT_MIN_SWING;
+	if ( !verdict ) {
+		return;
+	}
+	run->waryUntil = now + JKA_SCRIPT_WARY_MS;
+	JKA_ScriptFlag( game, run, now, num, channel, meanMs, stepPercent, swing );
+}
+
+static void JKA_ScriptSample( jkaGame_t *game, int now, int num, int yaw, int pitch )
+{
+	jkaScriptTrack_t *track = &jka_scriptTracks[num];
+
+	if ( !track->seen || now < track->lastTime ||
+		now - track->lastTime > JKA_SCRIPT_STALE_MS ) {
+		// New stream, rewind, PVS gap or POV switch: forget every run and
+		// seed the baseline with this sample so the first delta is 0.
+		Com_Memset( track, 0, sizeof( *track ) );
+		track->seen = qtrue;
+		track->lastTime = now;
+		track->yaw = yaw;
+		track->pitch = pitch;
+		return;
+	}
+
+	JKA_ScriptObserve( game, track, now, num, JKA_SCRIPT_CH_YAW,
+		JKA_AngleDelta( yaw, track->yaw ) );
+	JKA_ScriptObserve( game, track, now, num, JKA_SCRIPT_CH_PITCH,
+		JKA_AngleDelta( pitch, track->pitch ) );
+
+	track->lastTime = now;
+	track->yaw = yaw;
+	track->pitch = pitch;
+}
+
+/// Sample every player's view angle for the snapshot.  The recorded client's
+/// own entity is absent from demos, so its angles come from
+/// `cl.snap.ps.viewangles`; remote players carry theirs in `apos.trBase`.
+static void JKA_TrackScriptInputs( int now )
+{
+	jkaGame_t *game = JKA_CurrentGame();
+	int pov = cl.snap.ps.clientNum;
+	int i;
+
+	if ( !game ) {
+		return;
+	}
+	if ( pov != jka_scriptPovClient ) {
+		if ( jka_scriptPovClient >= 0 && jka_scriptPovClient < MAX_CLIENTS ) {
+			Com_Memset( &jka_scriptTracks[jka_scriptPovClient], 0,
+				sizeof( jka_scriptTracks[jka_scriptPovClient] ) );
+		}
+		jka_scriptPovClient = pov;
+	}
+	if ( pov >= 0 && pov < MAX_CLIENTS ) {
+		JKA_ScriptSample( game, now, pov,
+			JKA_AngleShort( cl.snap.ps.viewangles[YAW] ),
+			JKA_AngleShort( cl.snap.ps.viewangles[PITCH] ) );
+	}
+
+	for ( i = 0; i < cl.snap.numEntities && i < MAX_PARSE_ENTITIES; i++ ) {
+		entityState_t *state = &cl.parseEntities[( cl.snap.parseEntitiesNum + i ) &
+			( MAX_PARSE_ENTITIES - 1 )];
+		int num = state->number;
+
+		if ( state->eType != ET_PLAYER || num < 0 || num >= MAX_CLIENTS || num == pov ) {
+			continue;
+		}
+		// A spectating client's view is not gameplay input.
+		if ( JKA_IsSpectator( num ) ) {
+			continue;
+		}
+		JKA_ScriptSample( game, now, num,
+			JKA_AngleShort( state->apos.trBase[YAW] ),
+			JKA_AngleShort( state->apos.trBase[PITCH] ) );
+	}
+}
+
 static void JKA_ProcessSnapshot( int now, int resumeOffset )
 {
 	jkaGame_t *game = JKA_CurrentGame();
@@ -1984,6 +2380,7 @@ static void JKA_ProcessSnapshot( int now, int resumeOffset )
 	JKA_TrackSelfSwing( now );
 	JKA_TrackSelfGround( now );
 	JKA_TrackDuelHealth( now );
+	JKA_TrackScriptInputs( now );
 
 	if ( jka_keyframeCount < JKA_MAX_KEYFRAMES &&
 		( jka_keyframeCount == 0 || now - jka_lastKeyframeTime >= 10000 ) ) {
@@ -2384,8 +2781,22 @@ static void JKA_BuildSummary( void )
 			JKA_Append( &out, &left, "%s{\"time\":%d,\"winner\":%d,\"loser\":%d,\"kind\":%d}",
 				i ? "," : "", block->time, block->winner, block->loser, block->kind );
 		}
-		JKA_Append( &out, &left, "],\"blockOverflow\":%s}",
+		JKA_Append( &out, &left, "],\"blockOverflow\":%s,",
 			game->blockOverflow ? "true" : "false" );
+		// View-angle input-script findings. `swing` is tenths of a degree and
+		// `step` the mean/peak percentage of the per-snapshot view step.
+		JKA_Append( &out, &left, "\"scripts\":[" );
+		for ( i = 0; i < game->scriptCount; i++ ) {
+			jkaScriptFlag_t *flag = &game->scripts[i];
+			JKA_Append( &out, &left,
+				"%s{\"time\":%d,\"endTime\":%d,\"num\":%d,\"channel\":%d,\"reversals\":%d,"
+				"\"bursts\":%d,\"meanMs\":%d,\"swing\":%d,\"step\":%d,\"samples\":%d,\"confidence\":%d}",
+				i ? "," : "", flag->time, flag->endTime, flag->num, flag->channel,
+				flag->reversals, flag->bursts, flag->meanMs, flag->swing, flag->stepPercent,
+				flag->samples, flag->confidence );
+		}
+		JKA_Append( &out, &left, "],\"scriptOverflow\":%s}",
+			game->scriptOverflow ? "true" : "false" );
 		firstGame = qfalse;
 	}
 

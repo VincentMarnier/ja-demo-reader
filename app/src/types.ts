@@ -191,6 +191,37 @@ export interface DemoBlock {
   kind?: number;
 }
 
+/**
+ * One possible input-script (macro) finding from the view-angle scan.
+ *
+ * The demo stores no usercmds, so this is the proxy's anti-macro guard applied
+ * to the per-snapshot view angles: a run of view reversals faster and more
+ * regular than a hand can make, with a turn-key-like step profile. `channel`
+ * is 0 for yaw and 1 for pitch, `swing` is in tenths of a degree and `step`
+ * the mean/peak percentage of the per-snapshot step.
+ */
+export interface DemoScriptFlag {
+  /** Server time of the first reversal in the burst. */
+  time: number;
+  /** Server time of the last reversal merged into the finding. */
+  endTime: number;
+  num: number;
+  channel: number;
+  reversals: number;
+  /** Separate bursts merged into this finding (1 for a single press). */
+  bursts: number;
+  /** Mean interval between reversals, milliseconds. */
+  meanMs: number;
+  /** Peak-to-peak view swing, tenths of a degree. */
+  swing: number;
+  /** Mean per-snapshot step as a percentage of the peak step. */
+  step: number;
+  /** Directional snapshots that fed the run. */
+  samples: number;
+  /** 1 when the burst passes the stricter "strong" thresholds. */
+  confidence: number;
+}
+
 /** A kill on the seek bar: when it happened and the killer's team. */
 export interface KillMarker {
   /** Milliseconds since the first snapshot of the demo. */
@@ -266,6 +297,9 @@ export interface DemoGameSummary {
   blocks?: DemoBlock[];
   saberHitOverflow?: boolean;
   blockOverflow?: boolean;
+  /** Possible input-script (macro) findings. Absent on older caches. */
+  scripts?: DemoScriptFlag[];
+  scriptOverflow?: boolean;
 }
 
 export interface DemoSummary {

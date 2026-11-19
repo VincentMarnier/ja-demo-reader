@@ -39,6 +39,14 @@ Academy and select your own `assets0..3.pk3` and demo files. Nothing is uploaded
   from every other player.
 - Global score and damage given count opponent kills/damage minus ally
   kills/damage (teams 1/2 only); per-player matchups stay raw and positive.
+- Possible input-script (macro) detection on the map step, ported from the
+  proxy's anti-macro guard: the demo summary flags players whose view angles
+  reverse like a config macro's turn-key burst (five or more reversals closer
+  than 100 ms, a bang-bang per-snapshot step and a ≥ 2° swing). The warning
+  lists the flagged players, the figures behind each finding and a **Watch this
+  moment** link that starts playback two seconds before the burst with that
+  player followed. A demo stores no usercmds, so this is view-channel evidence
+  only — see [docs/m12-input-scan.md](docs/m12-input-scan.md).
 - Follow camera for any player, a free-fly camera with mouse look, and the
   original recorded demo camera.
 - Custom Health/Armor/saber HUD, score strip, timer and scoreboard.
@@ -237,6 +245,7 @@ Some demo-seek and movie-tool ideas were informed by
 
 - [docs/m8.md](docs/m8.md) — summaries, caches, indexed seek, speed/gamma.
 - [docs/m11-minimap.md](docs/m11-minimap.md) — top-down map image and live player dots.
+- [docs/m12-input-scan.md](docs/m12-input-scan.md) — view-angle macro detection and the findings panel.
 - [docs/m7.md](docs/m7.md) — release audit and sharing notes.
 - [docs/browser-mvp.md](docs/browser-mvp.md) — end-to-end browser flow.
 - [docs/architecture.md](docs/architecture.md),
