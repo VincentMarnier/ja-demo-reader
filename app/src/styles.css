@@ -131,6 +131,16 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .secondary:hover:not(:disabled) { border-color: #3a4c60; }
 .ghost { background: transparent; color: var(--muted); border: 1px solid transparent; }
 .ghost:hover:not(:disabled) { color: var(--text); border-color: var(--border); }
+.repo-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  text-decoration: none;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.repo-link svg { width: 16px; height: 16px; fill: currentColor; flex: none; }
 .wide { width: 100%; }
 
 .launcher-layer,
