@@ -400,14 +400,18 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
 - Check map now uses the parse-only scan, so it does not load a map/cgame. Map
   presence is still checked with `JKA_HasMap`; map/asset errors surface during
   the background prepare or Play instead of at Check map.
-- There is no asset cache. The worker host mounts the retail/mod PK3s read-only
-  with WORKERFS and writes only demos and added map/dependency PK3s to
-  `/userdata/base`. The main-thread fallback still copies PK3s into MEMFS.
+- There is no asset cache. The worker host mounts every `.pk3` in the selected
+  base folder (the retail assets plus any map/dependency PK3s already there)
+  read-only with WORKERFS, and writes only demos and PK3s added during the
+  session to `/userdata/base`. Mounting the whole selection is what lets
+  `JKA_HasMap` find a map PK3 the user already has, and what lets community
+  maps resolve models/textures borrowed from another map PK3. The main-thread
+  fallback still copies PK3s into MEMFS.
   `app/src/fs/assetCache.ts`
   exists only for `clearLegacyAssetCache()`, which removes the old
   `jka-demo-player/assets` OPFS tree once on startup and from Settings; do not
-  add a write path back. The asset-set comparison uses `assetSetKey` in
-  `app/src/fs/signature.ts`, not a cache key.
+  add a write path back. The mounted-set comparison uses `assetSetKey` in
+  `app/src/fs/signature.ts` over the boot PK3 list, not a cache key.
 - A community map's PK3 can depend on models/textures from another map PK3.
   The map step's file input is multiple and `addPk3Files` writes the whole
   selection before one `JKA_RestartFS`. Do not restart the FS per file. Adding

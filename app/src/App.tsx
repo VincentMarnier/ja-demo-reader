@@ -34,6 +34,10 @@ function demoBase(name: string): string {
   return name.replace(/\.dm_26$/i, '');
 }
 
+function pk3Files(files: LocalFile[]): LocalFile[] {
+  return files.filter(file => file.name.toLowerCase().endsWith('.pk3'));
+}
+
 export default function App() {
   const [step, setStep] = useState<WizardStep>('assets');
   const [assetSelection, setAssetSelection] = useState<AssetSelection | null>(null);
@@ -373,6 +377,17 @@ export default function App() {
     setFollowClient(null);
   }, [freeCam]);
 
+  // Mount the whole base selection, not just the four retail assets: a
+  // GameData/base folder usually also holds the demo's map PK3 and the model,
+  // texture and shader PK3s a community map borrows from.  Mounting them all
+  // lets the engine's own pak search path resolve both the map and its
+  // dependencies, instead of asking the user to re-add a file that is already
+  // in base/.
+  const bootPk3Files = useMemo<LocalFile[]>(
+    () => pk3Files(assetSelection?.files ?? []),
+    [assetSelection]
+  );
+
   const bootEngine = useCallback(async (files: LocalFile[], foreground: boolean): Promise<EngineHostApi> => {
     if (bootPromiseRef.current) {
       if (foreground) {
@@ -423,7 +438,7 @@ export default function App() {
       }
     };
 
-    bootedAssetKeyRef.current = assetSetKey(files.filter(file => /^assets[0-3]\.pk3$/i.test(file.name)));
+    bootedAssetKeyRef.current = assetSetKey(pk3Files(files));
 
     const bootHost = async (host: EngineHostApi): Promise<EngineHostApi> => {
       engineRef.current = host;
@@ -525,14 +540,15 @@ export default function App() {
       setDemoSummary(null);
       keyframesReadyRef.current = false;
       if (result.errors.length === 0) {
-        const key = assetSetKey(result.assets);
+        const bootFiles = pk3Files(next.files);
+        const key = assetSetKey(bootFiles);
         if (engineRef.current && bootedAssetKeyRef.current && key !== bootedAssetKeyRef.current) {
-          setError('The wasm engine was preloaded with a different asset set. Reload the page to use the selected folder.');
+          setError('The wasm engine was mounted with a different set of game-data PK3s. Reload the page to use the selected folder.');
           setPhase('error');
           return;
         }
         setStep('demo');
-        void bootEngine(result.assets, false).catch(() => undefined);
+        void bootEngine(bootFiles, false).catch(() => undefined);
       } else {
         setStep('assets');
       }
@@ -678,14 +694,14 @@ export default function App() {
   }, []);
 
   // The minimap reads the BSP and its textures straight from the game PK3s the
-  // user already supplied: the four retail archives plus whichever map PK3 was
-  // added for this demo.  A repeated name keeps the added file, matching the
-  // engine's search path where /userdata/base overrides /jka/base.
+  // user already supplied: every PK3 in the selected base folder plus whichever
+  // map PK3 was added for this demo.  A repeated name keeps the added file,
+  // matching the engine's search path where /userdata/base overrides /jka/base.
   const minimapSources = useCallback(
     (extra: File[] = []): Blob[] => {
       const byName = new Map<string, Blob>();
       for (const file of [
-        ...(assetValidation?.assets ?? []).map(asset => asset.file),
+        ...bootPk3Files.map(pk3 => pk3.file),
         ...addedPk3Files,
         ...extra
       ]) {
@@ -693,7 +709,7 @@ export default function App() {
       }
       return [...byName.values()];
     },
-    [assetValidation, addedPk3Files]
+    [bootPk3Files, addedPk3Files]
   );
   const minimapFiles = useMemo<Blob[]>(() => minimapSources(), [minimapSources]);
   // The minimap rings the camera subject, not just an explicit follow: with the
@@ -712,7 +728,7 @@ export default function App() {
     let engine = engineRef.current;
     if (!engine || bootPromiseRef.current) {
       try {
-        engine = await bootEngine(assetValidation?.assets ?? [], true);
+        engine = await bootEngine(bootPk3Files, true);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
         setPhase('error');
@@ -799,7 +815,7 @@ export default function App() {
       void loadMapImage(map, minimapSources());
       void ensurePrepared(engine, name);
     }
-  }, [assetSelection, assetValidation, demoFile, bootEngine, ensurePrepared, minimapSources]);
+  }, [assetSelection, bootPk3Files, demoFile, bootEngine, ensurePrepared, minimapSources]);
 
   const startPlay = useCallback(async () => {
     if (!demoFile || mapMissing || !canvasRef.current) return;
@@ -815,7 +831,7 @@ export default function App() {
     try {
       let engine = engineRef.current;
       if (!engine) {
-        engine = await bootEngine(assetValidation?.assets ?? [], true);
+        engine = await bootEngine(bootPk3Files, true);
       }
       engine.disableFreeCam();
       engine.followClient(-1);
@@ -838,7 +854,7 @@ export default function App() {
     } finally {
       playbackActionRef.current = false;
     }
-  }, [assetValidation, bootEngine, demoFile, ensurePrepared, mapMissing]);
+  }, [bootPk3Files, bootEngine, demoFile, ensurePrepared, mapMissing]);
 
   const handleMapFileInput = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {

@@ -17,8 +17,8 @@ map are transparent.
 
 - `zipReader.ts` reads the PK3 central directory from the page's `File`
   objects and inflates one entry (`DecompressionStream('deflate-raw')`). The
-  app already has the retail PK3s and the added map PK3, so neither the engine
-  filesystem nor a cache is involved.
+  app already has every PK3 from the selected `base` folder plus any added map
+  PK3, so neither the engine filesystem nor a cache is involved.
 - `bsp.ts` parses the RBSP (JKA's Quake 3 BSP layout: 148-byte `dsurface_t`,
   80-byte `drawVert_t`, 72-byte `dshader_t`) and rasterises every drawable
   surface from above. Pixels keep the highest surface, so bridges and upper
@@ -99,9 +99,10 @@ radar data does not flicker.
 - `app/src/components/Minimap.tsx` draws the cached image, cones and dots, and
   handles click-to-follow. It draws in `requestAnimationFrame` with a device
   pixel ratio capped at 2.
-- `app/src/App.tsx` owns the radar poll and the PK3 list (`assets0..3` plus the
-  added map PK3s). The stage gets `data-minimap="1"` while the panel is shown,
-  which moves the kill feed below it.
+- `app/src/App.tsx` owns the radar poll and the PK3 list (every PK3 in the
+  selected base folder plus the PK3s added this session). The stage gets
+  `data-minimap="1"` while the panel is shown, which moves the kill feed below
+  it.
 - `AppSettings.showMinimap` defaults to true and persists.
 - The panel is 208 px on desktop, 118 px on narrow layouts; the kill feed is
   offset in both.

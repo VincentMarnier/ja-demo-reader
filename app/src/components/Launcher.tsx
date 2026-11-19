@@ -166,7 +166,7 @@ export function Launcher(props: LauncherProps) {
                 <span className="fact-label">Map</span>
                 <strong>{mapName}</strong>
                 <span className={mapMissing ? 'status bad' : 'status good'}>
-                  {mapMissing ? 'not in selected assets' : 'found'}
+                  {mapMissing ? 'not in selected game data' : 'found'}
                 </span>
               </div>
             ) : null}

@@ -52,8 +52,9 @@ Academy and select your own `assets0..3.pk3` and demo files. Nothing is uploaded
   silently.
 - Playback speed (`0.25×`–`2.5×`) and gamma controls.
 - The engine runs in a dedicated Web Worker and renders to an OffscreenCanvas.
-  Retail PK3s are mounted read-only with WORKERFS instead of being copied into
-  memory; only parsed demo summaries are cached (IndexedDB).
+  Every PK3 in the selected base folder is mounted read-only with WORKERFS
+  instead of being copied into memory; only parsed demo summaries are cached
+  (IndexedDB).
 - The demo loads in the background on the map step, so Play resumes instantly;
   Stop keeps the scene warm and the next Play is immediate. **Release memory**
   performs the full teardown when the memory is needed back.
@@ -70,7 +71,9 @@ Academy and select your own `assets0..3.pk3` and demo files. Nothing is uploaded
   **Choose assets instead**; both stay on the device.
 - Node.js 22+.
 - A legally owned Jedi Academy install with `base/assets0..3.pk3`.
-- One or more `.dm_26` demos (retail or mod; mod demos may need the mod's assets).
+- One or more `.dm_26` demos (retail or mod). Keep every PK3 the demo needs —
+  the map and any model/texture dependencies — in the selected `base` folder;
+  the whole folder is mounted for the session.
 
 To build the engine:
 
@@ -103,11 +106,12 @@ npm --prefix app run dev
 Open <http://127.0.0.1:5173>, select your `GameData` folder (or its `base`
 folder), choose a demo, check the map, and press **Play demo**.
 
-After you choose the retail assets, they are mounted read-only for the session
-and the renderer starts in the background. Nothing is copied into browser
-storage; on later visits, **Use last folder** (or the file picker) re-selects
-the same files. If an older build left an OPFS asset copy, it is removed
-automatically once.
+After you choose the `base` folder, all of its PK3s are mounted read-only for
+the session and the renderer starts in the background. A map PK3 and its
+dependency PK3s are therefore found immediately, without re-selecting them in
+the map step. Nothing is copied into browser storage; on later visits, **Use
+last folder** (or the file picker) re-selects the same files. If an older build
+left an OPFS asset copy, it is removed automatically once.
 
 ### GitHub Pages
 
@@ -178,11 +182,12 @@ own. See [docs/github-pages.md](docs/github-pages.md).
   that changes maps takes the full map/cgame load. No multi-map demo is
   included in the local test set, so that path is not release-validated.
 - Added-map PK3 demos are supported, but mods that keep extra cgame globals
-  across maps are not broadly tested. Community maps can also depend on models
-  or textures from another map PK3; the map step accepts several PK3s at once
-  and keeps an **Add extra .pk3** action. A missing decorative
-  `misc_model_static` model is skipped with an engine warning instead of
-  aborting the load.
+  across maps are not broadly tested. PK3s already in the selected `base`
+  folder are mounted up front, so a community map and the model/texture PK3s it
+  borrows from are found without re-selecting them; the map step still accepts
+  several extra PK3s at once via **Add extra .pk3**. A map that references a
+  decorative `misc_model_static` model from a PK3 you do not have skips that
+  prop with an engine warning instead of aborting the load.
 - A seek to the very first snapshot can briefly show that snapshot's gamestate
   score/timer until the next configstring updates arrive.
 - The first engine shader initialization can take several seconds on software

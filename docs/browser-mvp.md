@@ -151,12 +151,14 @@ After the engine boots (still on the map step), the app calls the bridge:
 | `JKA_RestartFS()` | Re-scans `/jka/base` after a map `.pk3` is written into MEMFS |
 
 If the map is present, the wizard shows **Map ready** and Play starts the demo.
-If it is absent, the wizard asks for the map `.pk3`; one selection may include
-the map plus dependency PK3s (community maps often reuse decorative models or
-textures from another map PK3). The files are written to `/jka/base` and the
-file system is restarted once, then the map is re-checked before Play is
-enabled. Nothing is written back to the user's folder. A map that only needs the
-decorative `misc_model_static` models missing from the selected PK3s still
+The `base` folder selection mounts every `.pk3` it contains, so a map PK3 and
+its dependency PK3s (community maps often reuse decorative models or textures
+from another map PK3) are already on the search path. If the map is still
+absent, the wizard asks for the map `.pk3`; one selection may include the map
+plus dependency PK3s. The files are written to `/userdata/base` and the file
+system is restarted once, then the map is re-checked before Play is enabled.
+Nothing is written back to the user's folder. A map that only needs the
+decorative `misc_model_static` models missing from all supplied PK3s still
 plays: the engine logs a warning and skips those props (patch `0013`).
 
 ### 3.5 Playback controls
