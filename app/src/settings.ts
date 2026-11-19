@@ -23,6 +23,8 @@ export interface AppSettings {
   showScores: boolean;
   showTimer: boolean;
   showMinimap: boolean;
+  /** Play the demo in the map's small corner slot while the map fills the stage. */
+  swapMinimap: boolean;
   playbackSpeed: number;
   volumeEffects: number;
   volumeMusic: number;
@@ -65,6 +67,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showScores: true,
   showTimer: true,
   showMinimap: true,
+  swapMinimap: false,
   playbackSpeed: 1,
   // The engine's own defaults: s_volume 0.5, s_musicvolume 0.25, s_volumeVoice 1.
   volumeEffects: 0.5,
@@ -148,6 +151,7 @@ export function loadSettings(): AppSettings {
       showScores: parsed.showScores !== false,
       showTimer: parsed.showTimer !== false,
       showMinimap: parsed.showMinimap !== false,
+      swapMinimap: parsed.swapMinimap === true,
       playbackSpeed: clampSpeed(parsed.playbackSpeed),
       volumeEffects: clampVolume(parsed.volumeEffects, DEFAULT_SETTINGS.volumeEffects),
       volumeMusic: clampVolume(parsed.volumeMusic, DEFAULT_SETTINGS.volumeMusic),

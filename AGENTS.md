@@ -386,6 +386,12 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   with the demo camera), and no highlight in free cam.
   `AppSettings.showMinimap` and the action-bar map button toggle the panel; the
   stage's `data-minimap` attribute moves the kill feed down.
+- The action-bar swap button (`AppSettings.swapMinimap`, stage `data-swapped`)
+  exchanges the two: the demo canvas becomes the top-right corner player at the
+  stage aspect (208 px, 118 px on narrow layouts) and the minimap fills the
+  stage. The big map drops to z-index 3 so the score strip, kill feed and player
+  chrome stay above it, the kill feed moves to the left, and hiding the map
+  leaves swap mode. Swapping turns the map on when it was hidden.
 - The jump effect uses `z - baseZ`, where `baseZ` is the last grounded `z`.
   Reset the baseline on the >600-unit snap (respawn/teleport/seek). Scale the
   aura, team ring, white lift ring, pulse and dot radius with

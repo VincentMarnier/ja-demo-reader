@@ -18,6 +18,8 @@ interface PlayerProps {
   showScores: boolean;
   showTimer: boolean;
   showMinimap: boolean;
+  /** The demo plays in the map's corner slot and the map fills the stage. */
+  swapMinimap: boolean;
   mapName: string;
   mapFiles: readonly Blob[];
   radar: RadarData | null;
@@ -26,6 +28,7 @@ interface PlayerProps {
   highlightClient: number | null;
   onFollow: (clientNum: number) => void;
   onToggleMinimap: () => void;
+  onToggleSwap: () => void;
   currentMs: number;
   durationMs: number;
   killMarkers: KillMarker[];
@@ -111,6 +114,17 @@ function MapIcon() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden="true">
       <path d="M3.5 6.5 9 4l6 2.5L20.5 4v13.5L15 20l-6-2.5L3.5 20z" />
       <path d="M9 4v13.5M15 6.5V20" />
+    </svg>
+  );
+}
+
+function SwapIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3.5" y="4.5" width="17" height="15" rx="2.2" />
+      <rect x="13" y="6.5" width="5.8" height="4.4" rx="1" fill="currentColor" stroke="none" />
+      <path d="M7 12.4h10M14.2 9.6 17 12.4l-2.8 2.8" />
+      <path d="M17 16.6H7M9.8 13.8 7 16.6l2.8 2.8" opacity="0.55" />
     </svg>
   );
 }
@@ -344,6 +358,17 @@ export function Player(props: PlayerProps) {
             title={props.showMinimap ? 'Hide minimap' : 'Show minimap'}
           >
             <MapIcon />
+          </button>
+
+          <button
+            type="button"
+            className={props.swapMinimap ? 'icon-btn active' : 'icon-btn'}
+            onClick={props.onToggleSwap}
+            aria-label={props.swapMinimap ? 'Show the demo full size' : 'Show the demo in the map corner'}
+            aria-pressed={props.swapMinimap}
+            title={props.swapMinimap ? 'Demo back to full stage' : 'Swap demo and map'}
+          >
+            <SwapIcon />
           </button>
 
           <button

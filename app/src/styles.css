@@ -657,6 +657,57 @@ summary { cursor: pointer; color: var(--muted); }
   overflow: hidden;
   pointer-events: auto;
 }
+/* Swap mode: the demo moves into the map's small top-right slot and the map
+   takes over the stage.  The small player keeps the stage's aspect so the
+   stretched canvas is never distorted. */
+.stage[data-swapped='1'] .screen {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 6;
+  width: var(--pip-size, 208px);
+  height: auto;
+  aspect-ratio: var(--stage-aspect, 1.3333);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+.stage[data-swapped='1'] .minimap {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: auto;
+  height: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+/* The chrome and the end/pause layers must stay above the enlarged map. */
+.stage[data-swapped='1'] .score-strip,
+.stage[data-swapped='1'] .player-back,
+.stage[data-swapped='1'] .player-bottom {
+  z-index: 7;
+}
+/* The map is drawn after the score strip in the player UI and now fills the
+   stage, so it drops below every HUD layer. */
+.stage[data-swapped='1'] .minimap {
+  z-index: 3;
+}
+.stage[data-swapped='1'] .ready-layer,
+.stage[data-swapped='1'] .paused-badge {
+  z-index: 8;
+}
+/* The corner player owns the top right; move the feed to the other side. */
+.stage[data-swapped='1'][data-minimap='1'] .kill-feed {
+  top: 56px;
+  left: 12px;
+  right: auto;
+  align-items: flex-start;
+}
 .minimap-canvas { display: block; width: 100%; height: 100%; }
 .minimap-note {
   position: absolute;
@@ -829,6 +880,10 @@ summary { cursor: pointer; color: var(--muted); }
   .kill-feed { top: 92px; max-width: 64%; }
   .minimap { top: 96px; right: 8px; width: 118px; height: 118px; }
   .stage[data-minimap='1'] .kill-feed { top: 222px; }
+  /* The swapped map is full stage and the corner player shrinks with it. */
+  .stage[data-swapped='1'] { --pip-size: 118px; }
+  .stage[data-swapped='1'] .screen { top: 8px; right: 8px; }
+  .stage[data-swapped='1'][data-minimap='1'] .kill-feed { top: 92px; left: 8px; }
   .score-side { min-width: 62px; padding: 5px 7px; }
   .score-side .score-name { max-width: 70px; }
   .keybind-grid { grid-template-columns: 1fr; }
@@ -902,6 +957,10 @@ summary { cursor: pointer; color: var(--muted); }
   /* Too little room below the map: overlap it rather than clip the panel. */
   .stage[data-minimap='1'] .stage-scoreboard {
     top: 12px;
+  }
+  /* With the demo in the corner, sit beside it instead of over it. */
+  .stage[data-swapped='1'] .stage-scoreboard {
+    right: calc(var(--pip-size, 208px) + 22px);
   }
 }
 .seek-bar {

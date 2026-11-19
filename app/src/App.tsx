@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ChangeEvent } from 'react';
+import type { ChangeEvent, CSSProperties } from 'react';
 import type { AssetSelection, DemoInfo, DemoStatus, DemoSummary, FreeCamPose, KillMarker, LocalFile, Phase, RadarData, ScoreboardData, StageProgress, ValidationResult } from './types';
 import { CA_ACTIVE } from './types';
 import { validateDemoFile, validateSelection } from './fs/validate';
@@ -1352,7 +1352,11 @@ export default function App() {
             <div
               className="stage"
               ref={stageRef}
+              style={{ '--stage-aspect': stageAspect.toFixed(4) } as CSSProperties}
               data-minimap={showPlayer && settings.showMinimap ? '1' : undefined}
+              data-swapped={
+                showPlayer && settings.showMinimap && settings.swapMinimap ? '1' : undefined
+              }
             >
               <svg className="gamma-filter" aria-hidden="true" focusable="false">
                 <filter id="jka-gamma" colorInterpolationFilters="sRGB">
@@ -1451,6 +1455,7 @@ export default function App() {
                   showScores={settings.showScores}
                   showTimer={settings.showTimer}
                   showMinimap={settings.showMinimap}
+                  swapMinimap={settings.swapMinimap}
                   mapName={status?.map || mapName}
                   mapFiles={minimapFiles}
                   radar={radar}
@@ -1458,7 +1463,18 @@ export default function App() {
                   highlightClient={minimapHighlight}
                   onFollow={followPlayer}
                   onToggleMinimap={() =>
-                    setSettings(current => ({ ...current, showMinimap: !current.showMinimap }))
+                    setSettings(current => {
+                      const showMinimap = !current.showMinimap;
+                      // Without the map there is nothing to swap with, so hiding
+                      // it returns the demo to the full stage.
+                      return { ...current, showMinimap, swapMinimap: showMinimap && current.swapMinimap };
+                    })
+                  }
+                  onToggleSwap={() =>
+                    setSettings(current => {
+                      const swapMinimap = !current.swapMinimap;
+                      return { ...current, swapMinimap, showMinimap: swapMinimap || current.showMinimap };
+                    })
                   }
                   currentMs={demoPosition}
                   durationMs={demoInfo?.duration ?? 0}

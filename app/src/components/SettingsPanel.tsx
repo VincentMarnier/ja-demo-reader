@@ -172,6 +172,19 @@ export function SettingsPanel({ settings, onChange, onClose, onClearLocalData }:
             />
             <span>Show the top-down minimap with live player positions</span>
           </label>
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={settings.swapMinimap}
+              onChange={event =>
+                onChange({
+                  swapMinimap: event.target.checked,
+                  showMinimap: event.target.checked || settings.showMinimap
+                })
+              }
+            />
+            <span>Swap the demo and the map: the demo plays in the map's corner and the map fills the stage</span>
+          </label>
         </section>
 
         <section className="settings-section">
