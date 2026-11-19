@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { KillMarker, Phase, RadarData, ScoreboardData, TrajectoryData, ViewStats } from '../types';
+import type { DemoGameSummary, KillMarker, Phase, RadarData, ScoreboardData, TrajectoryData, ViewStats } from '../types';
+import type { DamageHeatmapMode } from '../map/damageHeatmap';
 import { ScoreStrip } from './ScoreStrip';
 import { SeekBar } from './SeekBar';
 import { VitalsHud } from './VitalsHud';
@@ -14,6 +15,10 @@ interface PlayerProps {
   paused: boolean;
   phase: Phase;
   scores: ScoreboardData | null;
+  /** The summary game around the live time, for the damage heatmaps. */
+  game: DemoGameSummary | null;
+  heatmap: DamageHeatmapMode;
+  onHeatmapChange: (mode: DamageHeatmapMode) => void;
   view: ViewStats | null;
   showScores: boolean;
   showTimer: boolean;
@@ -231,6 +236,9 @@ export function Player(props: PlayerProps) {
           files={props.mapFiles}
           radar={props.radar}
           scores={props.scores}
+          game={props.game}
+          heatmap={props.heatmap}
+          onHeatmapChange={props.onHeatmapChange}
           fov={props.fov}
           highlightClient={props.highlightClient}
           onFollow={props.onFollow}

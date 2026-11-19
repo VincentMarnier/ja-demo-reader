@@ -58,7 +58,10 @@ Academy and select your own `assets0..3.pk3` and demo files. Nothing is uploaded
   dots in eight red/blue tones, the 97° view cone and live positions. The
   camera subject (the demo POV or the followed player) pulses white/amber, and
   a jump produces a halo whose size and brightness grow with height. Void areas are transparent; the image is cached
-  per map and regenerated when the game data changes.
+  per map and regenerated when the game data changes. Damage heatmaps overlay the
+  same map: team or player, damage given (attacker position) or received (victim
+  position), with red/blue team layers under **Damage over time** and the player
+  pair in player detail.
 - Demo sound through the engine's software mixer: effects, music and voice
   volumes are adjustable from the player's Sound button; `?sound=0` boots
   silently.
@@ -253,6 +256,7 @@ Some demo-seek and movie-tool ideas were informed by
 - [docs/m8.md](docs/m8.md) — summaries, caches, indexed seek, speed/gamma.
 - [docs/m11-minimap.md](docs/m11-minimap.md) — top-down map image and live player dots.
 - [docs/m12-input-scan.md](docs/m12-input-scan.md) — view-angle macro detection and the findings panel.
+- [docs/m13-damage-heatmaps.md](docs/m13-damage-heatmaps.md) — team/player damage heatmaps over the map image.
 - [docs/m7.md](docs/m7.md) — release audit and sharing notes.
 - [docs/browser-mvp.md](docs/browser-mvp.md) — end-to-end browser flow.
 - [docs/architecture.md](docs/architecture.md),

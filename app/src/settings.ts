@@ -1,3 +1,5 @@
+import type { DamageHeatmapMode } from './map/damageHeatmap';
+
 export type FreeCamAction =
   | 'forward'
   | 'back'
@@ -13,6 +15,16 @@ export type FreeCamAction =
 export type FreeCamKeys = Record<FreeCamAction, string>;
 
 export type TextureMipmapMode = 'off' | 'bilinear' | 'trilinear';
+
+export type HeatmapMode = DamageHeatmapMode;
+
+const HEATMAP_MODES: readonly HeatmapMode[] = [
+  'off',
+  'team-given',
+  'team-received',
+  'player-given',
+  'player-received'
+];
 
 /** Corner the small demo player snaps to while the map fills the stage. */
 export type PipCorner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
@@ -38,6 +50,8 @@ export interface AppSettings {
   trailsFuture: boolean;
   /** Only draw trails for the camera subject instead of every player. */
   trailsFollowOnly: boolean;
+  /** Damage heatmap drawn over the minimap: off, team or player, given/received. */
+  heatmap: HeatmapMode;
   playbackSpeed: number;
   volumeEffects: number;
   volumeMusic: number;
@@ -86,6 +100,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   trailsPast: true,
   trailsFuture: false,
   trailsFollowOnly: false,
+  heatmap: 'off',
   playbackSpeed: 1,
   // The engine's own defaults: s_volume 0.5, s_musicvolume 0.25, s_volumeVoice 1.
   volumeEffects: 0.5,
@@ -143,6 +158,10 @@ function parsePipCorner(value: unknown): PipCorner {
   return PIP_CORNERS.includes(value as PipCorner) ? (value as PipCorner) : DEFAULT_SETTINGS.pipCorner;
 }
 
+function parseHeatmapMode(value: unknown): HeatmapMode {
+  return HEATMAP_MODES.includes(value as HeatmapMode) ? (value as HeatmapMode) : DEFAULT_SETTINGS.heatmap;
+}
+
 export function clampVolume(value: unknown, fallback: number): number {
   const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n)) return fallback;
@@ -192,6 +211,7 @@ export function loadSettings(): AppSettings {
       trailsPast: parsed.trailsPast !== false,
       trailsFuture: parsed.trailsFuture === true,
       trailsFollowOnly: parsed.trailsFollowOnly === true,
+      heatmap: parseHeatmapMode(parsed.heatmap),
       playbackSpeed: clampSpeed(parsed.playbackSpeed),
       volumeEffects: clampVolume(parsed.volumeEffects, DEFAULT_SETTINGS.volumeEffects),
       volumeMusic: clampVolume(parsed.volumeMusic, DEFAULT_SETTINGS.volumeMusic),

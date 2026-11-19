@@ -14,7 +14,8 @@
   `docs/m9-phase7.md` is the release-hardening checklist,
   `docs/m10-player-detail.md` covers the per-player swing scan and detail view,
   `docs/m11-minimap.md` covers the static top-down map image and radar,
-  and `docs/m12-input-scan.md` covers the view-angle input-script scan.
+  `docs/m12-input-scan.md` covers the view-angle input-script scan, and
+  `docs/m13-damage-heatmaps.md` covers the team/player damage heatmaps.
 - The app is a single Vite/React app in `app/`. `App.tsx` owns the wizard and
   player state, `engine/WorkerEngineHost.ts` and `engine/EngineHost.ts` are the
   two implementations of the shared `engine/host.ts` interface, and `src/fs/`
@@ -315,6 +316,12 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   (one sample per 150 ms, POV plus snapshot players). It is reset with the
   summary at the start of every scan and is deliberately not part of the cached
   summary.
+- Each damage record carries the attacker and victim world position at scan time
+  (`ax`/`ay`, `tx`/`ty`), captured by `JKA_ClientWorldOrigin` from
+  `cl.snap.ps` for the POV and the parse ring for remote players. This powers
+  the damage heatmaps; the fields are optional because a client outside the
+  POV's PVS has no position. Do not move the capture out of `JKA_EmitDamage`
+  without checking that the current snapshot still matches the event.
 - The app overrides the cgame's incomplete K/D with the parsed event summary in
   `app/src/summary.ts`/`mergeScoreboard`. Keep that merge; cgame-only counters
   are wrong after seeks and map restarts.
@@ -412,8 +419,9 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   buffer (262,144 entries). `JKA_TrajectoryJson(from,to)` returns
   `[num,serverTime,x,y]` on the radar clock; the page requests a ±7 s window and
   refreshes near its edges. Playback and seek replays must not append, and the
-  samples are engine memory like the keyframes (not the summary cache; `v11`
-  stays). A release or an unscanned engine session therefore has no trails.
+  samples are engine memory like the keyframes (not the summary cache; the
+  `v12` bump is for the damage positions, not trails). A release or an unscanned
+  engine session therefore has no trails.
 - `Minimap.tsx` draws the past five seconds solid and fading into the current
   dot and the next five seconds dashed and dimmer, above the cones and below the
   dots; gaps over 800 ms or a >600-unit step break the line and dead players
@@ -425,6 +433,17 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   aura, team ring, white lift ring, pulse and dot radius with
   `min(1, jump / 90)`; a normal jump is ~45 units and Force Jump ~90+. Do not
   treat stairs or slopes as jumps: `g` decides.
+- Damage heatmaps (`docs/m13-damage-heatmaps.md`) are built from the scanned
+  damage positions, not from a live trajectory: `app/src/map/damageHeatmap.ts`
+  rasterises team/player given/received damage into a 160-cell grid over the map
+  image bounds, and `heatmapCanvas.ts` colours it. The minimap draws the layers
+  above the raster and below cones/trails/dots with `screen` blending; team
+  given uses the attacker's position, received the victim's. Player layers
+  follow the panel's player pick, else the camera subject, else the POV. Team
+  modes also appear under **Demo summary → Damage over time** (two cards); the
+  player modes appear in **Player detail** below **By saber & stance** (or the
+  empty-swing note) for the selected player. A cached `v11` summary has no
+  positions and must be rescanned.
 - The map panel sits at the top right on desktop (208 px) and moves below the
   score strip on narrow layouts (118 px). Keep the kill-feed offset in sync if
   the size changes.
@@ -448,7 +467,7 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
   within 1.5 s for the same player/channel; `bursts` counts merged presses while
   `reversals` stays the per-run figure. `swing` is tenths of a degree and
   `confidence` 1 means the stricter "strong" thresholds. The summary cache
-  version is `v11`.
+  version is `v12`.
 - `ScriptFlagsPanel` under the demo summary is informational and never gates
   Play. Its watch link starts/seeks the demo to two seconds before the burst,
   then follows the player; the recorded POV passes `-1` because its entity is
@@ -456,7 +475,7 @@ scripts/stage-engine.sh /tmp/jka-demo-player/out
 
 ## App/caching gotchas
 
-- Summary cache keys are versioned (`v11:name:size:lastModified`). Bump the
+- Summary cache keys are versioned (`v12:name:size:lastModified`). Bump the
   version when the summary shape or game-boundary logic changes; otherwise old
   one-game summaries are reused. The IndexedDB cache self-heals a missing store.
 - A cached summary does not contain the in-memory seek keyframes or the trail

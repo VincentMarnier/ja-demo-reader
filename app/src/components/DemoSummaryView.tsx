@@ -5,6 +5,8 @@ import { recordKills } from '../summary';
 import { DemoTrendChart, TREND_METRICS } from './DemoTrendChart';
 import type { TrendMetric } from './DemoTrendChart';
 import { PlayerDetailView } from './PlayerDetailView';
+import { DamageHeatmapPanel } from './DamageHeatmapPanel';
+import { TEAM_HEATMAP_MODES } from '../map/damageHeatmap';
 
 interface DemoSummaryViewProps {
   summary: DemoSummary | null;
@@ -12,6 +14,9 @@ interface DemoSummaryViewProps {
   onPlayFrom?: (timeMs: number) => void;
   busy?: boolean;
   canPlay?: boolean;
+  /** The selected map and the PK3s its image is generated from. */
+  mapName: string;
+  mapFiles: readonly Blob[];
 }
 
 type SummaryView = 'table' | 'player' | TrendMetric;
@@ -20,7 +25,14 @@ function stripColors(name: string): string {
   return name.replace(/\^[0-9a-zA-Z]/g, '').replace(/\^/g, '');
 }
 
-export function DemoSummaryView({ summary, onPlayFrom, busy, canPlay }: DemoSummaryViewProps) {
+export function DemoSummaryView({
+  summary,
+  onPlayFrom,
+  busy,
+  canPlay,
+  mapName,
+  mapFiles
+}: DemoSummaryViewProps) {
   const [view, setView] = useState<SummaryView>('table');
 
   if (!summary || summary.games.length === 0) return null;
@@ -52,6 +64,8 @@ export function DemoSummaryView({ summary, onPlayFrom, busy, canPlay }: DemoSumm
           onPlayFrom={onPlayFrom}
           busy={busy}
           canPlay={canPlay}
+          mapName={mapName}
+          mapFiles={mapFiles}
         />
       ) : (
         summary.games.map((game, index) => {
@@ -67,13 +81,27 @@ export function DemoSummaryView({ summary, onPlayFrom, busy, canPlay }: DemoSumm
                 {game.levelTime > 0 ? <span className="muted">match clock {formatTime(game.levelTime)}</span> : null}
               </div>
               {view !== 'table' ? (
-                <DemoTrendChart
-                  game={game}
-                  metric={view}
-                  onPlayFrom={onPlayFrom}
-                  busy={busy}
-                  canPlay={canPlay}
-                />
+                <>
+                  <DemoTrendChart
+                    game={game}
+                    metric={view}
+                    onPlayFrom={onPlayFrom}
+                    busy={busy}
+                    canPlay={canPlay}
+                  />
+                  {view === 'damage' ? (
+                    <>
+                      <h4 className="detail-heading">Team damage heatmaps</h4>
+                      <DamageHeatmapPanel
+                        game={game}
+                        num={game.pov ?? game.players[0]?.num ?? 0}
+                        mapName={mapName}
+                        files={mapFiles}
+                        modes={TEAM_HEATMAP_MODES}
+                      />
+                    </>
+                  ) : null}
+                </>
               ) : players.length === 0 ? (
                 <p className="muted">No players were seen in this demo.</p>
               ) : (

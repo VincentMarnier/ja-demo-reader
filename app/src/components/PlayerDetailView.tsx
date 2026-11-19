@@ -18,6 +18,8 @@ import {
 } from '../saber';
 import type { SaberComboStats, SwingWindow } from '../saber';
 import { ChartMomentBar } from './ChartMomentBar';
+import { DamageHeatmapPanel } from './DamageHeatmapPanel';
+import { PLAYER_HEATMAP_MODES } from '../map/damageHeatmap';
 
 const SERIES_COLORS = [
   '#5fb3ff',
@@ -36,6 +38,10 @@ interface PlayerDetailViewProps {
   onPlayFrom?: (timeMs: number) => void;
   busy?: boolean;
   canPlay?: boolean;
+  /** Map name from the wizard; the game's own map is preferred. */
+  mapName: string;
+  /** PK3s the heatmap image is generated from. */
+  mapFiles: readonly Blob[];
 }
 
 function initialGameIndex(games: DemoGameSummary[]): number {
@@ -332,7 +338,14 @@ function LineChart({
   );
 }
 
-export function PlayerDetailView({ summary, onPlayFrom, busy, canPlay }: PlayerDetailViewProps) {
+export function PlayerDetailView({
+  summary,
+  onPlayFrom,
+  busy,
+  canPlay,
+  mapName,
+  mapFiles
+}: PlayerDetailViewProps) {
   const games = summary.games;
   const [gameIndex, setGameIndex] = useState(() => initialGameIndex(games));
   const game = games[Math.min(gameIndex, Math.max(0, games.length - 1))];
@@ -444,6 +457,22 @@ export function PlayerDetailView({ summary, onPlayFrom, busy, canPlay }: PlayerD
   const recordedPov = game.pov !== undefined && game.pov === num;
   const hasSwings = (game.swings?.length ?? 0) > 0;
 
+  // The player heatmaps sit below the saber breakdown.  The same element is
+  // reused in the empty branches so damage still has a map when this summary
+  // has no swing records for the player.
+  const heatmaps = (
+    <>
+      <h4 className="detail-heading">Player damage heatmaps</h4>
+      <DamageHeatmapPanel
+        game={game}
+        num={num}
+        mapName={mapName}
+        files={mapFiles}
+        modes={PLAYER_HEATMAP_MODES}
+      />
+    </>
+  );
+
   return (
     <section className="player-detail" aria-label="Player detail">
       <div className="player-detail-controls">
@@ -481,10 +510,13 @@ export function PlayerDetailView({ summary, onPlayFrom, busy, canPlay }: PlayerD
       </div>
 
       {!hasSwings || !game.swings ? (
-        <p className="muted detail-empty">
-          This summary has no saber swing data. Run Check map again to rescan the demo with the current
-          scanner.
-        </p>
+        <>
+          <p className="muted detail-empty">
+            This summary has no saber swing data. Run Check map again to rescan the demo with the current
+            scanner.
+          </p>
+          {heatmaps}
+        </>
       ) : (
         <>
           <div className="detail-kpis">
@@ -523,7 +555,10 @@ export function PlayerDetailView({ summary, onPlayFrom, busy, canPlay }: PlayerD
           </div>
 
           {combos.length === 0 ? (
-            <p className="muted detail-empty">No saber swings were recorded for this player in this game.</p>
+            <>
+              <p className="muted detail-empty">No saber swings were recorded for this player in this game.</p>
+              {heatmaps}
+            </>
           ) : (
             <>
           <h4 className="detail-heading">By saber &amp; stance</h4>
@@ -563,6 +598,8 @@ export function PlayerDetailView({ summary, onPlayFrom, busy, canPlay }: PlayerD
               </tbody>
             </table>
           </div>
+
+          {heatmaps}
 
           <h4 className="detail-heading">Hit rate over time</h4>
           <p className="fineprint detail-note">

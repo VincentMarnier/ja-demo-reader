@@ -1,7 +1,22 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { loadMapImage } from '../map/mapImage';
 import type { MapBounds } from '../map/bsp';
-import type { RadarData, ScoreboardData, TrajectoryData } from '../types';
+import {
+  buildDamageHeatmapSource,
+  combinedMax,
+  HEATMAP_MODES,
+  heatmapIsTeam,
+  heatmapKind,
+  playerDamageTotals,
+  playerTeams,
+  rasterizeHeatmap,
+  teamDamageTotals,
+  type DamageHeatmapMode
+} from '../map/damageHeatmap';
+import { heatmapCanvas, teamHeatmapCanvas, TEAM_HEAT_HUE } from '../map/heatmapCanvas';
+import { playerTone, toneColor } from '../map/playerTone';
+import { stripColors } from '../saber';
+import type { DemoGameSummary, RadarData, ScoreboardData, TrajectoryData } from '../types';
 
 interface MinimapProps {
   mapName: string;
@@ -9,6 +24,10 @@ interface MinimapProps {
   files: readonly Blob[];
   radar: RadarData | null;
   scores: ScoreboardData | null;
+  /** The summary game around the live time; its damage events build the heatmaps. */
+  game: DemoGameSummary | null;
+  heatmap: DamageHeatmapMode;
+  onHeatmapChange: (mode: DamageHeatmapMode) => void;
   /** Horizontal field of view in degrees, matching the demo camera. */
   fov: number;
   /** Camera subject: the demo POV or the player the camera follows. */
@@ -89,54 +108,17 @@ interface DotHit {
   y: number;
 }
 
-/** FFA colours, used when the player has no red/blue team. */
-const FREE_COLORS = [
-  [38, 82, 58],
-  [198, 78, 60],
-  [152, 62, 52],
-  [322, 72, 64],
-  [18, 88, 58],
-  [268, 64, 66],
-  [178, 72, 52],
-  [92, 62, 50],
-  [350, 78, 62],
-  [224, 66, 64]
-] as const;
-
-/**
- * Per-client tone inside a team colour.  Red stays warm and blue stays cool,
- * but eight fixed offsets and brightness steps make teammates easy to tell
- * apart at minimap size.
- */
-const TEAM_TONE_HUE = [-9, 9, -15, 15, -4, 4, 12, -12] as const;
-const TEAM_TONE_LIGHT = [62, 55, 69, 58, 65, 51, 71, 60] as const;
-
-interface Tone {
-  h: number;
-  s: number;
-  l: number;
+function formatDamage(value: number): string {
+  return Math.round(value).toLocaleString();
 }
 
-function teamTone(num: number, baseHue: number, saturation: number): Tone {
-  const tone = Math.abs(num) % TEAM_TONE_HUE.length;
-  return {
-    h: (baseHue + TEAM_TONE_HUE[tone] + 360) % 360,
-    s: saturation,
-    l: TEAM_TONE_LIGHT[tone]
-  };
-}
-
-function playerTone(num: number, team: number | undefined): Tone {
-  if (team === 1) return teamTone(num, 0, 78);
-  if (team === 2) return teamTone(num, 212, 82);
-  const color = FREE_COLORS[Math.abs(num) % FREE_COLORS.length];
-  return { h: color[0], s: color[1], l: color[2] };
-}
-
-function toneColor(tone: Tone, alpha = 1): string {
-  return alpha >= 1
-    ? `hsl(${tone.h} ${tone.s}% ${tone.l}%)`
-    : `hsla(${tone.h}, ${tone.s}%, ${tone.l}%, ${alpha})`;
+function playerName(game: DemoGameSummary | null, num: number | null): string {
+  if (num === null) return '—';
+  let found: DemoGameSummary['players'][number] | undefined;
+  for (const player of game?.players ?? []) {
+    if (player.num === num) found = player;
+  }
+  return found ? stripColors(found.name) || `Client ${num}` : `Client ${num}`;
 }
 
 export function Minimap({
@@ -144,6 +126,9 @@ export function Minimap({
   files,
   radar,
   scores,
+  game,
+  heatmap,
+  onHeatmapChange,
   fov,
   highlightClient,
   onFollow,
@@ -182,6 +167,9 @@ export function Minimap({
   const pinchRef = useRef<PinchGesture | null>(null);
   const [dragging, setDragging] = useState(false);
   const [status, setStatus] = useState<'loading' | 'ready' | 'missing'>(mapName ? 'loading' : 'missing');
+  const [mapBounds, setMapBounds] = useState<MapBounds | null>(null);
+  const [heatmapPlayer, setHeatmapPlayer] = useState<number | null>(null);
+  const heatLayersRef = useRef<HTMLCanvasElement[]>([]);
 
   useEffect(() => {
     onExpandRef.current = onExpand;
@@ -353,6 +341,8 @@ export function Minimap({
     let cancelled = false;
     layerRef.current = null;
     boundsRef.current = null;
+    setMapBounds(null);
+    heatLayersRef.current = [];
     posesRef.current.clear();
     trailsRef.current = new Map();
     trailWindowRef.current = null;
@@ -382,12 +372,125 @@ export function Minimap({
       context.putImageData(new ImageData(image.data, image.width, image.height), 0, 0);
       layerRef.current = layer;
       boundsRef.current = image.bounds;
+      setMapBounds(image.bounds);
       setStatus('ready');
     });
     return () => {
       cancelled = true;
     };
   }, [mapName, files]);
+
+  // The heatmap subject for the player layers: an explicit pick, else the
+  // camera subject, else the recorded POV.
+  const subject =
+    heatmapPlayer ?? highlightClient ?? game?.pov ?? game?.players[0]?.num ?? null;
+  useEffect(() => {
+    if (heatmapPlayer === null || !game) return;
+    if (!game.players.some(player => player.num === heatmapPlayer)) setHeatmapPlayer(null);
+  }, [game, heatmapPlayer]);
+
+  const subjectTeam = useMemo(
+    () => (game && subject !== null ? playerTeams(game).get(subject) ?? 0 : 0),
+    [game, subject]
+  );
+
+  const heatmapPlayers = useMemo(() => {
+    const byNum = new Map<number, DemoGameSummary['players'][number]>();
+    for (const player of game?.players ?? []) byNum.set(player.num, player);
+    return [...byNum.values()].sort((a, b) =>
+      stripColors(a.name).localeCompare(stripColors(b.name), 'en', { sensitivity: 'base' })
+    );
+  }, [game]);
+
+  const heatSource = useMemo(
+    () => (game && mapBounds ? buildDamageHeatmapSource(game, mapBounds) : null),
+    [game, mapBounds]
+  );
+
+  // Team grids are cheap to build and both kinds are needed when the mode
+  // changes; player grids follow the selected subject.
+  const teamGrids = useMemo(() => {
+    if (!heatSource) return null;
+    return {
+      given: {
+        1: rasterizeHeatmap(heatSource, 'given', { team: 1 }),
+        2: rasterizeHeatmap(heatSource, 'given', { team: 2 })
+      },
+      received: {
+        1: rasterizeHeatmap(heatSource, 'received', { team: 1 }),
+        2: rasterizeHeatmap(heatSource, 'received', { team: 2 })
+      }
+    };
+  }, [heatSource]);
+
+  const playerGrids = useMemo(() => {
+    if (!heatSource || subject === null) return null;
+    return {
+      given: rasterizeHeatmap(heatSource, 'given', { player: subject }),
+      received: rasterizeHeatmap(heatSource, 'received', { player: subject })
+    };
+  }, [heatSource, subject]);
+
+  // Colourised layers are rebuilt only when the game or mode changes, not on
+  // every animation frame.
+  useEffect(() => {
+    const layers: HTMLCanvasElement[] = [];
+    const kind = heatmapKind(heatmap);
+    if (kind && heatmapIsTeam(heatmap) && teamGrids) {
+      const grids = teamGrids[kind];
+      const max = combinedMax([grids[1], grids[2]]);
+      const layer = teamHeatmapCanvas(grids[1], grids[2], max);
+      if (layer) layers.push(layer);
+    } else if (kind && playerGrids && subject !== null) {
+      const grid = playerGrids[kind];
+      const tone = playerTone(subject, subjectTeam);
+      const layer = heatmapCanvas(grid, grid.max, tone.h, tone.s);
+      if (layer) layers.push(layer);
+    }
+    heatLayersRef.current = layers;
+  }, [heatmap, teamGrids, playerGrids, subject, subjectTeam]);
+
+  const heatLegend = useMemo(() => {
+    const kind = heatmapKind(heatmap);
+    if (!kind || !game || !heatSource) return null;
+    if (heatmapIsTeam(heatmap)) {
+      const hasTeams = game.players.some(player => player.team === 1 || player.team === 2);
+      if (!hasTeams) {
+        return {
+          empty: 'No red/blue teams in this game.',
+          rows: [] as Array<{ label: string; color: string; value: string }>,
+          placed: 0,
+          total: 0
+        };
+      }
+      const rows = [1, 2].map(team => {
+        const totals = teamDamageTotals(game, team);
+        return {
+          label: `Team ${team}`,
+          color: `hsl(${TEAM_HEAT_HUE[team]} 88% 62%)`,
+          value: formatDamage(kind === 'given' ? totals.given : totals.received)
+        };
+      });
+      const placed = kind === 'given' ? heatSource.givenDamage : heatSource.receivedDamage;
+      const total = kind === 'given' ? heatSource.givenTotal : heatSource.receivedTotal;
+      return { empty: null, rows, placed, total };
+    }
+    if (subject === null) return null;
+    const totals = playerDamageTotals(game, subject);
+    const tone = playerTone(subject, subjectTeam);
+    return {
+      empty: null,
+      rows: [
+        {
+          label: playerName(game, subject),
+          color: toneColor(tone),
+          value: formatDamage(kind === 'given' ? totals.dealt : totals.received)
+        }
+      ],
+      placed: kind === 'given' ? totals.placedDealt : totals.placedReceived,
+      total: kind === 'given' ? totals.dealt : totals.received
+    };
+  }, [heatmap, game, heatSource, subject, subjectTeam]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -444,6 +547,20 @@ export function Minimap({
         context.imageSmoothingEnabled = true;
         context.imageSmoothingQuality = 'high';
         context.drawImage(layer, imageX, imageY, worldWidth * scale, worldHeight * scale);
+
+        // Damage heat above the map raster and below the cones/dots.  Screen
+        // blending lets the two teams' glows add up where they traded damage.
+        const heatLayers = heatLayersRef.current;
+        if (heatLayers.length > 0) {
+          context.save();
+          context.globalCompositeOperation = 'screen';
+          context.globalAlpha = 0.92;
+          for (const heatLayer of heatLayers) {
+            context.drawImage(heatLayer, imageX, imageY, worldWidth * scale, worldHeight * scale);
+          }
+          context.restore();
+        }
+
         toScreen = (x, y) => ({
           x: imageX + (x - bounds.minX) * scale,
           y: imageY + (bounds.maxY - y) * scale
@@ -903,6 +1020,62 @@ export function Minimap({
       }}
     >
       <canvas ref={canvasRef} className="minimap-canvas" aria-label="Top-down map with player positions" />
+      {expanded && status === 'ready' ? (
+        <div
+          className="minimap-heat"
+          onPointerDown={event => event.stopPropagation()}
+          onPointerUp={event => event.stopPropagation()}
+          onDoubleClick={event => event.stopPropagation()}
+          onWheelCapture={event => event.stopPropagation()}
+        >
+          <label className="minimap-heat-row">
+            <span>Heatmap</span>
+            <select
+              value={heatmap}
+              onChange={event => onHeatmapChange(event.target.value as DamageHeatmapMode)}
+            >
+              {HEATMAP_MODES.map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          {heatmapKind(heatmap) && !heatmapIsTeam(heatmap) ? (
+            <label className="minimap-heat-row">
+              <span>Player</span>
+              <select
+                value={subject ?? ''}
+                onChange={event => setHeatmapPlayer(Number(event.target.value))}
+              >
+                {heatmapPlayers.map(player => (
+                  <option key={`${player.num}-${player.name}`} value={player.num}>
+                    {stripColors(player.name) || `Client ${player.num}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          {heatLegend ? (
+            <div className="minimap-heat-legend">
+              {heatLegend.empty ? (
+                <span className="minimap-heat-empty">{heatLegend.empty}</span>
+              ) : (
+                <>
+                  {heatLegend.rows.map(row => (
+                    <span className="minimap-heat-key" key={row.label}>
+                      <i style={{ background: row.color }} />
+                      <span>{row.label}</span>
+                      <b>{row.value}</b>
+                    </span>
+                  ))}
+                  <span className="minimap-heat-empty">
+                    {formatDamage(heatLegend.placed ?? 0)} of {formatDamage(heatLegend.total ?? 0)} damage placed
+                  </span>
+                </>
+              )}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {status === 'ready' ? null : (
         <span className="minimap-note">{status === 'loading' ? 'Building map…' : 'Map image unavailable'}</span>
       )}

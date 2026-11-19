@@ -124,7 +124,7 @@ A demo is a recording, so both sides of the live position come from the scan:
   trails** exposes the three toggles.
 
 The samples live in engine memory, not in the summary cache (its key stays
-`v11`). Like the seek keyframes, a cached summary alone is not enough: the app
+`v12`). Like the seek keyframes, a cached summary alone is not enough: the app
 scans once per engine session and demo, and Release drops the data.
 
 ## Map view and the corner demo

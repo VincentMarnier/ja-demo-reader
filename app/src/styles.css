@@ -815,6 +815,72 @@ summary { cursor: pointer; color: var(--muted); }
   align-items: flex-start;
 }
 .minimap-canvas { display: block; width: 100%; height: 100%; }
+/* Damage heatmap controls sit on the enlarged map, clear of the pan gesture. */
+.minimap-heat {
+  position: absolute;
+  top: 56px;
+  right: 12px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: calc(100% - 24px);
+  padding: 8px 10px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(8, 12, 17, 0.82);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+  color: var(--text);
+  font-size: 11px;
+  cursor: default;
+}
+/* A top-right corner demo would sit under the heat panel; move it left. */
+.stage[data-pip-corner='top-right'] .minimap-heat {
+  right: calc(var(--pip-width, 33%) + var(--pip-gap, 10px) + 12px);
+}
+@media (max-width: 720px) {
+  .minimap-heat { top: 92px; right: 8px; }
+  .stage[data-pip-corner='top-right'] .minimap-heat { right: 8px; }
+}
+.minimap-heat-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.minimap-heat-row select {
+  max-width: 210px;
+  padding: 3px 6px;
+  font-size: 11px;
+}
+.minimap-heat-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding-top: 2px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+.minimap-heat-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text);
+}
+.minimap-heat-key i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  box-shadow: 0 0 6px currentColor;
+}
+.minimap-heat-key b { font-variant-numeric: tabular-nums; }
+.minimap-heat-empty {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
 .minimap-note {
   position: absolute;
   inset: 0;
@@ -1483,6 +1549,66 @@ summary { cursor: pointer; color: var(--muted); }
   color: var(--muted);
 }
 .detail-note { margin: -2px 0 8px; }
+/* Damage heatmaps in the player detail view: four previews over the same map. */
+.detail-heat { margin: 0 0 12px; }
+.detail-heat-note { margin: 0 0 8px; font-size: 11.5px; }
+.detail-heat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+@media (max-width: 720px) {
+  .detail-heat-grid { grid-template-columns: 1fr; }
+}
+.detail-heat-card {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  overflow: hidden;
+}
+.detail-heat-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 9px 5px;
+  font-size: 11px;
+}
+.detail-heat-head strong { font-weight: 600; }
+.detail-heat-head span {
+  color: var(--muted);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.detail-heat-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #0a1018;
+}
+.detail-heat-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 6px 9px 7px;
+  font-size: 10.5px;
+}
+.detail-heat-key { display: inline-flex; align-items: center; gap: 5px; }
+.detail-heat-key i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+.detail-heat-key b { font-variant-numeric: tabular-nums; }
+.detail-heat-coverage {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 10px;
+}
 .detail-scroll { overflow-x: auto; }
 .detail-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .detail-table th,

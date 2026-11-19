@@ -99,7 +99,7 @@ reported):
 | `confidence` | 1 "strong" (`≥ 6` reversals, `≤ 60 ms`, `≥ 85 %`, `≥ 3°`), else 0 |
 
 They are serialised in the demo summary (`scripts`, `scriptOverflow`) and
-cached with it — the summary cache key is `v11`. A flag's slot can be reused
+cached with it — the summary cache key is `v12`. A flag's slot can be reused
 after a player leaves, so the UI resolves the name from the record whose
 `firstSeen`/`lastSeen` window contains the finding.
 

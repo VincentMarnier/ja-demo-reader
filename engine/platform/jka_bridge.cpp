@@ -335,7 +335,11 @@ typedef struct {
 #define JKA_MAX_DAMAGES	12000
 
 // One observed damage instance.  attacker is -1 when the demo gives no
-// attribution (hitscan guns, force, world damage and unseen hits).
+// attribution (hitscan guns, force, world damage and unseen hits).  The world
+// positions of both ends are captured when the damage is recorded, so the app
+// can place damage heatmaps on the map image without replaying a trajectory.
+// A player outside the recorded POV's PVS has no entity state; the matching
+// have* flag then stays 0 and the app skips that end of the event.
 typedef struct {
 	int		time;
 	short	target;
@@ -343,6 +347,12 @@ typedef struct {
 	short	damage;
 	unsigned char	source;
 	unsigned char	friendly;	// 1 when attacker and target shared team 1/2
+	unsigned char	haveAttacker;
+	unsigned char	haveTarget;
+	float	attackerX;
+	float	attackerY;
+	float	targetX;
+	float	targetY;
 } jkaDamage_t;
 
 #define JKA_MAX_SWINGS	16000
@@ -1363,9 +1373,41 @@ static qboolean JKA_SwingRecent( jkaGame_t *game, int swing, int now )
 	return ( now - game->swings[swing - 1].time <= 2000 ) ? qtrue : qfalse;
 }
 
+// World position of a client at the current snapshot.  The recorded POV's own
+// entity is absent from demos, so it comes from the player state; every other
+// player comes from the snapshot's parse ring.  Returns false when the client
+// is outside the recorded POV's PVS (or the origin is invalid).
+static qboolean JKA_ClientWorldOrigin( int num, float *x, float *y )
+{
+	int i;
+
+	if ( num < 0 || num >= MAX_CLIENTS || !x || !y ) {
+		return qfalse;
+	}
+	if ( num == cl.snap.ps.clientNum ) {
+		*x = cl.snap.ps.origin[0];
+		*y = cl.snap.ps.origin[1];
+		return ( *x == *x && *y == *y ) ? qtrue : qfalse;
+	}
+	for ( i = 0; i < cl.snap.numEntities && i < MAX_PARSE_ENTITIES; i++ ) {
+		const entityState_t *state = &cl.parseEntities[( cl.snap.parseEntitiesNum + i ) &
+			( MAX_PARSE_ENTITIES - 1 )];
+
+		if ( state->eType != ET_PLAYER || state->number != num ) {
+			continue;
+		}
+		*x = state->pos.trBase[0];
+		*y = state->pos.trBase[1];
+		return ( *x == *x && *y == *y ) ? qtrue : qfalse;
+	}
+	return qfalse;
+}
+
 static void JKA_EmitDamage( jkaGame_t *game, int now, int target, int attacker, int damage, int source, int swing )
 {
 	jkaDamage_t *sample;
+	float x;
+	float y;
 
 	if ( !game || target < 0 || target >= MAX_CLIENTS || damage <= 0 ) {
 		return;
@@ -1384,6 +1426,22 @@ static void JKA_EmitDamage( jkaGame_t *game, int now, int target, int attacker, 
 	sample->damage = (short)damage;
 	sample->source = (unsigned char)source;
 	sample->friendly = (unsigned char)JKA_SameTeam( game, attacker, target );
+	sample->haveAttacker = 0;
+	sample->haveTarget = 0;
+	sample->attackerX = 0.0f;
+	sample->attackerY = 0.0f;
+	sample->targetX = 0.0f;
+	sample->targetY = 0.0f;
+	if ( attacker >= 0 && attacker != target && JKA_ClientWorldOrigin( attacker, &x, &y ) ) {
+		sample->haveAttacker = 1;
+		sample->attackerX = x;
+		sample->attackerY = y;
+	}
+	if ( JKA_ClientWorldOrigin( target, &x, &y ) ) {
+		sample->haveTarget = 1;
+		sample->targetX = x;
+		sample->targetY = y;
+	}
 	jka_lastDamageIndex[target] = game->damageCount - 1;
 
 	// Attach the loss to the swing whose hit caused it, so per-swing damage
@@ -2837,8 +2895,19 @@ static void JKA_BuildSummary( void )
 		JKA_Append( &out, &left, "\"damages\":[" );
 		for ( i = 0; i < game->damageCount; i++ ) {
 			jkaDamage_t *damage = &game->damages[i];
-			JKA_Append( &out, &left, "%s{\"time\":%d,\"target\":%d,\"attacker\":%d,\"damage\":%d,\"source\":%d,\"friendly\":%d}",
+			JKA_Append( &out, &left, "%s{\"time\":%d,\"target\":%d,\"attacker\":%d,\"damage\":%d,\"source\":%d,\"friendly\":%d",
 				i ? "," : "", damage->time, damage->target, damage->attacker, damage->damage, damage->source, damage->friendly );
+			if ( damage->haveAttacker ) {
+				JKA_Append( &out, &left, ",\"ax\":%d,\"ay\":%d",
+					(int)( damage->attackerX < 0 ? damage->attackerX - 0.5f : damage->attackerX + 0.5f ),
+					(int)( damage->attackerY < 0 ? damage->attackerY - 0.5f : damage->attackerY + 0.5f ) );
+			}
+			if ( damage->haveTarget ) {
+				JKA_Append( &out, &left, ",\"tx\":%d,\"ty\":%d",
+					(int)( damage->targetX < 0 ? damage->targetX - 0.5f : damage->targetX + 0.5f ),
+					(int)( damage->targetY < 0 ? damage->targetY - 0.5f : damage->targetY + 0.5f ) );
+			}
+			JKA_Append( &out, &left, "}" );
 		}
 		JKA_Append( &out, &left, "],\"damageOverflow\":%s,", game->damageOverflow ? "true" : "false" );
 		JKA_Append( &out, &left, "\"pov\":%d,\"sabers\":[", game->pov );

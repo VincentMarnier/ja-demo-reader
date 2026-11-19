@@ -174,6 +174,18 @@ export interface DemoDamageEvent {
   source: number;
   /** 1 when attacker and target were on the same team (1/2). */
   friendly?: number;
+  /**
+   * World position of the attacker when the damage was recorded. Absent when
+   * the attacker is unknown or outside the recorded POV's PVS.
+   */
+  ax?: number;
+  ay?: number;
+  /**
+   * World position of the victim when the damage was recorded. Absent when the
+   * victim was outside the recorded POV's PVS.
+   */
+  tx?: number;
+  ty?: number;
 }
 
 /**

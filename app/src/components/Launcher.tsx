@@ -14,6 +14,8 @@ interface LauncherProps {
   demoFile: LocalFile | null;
   demoWarning: string | null;
   mapName: string;
+  /** PK3s for the generated map image used by the damage heatmaps. */
+  mapFiles: readonly Blob[];
   mapMissing: boolean;
   mapError: string | null;
   missingAssets: MissingAsset[];
@@ -206,6 +208,8 @@ export function Launcher(props: LauncherProps) {
               onPlayFrom={props.onPlayFrom}
               busy={props.busy || props.addingPk3s}
               canPlay={!!mapName && !mapMissing}
+              mapName={mapName}
+              mapFiles={props.mapFiles}
             />
 
             {props.summary ? (

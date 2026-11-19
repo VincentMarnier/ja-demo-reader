@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { AppSettings, FreeCamAction } from '../settings';
 import { DEFAULT_FREE_CAM_KEYS, FREE_CAM_ACTIONS, keyLabel } from '../settings';
+import { HEATMAP_MODES } from '../map/damageHeatmap';
 
 interface SettingsPanelProps {
   settings: AppSettings;
@@ -171,6 +172,32 @@ export function SettingsPanel({ settings, onChange, onClose, onClearLocalData }:
               onChange={event => onChange({ showMinimap: event.target.checked })}
             />
             <span>Show the top-down minimap with live player positions</span>
+          </label>
+        </section>
+
+        <section className="settings-section">
+          <h3>Damage heatmaps</h3>
+          <label className="setting-row">
+            <span>
+              Overlay
+              <small>
+                Team heat aggregates both teams in red and blue; player heat follows the camera
+                subject (or the recorded POV). Given uses the attacker's position, received the
+                victim's. Needs a summary scanned with positions.
+              </small>
+            </span>
+            <span className="setting-value">
+              <select
+                value={settings.heatmap}
+                onChange={event =>
+                  onChange({ heatmap: event.target.value as AppSettings['heatmap'] })
+                }
+              >
+                {HEATMAP_MODES.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </span>
           </label>
         </section>
 

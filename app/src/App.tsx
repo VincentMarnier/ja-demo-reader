@@ -883,7 +883,7 @@ export default function App() {
     // for the demo; otherwise scan again (the scan no longer loads the map).
     // Bump the cache key when the summary format or game-boundary logic
     // changes so old cached summaries are not reused.
-    const cacheKey = `v11:${demoFile.name}:${demoFile.file.size}:${demoFile.file.lastModified}`;
+    const cacheKey = `v12:${demoFile.name}:${demoFile.file.size}:${demoFile.file.lastModified}`;
     const hadKeyframes = keyframesReadyRef.current;
     let summary = hadKeyframes ? await loadDemoSummary(cacheKey) : null;
     let info: DemoInfo | null = null;
@@ -1433,6 +1433,7 @@ export default function App() {
                   demoFile={demoFile}
                   demoWarning={demoWarning}
                   mapName={mapName}
+                  mapFiles={minimapFiles}
                   mapMissing={mapMissing}
                   mapError={mapError}
                   missingAssets={missingAssets}
@@ -1500,6 +1501,9 @@ export default function App() {
                   paused={paused}
                   phase={phase}
                   scores={scoreboard}
+                  game={currentGame}
+                  heatmap={settings.heatmap}
+                  onHeatmapChange={mode => setSettings(current => ({ ...current, heatmap: mode }))}
                   view={scoreboard?.view ?? null}
                   showScores={settings.showScores}
                   showTimer={settings.showTimer}
