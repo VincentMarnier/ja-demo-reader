@@ -380,6 +380,7 @@ summary { cursor: pointer; color: var(--muted); }
   flex-direction: column;
 }
 .log-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.log-head-actions { display: flex; align-items: center; gap: 8px; }
 .log-panel pre { margin: 0; padding: 12px 16px; overflow: auto; font-size: 11px; line-height: 1.55; color: #aab8c8; }
 
 @media (max-width: 720px) {

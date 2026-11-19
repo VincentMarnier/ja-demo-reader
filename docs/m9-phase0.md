@@ -68,7 +68,8 @@ Filter the downloaded log for `JKA_PROFILE`. Useful lines:
 | `JKA_PROFILE stop ...` | full teardown time |
 
 Engine `JKA_PROFILE` lines come from the wasm log; JS `stage` and `memory`
-lines are added by `EngineHost`. Both are included in **Download log**.
+lines are added by `EngineHost`. Both are included in the log panel's
+**Download log** button (**Show log** in the top bar).
 
 Shader usage is logged when the renderer shuts down. Press **Stop** after
 playback (it performs the full disconnect) before downloading the log. The
@@ -134,7 +135,7 @@ cross-check.
 6. Seek forward by about two minutes; note the seek line and the UI time.
 7. Seek backward to about one minute; note the seek line and the UI time.
 8. Press **Stop**, wait for the launcher, note memory.
-9. Press **Download log** and keep the file as
+9. Press **Show log**, then **Download log** in that panel, and keep the file as
    `m9-phase0-default.log`.
 
 ### Session B: fast texture profile

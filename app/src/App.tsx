@@ -1369,9 +1369,6 @@ export default function App() {
           <button className="ghost" onClick={() => setShowLogs(v => !v)}>
             {showLogs ? 'Hide log' : 'Show log'}
           </button>
-          <button className="ghost" onClick={() => engineRef.current?.downloadLogs()} disabled={!engineRef.current}>
-            Download log
-          </button>
         </div>
       </header>
 
@@ -1605,7 +1602,16 @@ export default function App() {
         <aside className="log-panel">
           <div className="log-head">
             <strong>Engine log</strong>
-            <button className="ghost" onClick={() => setShowLogs(false)}>Close</button>
+            <div className="log-head-actions">
+              <button
+                className="ghost"
+                onClick={() => engineRef.current?.downloadLogs()}
+                disabled={!engineRef.current}
+              >
+                Download log
+              </button>
+              <button className="ghost" onClick={() => setShowLogs(false)}>Close</button>
+            </div>
           </div>
           <pre>{logs.length ? logs.join('\n') : 'No engine output yet.'}</pre>
         </aside>
